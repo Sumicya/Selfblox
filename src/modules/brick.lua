@@ -1,21 +1,21 @@
--- BitFarmer v2.0 | KIT 规范集成版
--- 升级特性: 事件驱动流式即时收集 + 自适应高频刷砖 + 倍率锁定 + 全功能 Debug 探针
--- 执行一次启动，再执行一次停止（支持与 MinimalStats 联动录制）
+-- brick — BitFarmer v2.1 | 独立脚本（可选接入 KIT 调试）
+-- 事件驱动即时收集 + 高频刷砖 + 倍率锁定
+-- 执行一次启动，再执行一次停止
 
 local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local p = Players.LocalPlayer
 
-local NAME = "BitFarm"
+local p = Players.LocalPlayer
 local K = _G.KIT
 
+-- 运行状态存全局：重复执行即切换开关
 if _G._BitFarmActive then
 	_G._BitFarmActive = false
 	return
 end
 _G._BitFarmActive = true
 
+local NAME = "BitFarm"
 local collector = workspace:FindFirstChild("Collector")
 local spawnBit = ReplicatedStorage:FindFirstChild("SpawnBit")
 local ls = p:FindFirstChild("leaderstats")
@@ -30,14 +30,12 @@ if not collector or not bitsVal then
 	return
 end
 
--- 配置与性能参数
 local CFG = {
 	BatchSpawns = 4,        -- 每次刷砖触发次数
 	SpawnInterval = 0.08,   -- 刷砖发包间隔(秒)
 	DrainTimeout = 0.6,     -- 消化等待上限
 	ForceMult = 99999,      -- 强制倍率
 	ForceLevel = 9999,      -- 强制等级
-	LogCapacity = 60,
 }
 
 local stats = {
@@ -49,8 +47,6 @@ local stats = {
 	lastBits = bitsVal.Value,
 	bitsPerSec = 0,
 	lastRateCalc = os.clock(),
-	activeBitsInField = 0,
-	recentErrors = 0,
 }
 
 local origMult = multVal and multVal.Value or 1
@@ -65,59 +61,39 @@ local function assertMultiplier()
 end
 assertMultiplier()
 
--- 物理精准推进（唤醒接触判定）
+-- 物理推进：把砖拽到 Collector 并赋初速，唤醒接触判定
 local function ingestBit(b)
 	if not b or not b.Parent or b.Anchored then return false end
-	local ok = pcall(function()
+	return pcall(function()
 		b.CFrame = collector.CFrame + Vector3.new(math.random(-3, 3), 1.5, math.random(-3, 3))
 		b.AssemblyLinearVelocity = Vector3.new(0, -35, 0)
 		b.AssemblyAngularVelocity = Vector3.new(math.random(-5, 5), 0, math.random(-5, 5))
 	end)
-	return ok
 end
 
--- 事件驱动监听：新砖块生成的第 1 毫秒即时吞噬
-local connChildAdded = nil
-connChildAdded = workspace.ChildAdded:Connect(function(child)
-	if not _G._BitFarmActive then return end
-	if child:IsA("BasePart") and not child.Anchored then
-		task.defer(function()
-			local ok, ov = pcall(function() return child:GetAttribute("Owner") end)
-			if ok and ov == p.UserId then
-				if ingestBit(child) then
-					stats.collectedBits += 1
-				end
-			end
-		end)
-	end
-end)
+local function ownBit(c)
+	if not c:IsA("BasePart") or c.Anchored then return false end
+	local ok, owner = pcall(function() return c:GetAttribute("Owner") end)
+	return ok and owner == p.UserId
+end
 
 -- 存量清理扫描
 local function drainExisting()
 	local count = 0
 	for _, c in ipairs(workspace:GetChildren()) do
-		if c:IsA("BasePart") and not c.Anchored then
-			local ok, ov = pcall(function() return c:GetAttribute("Owner") end)
-			if ok and ov == p.UserId then
-				if ingestBit(c) then count += 1 end
-			end
-		end
+		if ownBit(c) and ingestBit(c) then count += 1 end
 	end
 	return count
 end
 
--- 全功能 Debug 探针（无缝对接 KIT 快照录制）
+-- 调试探针（KIT 存在时注册，供 KITLOG / debugAll 采集）
 _G.BitFarm_Debug = function()
 	local now = os.clock()
 	local elapsed = math.max(now - stats.startTime, 0.1)
-	local currentBits = bitsVal and bitsVal.Value or 0
 	local liveField = 0
 	for _, c in ipairs(workspace:GetChildren()) do
-		if c:IsA("BasePart") and not c.Anchored and c:GetAttribute("Owner") == p.UserId then
-			liveField += 1
-		end
+		if ownBit(c) then liveField += 1 end
 	end
-	stats.activeBitsInField = liveField
 
 	local lines = {
 		"status: " .. tostring(_G._BitFarmActive),
@@ -125,7 +101,7 @@ _G.BitFarm_Debug = function()
 		"cycles: " .. tostring(stats.cycles),
 		"totalEarned: " .. tostring(stats.totalEarned),
 		"bitsPerSec: " .. string.format("%.1f", stats.bitsPerSec),
-		"currentBits: " .. tostring(currentBits),
+		"currentBits: " .. tostring(bitsVal and bitsVal.Value or 0),
 		"multiplierVal: " .. tostring(multVal and multVal.Value or "?"),
 		"activeInField: " .. tostring(liveField),
 		"spawnPackets: " .. tostring(stats.spawnedPackets),
@@ -134,32 +110,39 @@ _G.BitFarm_Debug = function()
 	}
 
 	if K and K.debugDump then
-		return K.debugDump("BitFarm", lines)
-	else
-		local dump = "=== BitFarm ===\n" .. table.concat(lines, "\n") .. "\n=== END ==="
-		print(dump)
-		return dump
+		return K.debugDump(NAME, lines)
 	end
+	local dump = "=== " .. NAME .. " ===\n" .. table.concat(lines, "\n") .. "\n=== END ==="
+	print(dump)
+	return dump
 end
 
 if K and type(K.registerDebug) == "function" then
-	K.registerDebug("BitFarm", _G.BitFarm_Debug)
+	K.registerDebug(NAME, _G.BitFarm_Debug)
 end
 
--- 主农夫流水线
+-- 主流水线：消化积压 → 高频刷砖 → 结算
+local connChildAdded = workspace.ChildAdded:Connect(function(child)
+	if not _G._BitFarmActive then return end
+	task.defer(function()
+		if not _G._BitFarmActive then return end
+		if ownBit(child) and ingestBit(child) then
+			stats.collectedBits += 1
+		end
+	end)
+end)
+
 task.spawn(function()
-	print(string.format("[BitFarm] v2.0 启动成功 | 目标 Collector: %s", collector.Name))
-	
+	print(string.format("[BitFarm] v2.1 启动成功 | 目标 Collector: %s", collector.Name))
+
 	while _G._BitFarmActive do
 		stats.cycles += 1
 		local cycleStartBits = bitsVal.Value
 
-		-- 1. 优先消化场上积压砖块
 		drainExisting()
 
-		-- 2. 高频并发刷砖发包
 		if spawnBit then
-			for i = 1, CFG.BatchSpawns do
+			for _ = 1, CFG.BatchSpawns do
 				if not _G._BitFarmActive then break end
 				pcall(function() spawnBit:FireServer() end)
 				stats.spawnedPackets += 1
@@ -167,17 +150,13 @@ task.spawn(function()
 			end
 		end
 
-		-- 3. 消化阶段与结算
 		task.wait(CFG.DrainTimeout)
 		drainExisting()
 
 		local currentBits = bitsVal.Value
 		local earned = currentBits - cycleStartBits
-		if earned > 0 then
-			stats.totalEarned += earned
-		end
+		if earned > 0 then stats.totalEarned += earned end
 
-		-- 计算每秒产生速率
 		local now = os.clock()
 		local dt = now - stats.lastRateCalc
 		if dt >= 1.0 then
@@ -191,9 +170,10 @@ task.spawn(function()
 	end
 
 	-- 安全退出还原
-	if connChildAdded then pcall(function() connChildAdded:Disconnect() end) end
+	pcall(function() connChildAdded:Disconnect() end)
 	if multVal then pcall(function() multVal.Value = origMult end) end
 	pcall(function() p:SetAttribute("MultiplierUpgradeLevel", origLevel) end)
+	if K and K.debugRegistry then K.debugRegistry[NAME] = nil end
 	print(string.format("[BitFarm] 已安全停止 | 总产出: +%d Bits", stats.totalEarned))
 	_G._BitFarmActive = nil
 end)
