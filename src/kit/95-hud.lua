@@ -28,7 +28,7 @@ local ESP = {
 }
 
 local HUD = {
-	Size = 17, Alpha = 0.15, GroupPadding = 26, ListPadding = 6, TopOffset = 0,
+	Size = 17, Alpha = 0.15, GroupPadding = 26, ListPadding = -5, TopOffset = 0,
 	Interval = 0.1, SlowInterval = 0.5, MinVelocity = 0.2, FpsWarning = 50,
 	ArrowSpeedScale = 0.16, ArrowMinLen = 3, ArrowMaxLen = 8, ArrowHeadOffset = 1.2,
 	ArrowAlpha = 0.15, ArrowLineAlpha = 0.35,

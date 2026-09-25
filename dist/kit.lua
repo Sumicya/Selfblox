@@ -714,6 +714,9 @@ local function decodePanelPos(s)
 	return {(tonumber(sx) or 0), (tonumber(ox) or 0), (tonumber(sy) or 0), (tonumber(oy) or 0)}
 end
 
+-- 面板位置安全区：顶部留出这段，防止标题栏被拖出/存出可点区（手机状态栏/顶栏手势区）
+local SAFE_TOP = 48
+
 -- 带容差的拖拽；松手后把位置写进配置（key = ScreenGui.Name）
 function K.drag(handle, frame, bag, tolerance)
 	tolerance = tolerance or 4
@@ -746,7 +749,7 @@ function K.drag(handle, frame, bag, tolerance)
 		local minX = -base.X.Scale * vp.X
 		local maxX = vp.X - size.X - base.X.Scale * vp.X
 		if minX > maxX then minX, maxX = maxX, minX end
-		local minY = -base.Y.Scale * vp.Y
+		local minY = -base.Y.Scale * vp.Y + SAFE_TOP
 		local maxY = vp.Y - size.Y - base.Y.Scale * vp.Y
 		if minY > maxY then minY, maxY = maxY, minY end
 		frame.Position = UDim2.new(
@@ -783,14 +786,19 @@ function K.panel(name, config, bag)
 	}, gui)
 	local saved = decodePanelPos(K.cfg.get("UI.Pos." .. name, nil))
 	if saved then
+		main.Position = UDim2.new(saved[1], saved[2], saved[3], saved[4])
+	end
+	-- 无论默认还是恢复的位置都收进安全区（顶部 ≥ SAFE_TOP），标题栏永远点得到
+	do
 		local vp = K.vp()
 		local w = config.PanelSize.X.Scale * vp.X + config.PanelSize.X.Offset
 		local h = config.PanelSize.Y.Scale * vp.Y + config.PanelSize.Y.Offset
-		local absX = saved[1] * vp.X + saved[2]
-		local absY = saved[3] * vp.Y + saved[4]
+		local absX = main.Position.X.Scale * vp.X + main.Position.X.Offset
+		local absY = main.Position.Y.Scale * vp.Y + main.Position.Y.Offset
 		local cx = math.clamp(absX, 0, math.max(vp.X - w, 0))
-		local cy = math.clamp(absY, 0, math.max(vp.Y - h, 0))
-		main.Position = UDim2.new(saved[1], cx - saved[1] * vp.X, saved[3], cy - saved[3] * vp.Y)
+		local cy = math.clamp(absY, SAFE_TOP, math.max(vp.Y - h, SAFE_TOP))
+		main.Position = UDim2.new(main.Position.X.Scale, cx - main.Position.X.Scale * vp.X,
+			main.Position.Y.Scale, cy - main.Position.Y.Scale * vp.Y)
 	end
 	return gui, main
 end
@@ -801,7 +809,7 @@ function K.titleBar(main, config, bag, title, height)
 	local button = K.mk("TextButton", {
 		Size = UDim2.new(1, 0, 0, height),
 		BackgroundColor3 = config.BG or K.THEME.BG,
-		BackgroundTransparency = 0, -- 标题栏纯色：避免与面板叠色出现透光接缝
+		BackgroundTransparency = 1, -- 标题栏背景全透明：不叠色、无接缝，保留面板透明风格
 		BorderSizePixel = 0, Active = true, Text = title .. " [-]",
 		TextColor3 = Color3.new(1, 1, 1), TextSize = 13, Font = config.Font or K.THEME.Font,
 		TextXAlignment = Enum.TextXAlignment.Center, TextYAlignment = Enum.TextYAlignment.Center,
@@ -1403,7 +1411,7 @@ local ESP = {
 }
 
 local HUD = {
-	Size = 17, Alpha = 0.15, GroupPadding = 26, ListPadding = 6, TopOffset = 0,
+	Size = 17, Alpha = 0.15, GroupPadding = 26, ListPadding = -5, TopOffset = 0,
 	Interval = 0.1, SlowInterval = 0.5, MinVelocity = 0.2, FpsWarning = 50,
 	ArrowSpeedScale = 0.16, ArrowMinLen = 3, ArrowMaxLen = 8, ArrowHeadOffset = 1.2,
 	ArrowAlpha = 0.15, ArrowLineAlpha = 0.35,
