@@ -1934,12 +1934,13 @@ M.reg(UIS.WindowFocusReleased:Connect(function()
 	setHornKey(false)
 end))
 
--- 转向滑条（独立 GUI；短按转向、长按拖动改位置，松手回中）
+-- 转向滑条（独立 GUI；按下即点转，横滑=转向，竖滑=拖动改位置，松手回中）
 local steerGui = nil
 local steerTrack = nil
 local steerKnob = nil
 local steerDragging = false
 local steerMoving = false
+local steerAxis = nil
 local steerOrigin = Vector2.zero
 local steerBasePos = UDim2.new()
 local steerTween = nil
@@ -1961,6 +1962,15 @@ local function steerReturnCenter()
 		TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
 		{Position = UDim2.new(0.5, -STEER_KNOB_R, 0.5, -STEER_KNOB_R)})
 	steerTween:Play()
+end
+
+-- 触点 X → 转向值（按下即点转，横滑连续转向）
+local function steerApplyX(x)
+	local usable = STEER_W - STEER_KNOB_R * 2
+	local rel = (x - steerTrack.AbsolutePosition.X - STEER_KNOB_R) / math.max(usable, 1)
+	steerValue = math.clamp(rel * 2 - 1, -1, 1)
+	local px = STEER_KNOB_R + usable * ((steerValue + 1) / 2)
+	steerKnob.Position = UDim2.new(0, px - STEER_KNOB_R, 0.5, -STEER_KNOB_R)
 end
 
 local function createSteerSlider()
@@ -2011,9 +2021,11 @@ local function createSteerSlider()
 		if not K.isP(input) then return end
 		steerDragging = true
 		steerMoving = false
+		steerAxis = nil
 		steerOrigin = Vector2.new(input.Position.X, input.Position.Y)
 		steerBasePos = steerTrack.Position
 		if steerTween then pcall(function() steerTween:Cancel() end) end
+		steerApplyX(input.Position.X) -- 按下即点转
 	end))
 
 	M.reg(UIS.InputChanged:Connect(function(input)
@@ -2022,10 +2034,12 @@ local function createSteerSlider()
 			and input.UserInputType ~= Enum.UserInputType.Touch then return end
 		local cur = Vector2.new(input.Position.X, input.Position.Y)
 		local delta = cur - steerOrigin
-		if not steerMoving and (math.abs(delta.X) + math.abs(delta.Y)) > 10 then
-			steerMoving = true
+		-- 轴向定模式：横滑 = 转向，竖滑 = 挪位置（8px 判定，定后不变）
+		if not steerAxis and (math.abs(delta.X) + math.abs(delta.Y)) > 8 then
+			steerAxis = (math.abs(delta.X) >= math.abs(delta.Y)) and "steer" or "move"
 		end
-		if steerMoving then
+		if steerAxis == "move" then
+			steerMoving = true
 			local vp = K.vp()
 			local minX = -steerBasePos.X.Scale * vp.X
 			local maxX = vp.X - STEER_W - steerBasePos.X.Scale * vp.X
@@ -2036,12 +2050,8 @@ local function createSteerSlider()
 			steerTrack.Position = UDim2.new(
 				steerBasePos.X.Scale, math.clamp(steerBasePos.X.Offset + delta.X, minX, maxX),
 				steerBasePos.Y.Scale, math.clamp(steerBasePos.Y.Offset + delta.Y, minY, maxY))
-		else
-			local usable = STEER_W - STEER_KNOB_R * 2
-			local rel = (cur.X - steerTrack.AbsolutePosition.X - STEER_KNOB_R) / math.max(usable, 1)
-			steerValue = math.clamp(rel * 2 - 1, -1, 1)
-			local px = STEER_KNOB_R + usable * ((steerValue + 1) / 2)
-			steerKnob.Position = UDim2.new(0, px - STEER_KNOB_R, 0.5, -STEER_KNOB_R)
+		elseif steerAxis == "steer" then
+			steerApplyX(cur.X)
 		end
 	end))
 
@@ -2050,6 +2060,7 @@ local function createSteerSlider()
 		steerDragging = false
 		if steerMoving then steerSavePos() end
 		steerMoving = false
+		steerAxis = nil
 		steerReturnCenter()
 	end
 
