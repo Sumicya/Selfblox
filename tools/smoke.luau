@@ -179,9 +179,19 @@ local function buildEnv()
 		new = function(scale, offset) return { Scale = scale or 0, Offset = offset or 0 } end,
 	}
 	local UDim2 = {
-		new = function(a, b, c, d) return { X = a or 0, X2 = b or 0, Y = c or 0, Y2 = d or 0 } end,
-		fromOffset = function(x, y) return { X = 0, X2 = x, Y = 0, Y2 = y } end,
-		fromScale = function(x, y) return { X = x, X2 = 0, Y = y, Y2 = 0 } end,
+		-- 与 Roblox 一致：UDim2.X/Y 是 UDim（含 Scale/Offset）
+		new = function(a, b, c, d)
+			return {
+				X = UDim.new(a or 0, b or 0),
+				Y = UDim.new(c or 0, d or 0),
+			}
+		end,
+		fromOffset = function(x, y)
+			return { X = UDim.new(0, x), Y = UDim.new(0, y) }
+		end,
+		fromScale = function(x, y)
+			return { X = UDim.new(x, 0), Y = UDim.new(y, 0) }
+		end,
 	}
 	local Color3 = {
 		new = function(r, g, b) return { R = r or 0, G = g or 0, B = b or 0 } end,
