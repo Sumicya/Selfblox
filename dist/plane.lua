@@ -1,25 +1,13 @@
--- plane.lua
--- 飞机对战侦测（Debug 输出版）
--- 依赖：kit-hud（KIT v9+）
--- 约定：缩进用单个 Tab
---
--- v0.2 改动：
---   1. 【P0】移除文件末尾的 loadstring(game:HttpGet(gist...))() 远程代码执行。
---      原样保留在此处注释中，如需恢复请自行确认来源后手动加回。
---   2. 【P0】版本门 8 → 9。原版判 K.ver < 8，但用到了 K.context.changed / seat /
---      seated（v9 才有），在旧核心上会静默走错分支。
---   3. 【P0】namecall 钩子兜底。原版 `if oldNamecall then return oldNamecall(...) end`，
---      一旦 hookmetamethod 返回非函数就把调用吞掉，会直接破坏游戏功能；
---      现在改为：安装失败即不启用，且命中日志逻辑全部包在 pcall 内。
---   4. 【P1】自动写报告与全量扫描解耦。原版每 5s 重跑 scanPlanes + scanRemotes
---      （RS 全后代 + workspace 3000）+ scanBullets（workspace 4000）并大量 GetFullName，
---      周期性掉帧；现在报告按 AutoWriteInterval 写，扫描按 AutoScanInterval 做，
---      间谍日志本身是实时的，报告内容不损失。
---   5. 【P1】高亮复用。原版每次 rescan 全量 Destroy 再重建最多 28 个 Highlight；
---      现在只新增/更新/移除差集。
---   6. 【P1】队伍推断结果按模型缓存（2s TTL），不再每次报告都重新遍历。
---   7. 【P1】登机时的 writeReport 改为 defer，不在 Seat 事件回调里同步构建长报告。
---   8. 【P2】涂装匹配增加明度归一，深灰不再轻易误判到深色队伍。
+-- plane.lua — KIT v10 单文件 bundle（由 build.py 生成，勿直接编辑）
+-- 源: src/modules/plane.lua
+-- 构建: python3 build.py
+
+-- ==== src/modules/plane.lua ====
+-- plane — 飞机对战侦测（模块名 PLANE）
+-- 依赖：kit v10
+-- 功能：飞机模型体检评分、队伍推断（属性/Value/乘员/名字/涂装）、
+--       Remote 清单、FireServer 发送间谍（hookmetamethod）、OnClientEvent 接收监听、
+--       侦测报告写文件/剪贴板、队伍高亮、自动扫描+自动写报告
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -30,33 +18,23 @@ local Teams = game:GetService("Teams")
 local player = Players.LocalPlayer
 local NAME = "PLANE"
 local K = _G.KIT
-if not K or K.ver < 9 or type(K.boot) ~= "function" then
-	error("[plane] 请先执行 kit-hud（需要 _G.KIT v9 及以上）", 0)
+if not K or K.ver < 10 or type(K.mod) ~= "function" then
+	error("[plane] 请先执行 kit.lua（需要 _G.KIT v10 及以上）", 0)
 end
-local mk = K.mk
-local bag, reg = K.boot(NAME)
 
-local CFG = {
-	DisplayOrder = 99997,
-	Alpha = 0.72,
-	BG = Color3.fromRGB(20, 22, 28),
-	Font = K.font(true),
-	DragTol = 4,
-	TitleH = 24,
-	RowH = 30,
-	StatusH = 42,
-	PanelW = 190,
-	PanelVisibleH = 240,
-	PlaneMinScore = 55,
-	MaxModelParts = 400,
-	SpyLogCap = 120,
-	AutoWriteInterval = 5,
-	AutoScanInterval = 5,
-	TeamInfoTTL = 2,
-	HighlightCap = 28,
-	HighlightFillT = 0.75,
-	Col = K.Col,
-}
+local mk = K.mk
+local M = K.mod(NAME, {DisplayOrder = 99997, TitleH = 24, PanelW = 190})
+local CFG = M.cfg
+CFG.StatusH = 42
+CFG.PanelVisibleH = 240
+CFG.PlaneMinScore = 55
+CFG.MaxModelParts = 400
+CFG.SpyLogCap = 120
+CFG.AutoWriteInterval = 5
+CFG.AutoScanInterval = 5
+CFG.TeamInfoTTL = 2
+CFG.HighlightCap = 28
+CFG.HighlightFillT = 0.75
 
 local FILENAME = "plane_debug.txt"
 local HAS_WRITEFILE = type(writefile) == "function"
@@ -73,24 +51,12 @@ local myPlaneInfo, myPlaneInfoAt = nil, 0
 local lastWriteTarget = "未输出"
 local lastReportContent = ""
 local namecallHooked, oldNamecall = false, nil
-local statusLabel, gui = nil, nil
+local statusLabel = nil
 local teamInfoCache = setmetatable({}, {__mode = "k"})
 
 -- ===== 工具 =====
-local function safeFullName(inst)
-	if not inst then return "nil" end
-	local ok, r = pcall(function() return inst:GetFullName() end)
-	return ok and r or tostring(inst)
-end
-
 local function nowStamp()
 	return os.date("%H:%M:%S")
-end
-
-local function countTable(t)
-	local n = 0
-	for _ in pairs(t) do n += 1 end
-	return n
 end
 
 local function fmtValue(v, depth)
@@ -110,7 +76,7 @@ local function fmtValue(v, depth)
 		local p = v.Position
 		return ("CF(%.0f,%.0f,%.0f)"):format(p.X, p.Y, p.Z)
 	elseif t == "Instance" then
-		return safeFullName(v)
+		return K.safeFullName(v)
 	elseif t == "table" and depth < 2 then
 		local parts = {}
 		local n = 0
@@ -152,7 +118,7 @@ local function nameHint(name, hints)
 	return nil
 end
 
--- 归一化色距：把明度差异按比例缩放，避免深灰轻易命中深色队伍
+-- 归一化色距：明度差异按比例缩放，避免深灰误判到深色队伍
 local function colorDistance(a, b)
 	local dr, dg, db = a.R - b.R, a.G - b.G, a.B - b.B
 	local lumA = 0.299 * a.R + 0.587 * a.G + 0.114 * a.B
@@ -164,7 +130,7 @@ end
 -- ===== 飞机体检 =====
 local function inspectModel(model)
 	local info = {
-		model = model, path = safeFullName(model),
+		model = model, path = K.safeFullName(model),
 		hint = nameHint(model.Name, PLANE_HINTS),
 		hasSeat = false, seatNames = {}, wingCount = 0,
 		partCount = 0, anchoredCount = 0,
@@ -231,11 +197,11 @@ local function inspectModel(model)
 	return info
 end
 
+-- 队伍推断优先级：模型属性 → Value 对象 → 乘员队伍 → 名字色词 → 涂装近似
 local function inferTeam(info)
 	local model = info.model
 	if not model or not model.Parent then return nil end
 	local found = nil
-	-- ① 模型属性
 	pcall(function()
 		for k, v in pairs(model:GetAttributes()) do
 			if found then break end
@@ -247,7 +213,7 @@ local function inferTeam(info)
 		end
 	end)
 	if found then return found end
-	-- ② Value 对象
+
 	found = nil
 	pcall(function()
 		local n = 0
@@ -263,17 +229,17 @@ local function inferTeam(info)
 		end
 	end)
 	if found then return found end
-	-- ③ 乘员队伍
+
 	if info.occupant and info.occupant.Team then
 		return {src = "乘员", value = info.occupant.Team.Name, playerTeam = info.occupant.Team}
 	end
-	-- ④ 名字色词
+
 	local n = model.Name:lower()
 	if n:find("red", 1, true) then return {src = "名字:red", value = "红方?"} end
 	if n:find("blue", 1, true) then return {src = "名字:blue", value = "蓝方?"} end
 	if n:find("axis", 1, true) then return {src = "名字:axis", value = "轴心?"} end
 	if n:find("allied", 1, true) or n:find("ally", 1, true) then return {src = "名字:allied", value = "同盟?"} end
-	-- ⑤ 涂装近似 Teams 色
+
 	if info.bodyColor then
 		local bestTeam, bestD = nil, math.huge
 		pcall(function()
@@ -291,7 +257,7 @@ local function inferTeam(info)
 	return nil
 end
 
--- 带 TTL 的队伍推断缓存
+-- 队伍推断带 TTL 缓存（按模型）
 local function teamInfoFor(info)
 	local rec = teamInfoCache[info.model]
 	local now = os.clock()
@@ -323,10 +289,10 @@ local function dumpPlaneInfo(log, info)
 			info.bodyColor.R * 255, info.bodyColor.G * 255, info.bodyColor.B * 255))
 	end
 	for _, r in ipairs(info.remotes) do
-		log("    内嵌 " .. r.ClassName .. ": " .. safeFullName(r))
+		log("    内嵌 " .. r.ClassName .. ": " .. K.safeFullName(r))
 	end
 	for _, c in ipairs(info.clickables) do
-		log("    内嵌 " .. c.ClassName .. ": " .. safeFullName(c))
+		log("    内嵌 " .. c.ClassName .. ": " .. K.safeFullName(c))
 	end
 end
 
@@ -354,15 +320,14 @@ local function scanPlanes()
 			end
 		end
 	end
-
 	pcall(function() visit(workspace, 0) end)
 
-	-- 距离参考：优先我在的飞机 → 角色 → 相机
+	-- 距离参考：我在的飞机 → 角色 → 相机
 	local refPos = nil
 	local cam = workspace.CurrentCamera
 	if cam then refPos = cam.CFrame.Position end
 	local char = player.Character
-	if char and type(K.getRoot) == "function" then
+	if char then
 		local okR, root = pcall(K.getRoot, char)
 		if okR and root then refPos = root.Position end
 	end
@@ -416,7 +381,7 @@ local function scanRemotes()
 	table.sort(results, function(a, b)
 		local ha, hb = a.hint ~= nil, b.hint ~= nil
 		if ha ~= hb then return ha end
-		return safeFullName(a.remote) < safeFullName(b.remote)
+		return K.safeFullName(a.remote) < K.safeFullName(b.remote)
 	end)
 	return results
 end
@@ -437,7 +402,7 @@ local function scanBullets()
 	return found
 end
 
--- ===== namecall 侦听（发）=====
+-- ===== 发送间谍（__namecall 钩子）=====
 local function recordSpy(path, method, argsStr)
 	spyLog[#spyLog + 1] = string.format("%s %s:%s %s", nowStamp(), path, method, argsStr)
 	if #spyLog > CFG.SpyLogCap then table.remove(spyLog, 1) end
@@ -458,11 +423,12 @@ local function startSpy()
 	local hookFn = function(self, ...)
 		local m = getnamecallmethod()
 		if m == "FireServer" or m == "InvokeServer" then
-			-- 日志失败绝不影响原调用，全部包在 pcall 内
+			-- 参数先打包再进 pcall：嵌套闭包里不能直接用 ...
+			local args = table.pack(...)
 			pcall(function()
-				local path = safeFullName(self)
+				local path = K.safeFullName(self)
 				if spyFilter(path) then
-					recordSpy(path, m, fmtArgs(...))
+					recordSpy(path, m, fmtArgs(table.unpack(args, 1, args.n)))
 				end
 			end)
 		end
@@ -486,7 +452,7 @@ local function stopSpy()
 	oldNamecall = nil
 end
 
--- ===== OnClientEvent 侦听（收）=====
+-- ===== 接收监听（OnClientEvent）=====
 local function watchRemotes(remotes)
 	for _, c in pairs(watchConns) do pcall(function() c:Disconnect() end) end
 	table.clear(watchConns)
@@ -501,9 +467,11 @@ local function watchRemotes(remotes)
 			if (cn == "RemoteEvent" or cn == "UnreliableRemoteEvent") and r.Parent then
 				local okC, con = pcall(function()
 					return r.OnClientEvent:Connect(function(...)
+						-- 参数先打包再进 pcall：嵌套闭包里不能直接用 ...
+						local args = table.pack(...)
 						pcall(function()
 							incomingLog[#incomingLog + 1] = string.format("%s <- %s %s",
-								nowStamp(), safeFullName(r), fmtArgs(...))
+								nowStamp(), K.safeFullName(r), fmtArgs(table.unpack(args, 1, args.n)))
 							if #incomingLog > CFG.SpyLogCap then table.remove(incomingLog, 1) end
 						end)
 					end)
@@ -561,7 +529,7 @@ local function buildReport()
 	log("")
 	log("== 我乘坐的飞机 ==")
 	if mySeat and mySeat.Parent then
-		log("  座位: " .. safeFullName(mySeat) .. " (" .. mySeat.ClassName .. ")")
+		log("  座位: " .. K.safeFullName(mySeat) .. " (" .. mySeat.ClassName .. ")")
 		if myPlaneModel and myPlaneModel.Parent then
 			local now = os.clock()
 			if not myPlaneInfo or now - myPlaneInfoAt > CFG.TeamInfoTTL then
@@ -624,7 +592,7 @@ local function buildReport()
 	log("-- 名字带关键词 --")
 	if #hinted == 0 then log("  (无)") end
 	for _, rec in ipairs(hinted) do
-		log("  " .. safeFullName(rec.remote) .. " [" .. rec.remote.ClassName .. "] 命中:" .. rec.hint)
+		log("  " .. K.safeFullName(rec.remote) .. " [" .. rec.remote.ClassName .. "] 命中:" .. rec.hint)
 	end
 	log("-- 其它（前 60）--")
 	for i, rec in ipairs(plain) do
@@ -632,7 +600,7 @@ local function buildReport()
 			log("  … 其余 " .. (#plain - 60) .. " 个省略")
 			break
 		end
-		log("  " .. safeFullName(rec.remote) .. " [" .. rec.remote.ClassName .. "]")
+		log("  " .. K.safeFullName(rec.remote) .. " [" .. rec.remote.ClassName .. "]")
 	end
 
 	log("")
@@ -643,7 +611,7 @@ local function buildReport()
 		local velStr = okV and ("%.0f"):format(v.Magnitude) or "?"
 		local okS, s = pcall(function() return b.Size end)
 		local sizeStr = okS and ("%.1f"):format(s.Magnitude) or "?"
-		log(string.format("  %s | 速度:%s | 大小:%s", safeFullName(b), velStr, sizeStr))
+		log(string.format("  %s | 速度:%s | 大小:%s", K.safeFullName(b), velStr, sizeStr))
 	end
 
 	log("")
@@ -740,7 +708,6 @@ local function applyHighlights()
 			end
 		end
 	end
-	-- 移除已不在结果里的高亮
 	for model, h in pairs(highlightMap) do
 		if not alive[model] then
 			pcall(function() h:Destroy() end)
@@ -769,8 +736,8 @@ CFG.PanelSize = UDim2.new(0, CFG.PanelW, 0, totalH)
 CFG.PanelPos = UDim2.new(0.5, -CFG.PanelW / 2, 0.30, -totalH / 2)
 CFG.CollapseSize = UDim2.new(0, CFG.PanelW, 0, CFG.TitleH)
 
-gui, main = K.panel(NAME, CFG, bag)
-K.titleBar(main, CFG, bag, "飞机侦测", CFG.TitleH)
+local main = M.panel()
+K.titleBar(main, CFG, M.bag, "飞机侦测", CFG.TitleH)
 
 local scroll = mk("ScrollingFrame", {
 	Size = UDim2.new(1, 0, 1, -CFG.TitleH),
@@ -783,34 +750,16 @@ local scroll = mk("ScrollingFrame", {
 	AutomaticCanvasSize = Enum.AutomaticSize.Y,
 }, main)
 
-statusLabel = mk("TextLabel", {
+statusLabel = K.label(scroll, {
 	Size = UDim2.new(1, -8, 0, CFG.StatusH),
 	Position = UDim2.new(0, 4, 0, 0),
-	BackgroundTransparency = 1,
 	Text = "初始化…",
 	TextColor3 = Color3.fromRGB(235, 235, 235),
 	TextSize = 11,
-	Font = CFG.Font,
 	TextWrapped = true,
 	TextXAlignment = Enum.TextXAlignment.Left,
 	TextYAlignment = Enum.TextYAlignment.Top,
-}, scroll)
-
-local function halfButton(text, x, y, color, h)
-	return mk("TextButton", {
-		Size = UDim2.new(0.5, 0, 0, h),
-		Position = UDim2.new(x, 0, 0, y),
-		BackgroundColor3 = color,
-		BackgroundTransparency = CFG.Alpha,
-		BorderSizePixel = 0,
-		Text = text,
-		TextColor3 = Color3.new(1, 1, 1),
-		TextSize = 12,
-		Font = CFG.Font,
-		TextXAlignment = Enum.TextXAlignment.Center,
-		TextYAlignment = Enum.TextYAlignment.Center,
-	}, scroll)
-end
+}, CFG)
 
 local function setToggle(btn, on, label)
 	btn.Text = label .. (on and " 开" or " 关")
@@ -818,48 +767,43 @@ local function setToggle(btn, on, label)
 end
 
 local y0 = CFG.StatusH + 4
-local rowY = function(i) return y0 + CFG.RowH * (i - 1) end
+local function rowY(i) return y0 + CFG.RowH * (i - 1) end
 
-local rescanBtn = halfButton("重扫", 0, rowY(1), CFG.Col.Bind, CFG.RowH)
-local writeBtn = halfButton("写文件", 0.5, rowY(1), CFG.Col.Bind, CFG.RowH)
-local spyBtn = halfButton("发侦听 关", 0, rowY(2), CFG.Col.Off, CFG.RowH)
-local watchBtn = halfButton("收侦听 关", 0.5, rowY(2), CFG.Col.Off, CFG.RowH)
-local hlBtn = halfButton("高亮 关", 0, rowY(3), CFG.Col.Off, CFG.RowH)
-local autoBtn = halfButton("自动 关", 0.5, rowY(3), CFG.Col.Off, CFG.RowH)
+local rescanBtn = K.halfButton(scroll, "重扫", 0, rowY(1), CFG.Col.Bind, CFG.RowH, CFG)
+local writeBtn = K.halfButton(scroll, "写文件", 0.5, rowY(1), CFG.Col.Bind, CFG.RowH, CFG)
+local spyBtn = K.halfButton(scroll, "发侦听 关", 0, rowY(2), CFG.Col.Off, CFG.RowH, CFG)
+local watchBtn = K.halfButton(scroll, "收侦听 关", 0.5, rowY(2), CFG.Col.Off, CFG.RowH, CFG)
+local hlBtn = K.halfButton(scroll, "高亮 关", 0, rowY(3), CFG.Col.Off, CFG.RowH, CFG)
+local autoBtn = K.halfButton(scroll, "自动 关", 0.5, rowY(3), CFG.Col.Off, CFG.RowH, CFG)
 
 local SCORE_STEPS = {35, 45, 55, 70, 85}
 local scoreIdx = 3
-local scoreBtn = halfButton("判定分 " .. tostring(CFG.PlaneMinScore), 0, rowY(4), CFG.Col.Off, CFG.RowH)
-local allBtn = halfButton("全录 关", 0.5, rowY(4), CFG.Col.Off, CFG.RowH)
+local scoreBtn = K.halfButton(scroll, "判定分 " .. tostring(CFG.PlaneMinScore), 0, rowY(4), CFG.Col.Off, CFG.RowH, CFG)
+local allBtn = K.halfButton(scroll, "全录 关", 0.5, rowY(4), CFG.Col.Off, CFG.RowH, CFG)
 
-local clearBtn = mk("TextButton", {
+local clearBtn = K.btn(scroll, {
 	Size = UDim2.new(1, 0, 0, 20),
 	Position = UDim2.new(0, 0, 0, rowY(4) + CFG.RowH + 2),
 	BackgroundColor3 = CFG.Col.Off,
 	BackgroundTransparency = 0.85,
-	BorderSizePixel = 0,
 	Text = "清空侦听记录",
 	TextColor3 = Color3.fromRGB(200, 200, 205),
-	TextSize = 11,
-	Font = CFG.Font,
-}, scroll)
+}, CFG)
 
-mk("TextLabel", {
+K.label(scroll, {
 	Size = UDim2.new(1, -8, 0, 16),
 	Position = UDim2.new(0, 4, 0, rowY(4) + CFG.RowH + 26),
-	BackgroundTransparency = 1,
 	Text = "流程: 上机 → 发侦听 → 开几枪 → 写文件",
 	TextColor3 = Color3.fromRGB(150, 155, 165),
 	TextSize = 10,
-	Font = CFG.Font,
 	TextXAlignment = Enum.TextXAlignment.Left,
-}, scroll)
+}, CFG)
 
-reg(rescanBtn.Activated:Connect(function()
+M.reg(rescanBtn.Activated:Connect(function()
 	rescan()
 end))
 
-reg(writeBtn.Activated:Connect(function()
+M.reg(writeBtn.Activated:Connect(function()
 	local target, n = writeReport()
 	local extra = ""
 	if type(setclipboard) == "function" then
@@ -869,7 +813,7 @@ reg(writeBtn.Activated:Connect(function()
 	print("[plane] 报告 → " .. tostring(target) .. " (" .. tostring(n) .. " 行)" .. extra)
 end))
 
-reg(spyBtn.Activated:Connect(function()
+M.reg(spyBtn.Activated:Connect(function()
 	if spyOn then
 		stopSpy()
 		spyOn = false
@@ -884,39 +828,39 @@ reg(spyBtn.Activated:Connect(function()
 	setToggle(spyBtn, spyOn, "发侦听")
 end))
 
-reg(watchBtn.Activated:Connect(function()
+M.reg(watchBtn.Activated:Connect(function()
 	watchOn = not watchOn
 	watchRemotes(remoteResults)
 	setToggle(watchBtn, watchOn, "收侦听")
 end))
 
-reg(hlBtn.Activated:Connect(function()
+M.reg(hlBtn.Activated:Connect(function()
 	previewOn = not previewOn
 	applyHighlights()
 	setToggle(hlBtn, previewOn, "高亮")
 end))
 
-reg(autoBtn.Activated:Connect(function()
+M.reg(autoBtn.Activated:Connect(function()
 	autoWrite = not autoWrite
 	lastAutoWrite = 0
 	lastAutoScan = 0
 	setToggle(autoBtn, autoWrite, "自动")
 end))
 
-reg(scoreBtn.Activated:Connect(function()
+M.reg(scoreBtn.Activated:Connect(function()
 	scoreIdx = scoreIdx % #SCORE_STEPS + 1
 	CFG.PlaneMinScore = SCORE_STEPS[scoreIdx]
 	scoreBtn.Text = "判定分 " .. tostring(CFG.PlaneMinScore)
 	rescan()
 end))
 
-reg(allBtn.Activated:Connect(function()
+M.reg(allBtn.Activated:Connect(function()
 	spyLogAll = not spyLogAll
 	if watchOn then watchRemotes(remoteResults) end
 	setToggle(allBtn, spyLogAll, "全录")
 end))
 
-reg(clearBtn.Activated:Connect(function()
+M.reg(clearBtn.Activated:Connect(function()
 	table.clear(spyLog)
 	table.clear(incomingLog)
 	refreshStatus()
@@ -931,11 +875,11 @@ local function syncSeatContext()
 			myPlaneModel = s:FindFirstAncestorWhichIsA("Model")
 			myPlaneInfo = nil
 			rescan()
-			-- 报告构建可能很重，defer 出事件回调，避免在 Seat 事件里卡帧
+			-- 报告构建可能较重，defer 出事件回调
 			task.defer(function()
-				if bag.alive() then writeReport() end
+				if M.bag.alive() then writeReport() end
 			end)
-			print("[plane] 登机 → 报告已更新: " .. safeFullName(myPlaneModel))
+			print("[plane] 登机 → 报告已更新: " .. K.safeFullName(myPlaneModel))
 		end
 	elseif mySeat then
 		mySeat = nil
@@ -945,17 +889,17 @@ local function syncSeatContext()
 	end
 end
 
-reg(K.context.changed:Connect(function(key)
+M.reg(K.context.changed:Connect(function(key)
 	if key == "seat" or key == "seated" then syncSeatContext() end
 end))
 
-reg(player:GetPropertyChangedSignal("Team"):Connect(function()
+M.reg(player:GetPropertyChangedSignal("Team"):Connect(function()
 	refreshStatus()
 	applyHighlights()
 end))
 
 -- 发侦听开启且在机上时，记录按键（帮助定位开火键）
-reg(UIS.InputBegan:Connect(function(input, gp)
+M.reg(UIS.InputBegan:Connect(function(input, gp)
 	if gp or not spyOn then return end
 	if not (mySeat and mySeat.Parent) then return end
 	if K.isTyping and K.isTyping() then return end
@@ -973,13 +917,13 @@ reg(UIS.InputBegan:Connect(function(input, gp)
 	end
 end))
 
-reg(RunService.Heartbeat:Connect(function()
+M.reg(RunService.Heartbeat:Connect(function()
 	K.heartbeat()
 	if not autoWrite then return end
 	local now = os.clock()
 	if now - lastAutoWrite < CFG.AutoWriteInterval then return end
 	lastAutoWrite = now
-	-- 扫描按自己的节奏跑，报告则每次都用最新数据（间谍日志本身是实时的）
+	-- 扫描按自己的节奏跑；间谍日志本身是实时的
 	if now - lastAutoScan >= CFG.AutoScanInterval then
 		lastAutoScan = now
 		pcall(rescan)
@@ -988,7 +932,7 @@ reg(RunService.Heartbeat:Connect(function()
 end))
 
 -- ===== 调试 / 卸载 =====
-K.registerDebug(NAME, function()
+M.debug(function()
 	local lines = {}
 	local function log(msg) lines[#lines + 1] = tostring(msg) end
 	log("file: " .. tostring(lastWriteTarget))
@@ -1000,21 +944,19 @@ K.registerDebug(NAME, function()
 	log("planes: " .. tostring(#planeResults))
 	log("remotes: " .. tostring(#remoteResults))
 	log("bullets: " .. tostring(#bulletResults))
-	log("mySeat: " .. safeFullName(mySeat))
-	log("myPlane: " .. safeFullName(myPlaneModel))
+	log("mySeat: " .. K.safeFullName(mySeat))
+	log("myPlane: " .. K.safeFullName(myPlaneModel))
 	log("spy: " .. tostring(spyOn) .. " hooked=" .. tostring(namecallHooked)
 		.. " log=" .. tostring(#spyLog))
-	log("watch: " .. tostring(watchOn) .. " conns=" .. tostring(countTable(watchConns))
+	log("watch: " .. tostring(watchOn) .. " conns=" .. tostring(K.countTable(watchConns))
 		.. " log=" .. tostring(#incomingLog))
-	log("preview: " .. tostring(previewOn) .. " hl=" .. tostring(countTable(highlightMap)))
+	log("preview: " .. tostring(previewOn) .. " hl=" .. tostring(K.countTable(highlightMap)))
 	log("autoWrite: " .. tostring(autoWrite))
 	log("planeMinScore: " .. tostring(CFG.PlaneMinScore))
 	return K.debugDump(NAME, lines)
 end)
 
-K.done(NAME, function()
-	if not bag.alive() then return end
-	bag.clear()
+M.done(function()
 	stopSpy()
 	for _, c in pairs(watchConns) do pcall(function() c:Disconnect() end) end
 	table.clear(watchConns)
@@ -1026,15 +968,11 @@ K.done(NAME, function()
 	planeResults, remoteResults, bulletResults = {}, {}, {}
 	spyOn, watchOn, previewOn, autoWrite, spyLogAll = false, false, false, false, false
 	mySeat, myPlaneModel, myPlaneInfo = nil, nil, nil
-	if gui then pcall(function() gui:Destroy() end); gui = nil end
 end)
 
 -- ===== 启动 =====
 rescan()
 syncSeatContext()
 if lastWriteTarget == "未输出" then writeReport() end
-print("[plane] v0.2 就绪（侦察报告 → " .. tostring(lastWriteTarget) .. "）")
+print("[plane] v0.3 就绪（侦察报告 → " .. tostring(lastWriteTarget) .. "）")
 
--- 说明：原版文件末尾有一行
---   loadstring(game:HttpGet("https://gist.githubusercontent.com/.../gistfile1.txt"))()
--- 属于来源不明的远程代码执行，已在 v0.2 移除。如确认需要，请自行加回。

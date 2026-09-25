@@ -1,84 +1,61 @@
--- 2_moc.lua
--- 移动增强（速度/飞行/高跳/穿墙/夜视/秒互动/旋转）
--- 依赖：kit-hud（KIT v9+）
--- 约定：缩进用单个 Tab
---
--- v9 改动：
---   1. 【P0】旋转不再顺带关闭角色碰撞。原版 updateSpin 无条件调用 applyNoClipOnce，
---      导致只开旋转也会穿墙；现在碰撞只由「穿墙」开关控制，两者解耦。
---   2. 【P1】删除从未被置位的死变量 lightStrobe / hornStrobe（闪光与鸣笛实际走
---      flashUntil / beepUntil，那两个条件分支永远不成立）。
---   3. 【P1】跳跃默认值增加 defaultsCaptured 守卫。原版 defaultJumpPower 与
---      defaultJumpHeight 初值都填 DefaultJumpHeight，首个角色绑定前若触发
---      restoreJump，会把 Height 的值写进 JumpPower。
---   4. 【P1】射线参数共享同一个 FilterDescendantsInstances 表。原版 updateCFrameSpeed
---      每帧新建两次 {character}，GC churn。
---   5. 【P1】RootVelocity 退出（上车/切飞行）时把水平速度归零。原版直接 return，
---      高速状态下上车会一直滑行。
---   6. 【P2】旋转改为状态迁移驱动，不再每帧 stopSpin + restoreCol 空转。
---   7. 【P2】applyNoClipOnce / restoreCol 去掉读取属性的 pcall，并跳过已为 false 的部件。
---   8. 【P2】清理不再重复恢复跳跃属性（原版手写四属性后又调 restoreJump）。
+-- moc.lua — KIT v10 单文件 bundle（由 build.py 生成，勿直接编辑）
+-- 源: src/modules/moc.lua
+-- 构建: python3 build.py
 
-local K = _G.KIT
-if not K or K.ver < 9 or type(K.boot) ~= "function" then
-	error("[moc] 请先执行 kit-hud（需要 _G.KIT v9）", 0)
-end
+-- ==== src/modules/moc.lua ====
+-- moc — 移动增强（模块名 MOC）
+-- 依赖：kit v10；功能：速度(3 模式)/飞行/高跳/无限跳/穿墙/旋转/夜视/秒互动
+-- 约定：缩进用单个 Tab
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UIS = game:GetService("UserInputService")
 local Lighting = game:GetService("Lighting")
 local GuiService = game:GetService("GuiService")
-local player = Players.LocalPlayer
+
+local K = _G.KIT
+if not K or K.ver < 10 or type(K.mod) ~= "function" then
+	error("[moc] 请先执行 kit.lua（需要 _G.KIT v10）", 0)
+end
 
 local NAME = "MOC"
 local mk = K.mk
-local bag, reg = K.boot(NAME)
-
--- 配置
-local CFG = {
-	DisplayOrder = 99999,
-	DefaultSpd = 16,
-	DefaultFlySpd = 50,
-	DefaultJumpHeight = 50,
-	Alpha = 0.72,
-	BG = Color3.fromRGB(20, 22, 28),
-	Font = K.font(true),
-	DragTol = 4,
-	TitleH = 20,
-	RowH = 30,
-	PanelW = 120,
-	SpinDefault = 50,
-	NvCCBrightness = 0.1,
-	NvCCContrast = 0.16,
-	NvCCSaturation = 0.15,
-	NvRemoveFog = true,
-	PromptDist = 1000,
-	FlyMaxForce = math.huge,
-	FlyMaxTorque = math.huge,
-	FlyMaxAngVel = 8,
-	FlyCollision = true,
-	FlyCollisionDist = 5,
-	PromptScanBatch = 300,
-	RootAccel = 120,
-	RootDecel = 160,
-	CFrameDeadzone = 0.02,
-	CFrameStickDeadzone = 0.06,
-	CFrameGrace = 0.12,
-	CFrameDirChange = 0.005,
-	CFrameTouchMaxX = 0.55,
-	CFrameTouchMinY = 0.25,
-	JitterAmount = 0.015,
-	JitterFreq = 3,
-	Col = K.Col,
-}
+local M = K.mod(NAME, {DisplayOrder = 99999, PanelW = 120})
+local CFG = M.cfg
+CFG.DefaultSpd = 16
+CFG.DefaultFlySpd = 50
+CFG.DefaultJumpHeight = 50
+CFG.SpinDefault = 50
+CFG.NvCCBrightness = 0.1
+CFG.NvCCContrast = 0.16
+CFG.NvCCSaturation = 0.15
+CFG.NvRemoveFog = true
+CFG.PromptDist = 1000
+CFG.FlyMaxForce = math.huge
+CFG.FlyMaxTorque = math.huge
+CFG.FlyMaxAngVel = 8
+CFG.FlyCollision = true
+CFG.FlyCollisionDist = 5
+CFG.PromptScanBatch = 300
+CFG.RootAccel = 120
+CFG.RootDecel = 160
+CFG.CFrameDeadzone = 0.02
+CFG.CFrameStickDeadzone = 0.06
+CFG.CFrameGrace = 0.12
+CFG.CFrameDirChange = 0.005
+CFG.CFrameTouchMaxX = 0.55
+CFG.CFrameTouchMinY = 0.25
+CFG.JitterAmount = 0.015
+CFG.JitterFreq = 3
 
 -- 速度模式
 local SPEED_MODES = {"RootVelocity", "WalkSpeed", "CFrame"}
-local loadedSpeedMode = K.loadPrefixed(NAME, "SpeedMode", "RootVelocity")
 local speedMode = "RootVelocity"
-for _, mode in ipairs(SPEED_MODES) do
-	if tostring(loadedSpeedMode) == mode then speedMode = mode; break end
+do
+	local loaded = K.loadPrefixed(NAME, "SpeedMode", "RootVelocity")
+	for _, mode in ipairs(SPEED_MODES) do
+		if tostring(loaded) == mode then speedMode = mode; break end
+	end
 end
 
 local spd = K.loadPrefixedNumber(NAME, "Spd", CFG.DefaultSpd)
@@ -86,9 +63,9 @@ local flySpeed = K.loadPrefixedNumber(NAME, "FlySpd", CFG.DefaultFlySpd)
 local highJumpValue = K.loadPrefixedNumber(NAME, "Jump", CFG.DefaultJumpHeight)
 local spinSpeed = K.loadPrefixedNumber(NAME, "Spin", CFG.SpinDefault)
 
+-- 状态
 local speedOn, fly, infJump, highJump, noClip, nv = false, false, false, false, false, false
-local spinOn = false
-local spinActive = false
+local spinOn, spinActive = false, false
 local flyTouchUp, flyTouchDown = false, false
 local rootVelocityApplied = false
 local char, root, hum = nil, nil, nil
@@ -113,29 +90,29 @@ local lastFlyCollisionHit = nil
 local spinDir = 1
 local spinForce = nil
 
-local btnText = K.toggleText
-
--- CFrame 触摸检测
+-- CFrame 触摸检测：屏幕左下区域且未点到 GUI 才算移动输入
 local function isCFrameTouch(input)
 	if input.UserInputType ~= Enum.UserInputType.Touch then return false end
 	local ok, sel = pcall(function() return GuiService.SelectedObject end)
 	if ok and sel then return false end
-	local ok2, els = pcall(function() return GuiService:GetGuiObjectsAtPosition(input.Position.X, input.Position.Y) end)
+	local ok2, els = pcall(function()
+		return GuiService:GetGuiObjectsAtPosition(input.Position.X, input.Position.Y)
+	end)
 	if ok2 and els and #els > 0 then return false end
 	local viewport = K.vp()
 	return input.Position.X <= viewport.X * CFG.CFrameTouchMaxX
 		and input.Position.Y >= viewport.Y * CFG.CFrameTouchMinY
 end
 
-reg(UIS.InputBegan:Connect(function(input)
+M.reg(UIS.InputBegan:Connect(function(input)
 	if isCFrameTouch(input) then cframeTouches[input] = true end
 end))
-reg(UIS.InputEnded:Connect(function(input)
+M.reg(UIS.InputEnded:Connect(function(input)
 	if input.UserInputType == Enum.UserInputType.Touch then cframeTouches[input] = nil end
 end))
-reg(UIS.WindowFocusReleased:Connect(function() table.clear(cframeTouches) end))
+M.reg(UIS.WindowFocusReleased:Connect(function() table.clear(cframeTouches) end))
 
--- 射线参数：三个共用一个排除表，角色变更时只更新一次
+-- 射线参数：三套共用一个排除表，角色变更时只更新一次
 local flyRayParams = RaycastParams.new()
 flyRayParams.FilterType = Enum.RaycastFilterType.Exclude
 local flyBoxParams = OverlapParams.new()
@@ -156,7 +133,7 @@ local function isSeated()
 	return ok and seatPart ~= nil
 end
 
--- 飞行
+-- 飞行：LinearVelocity + AlignOrientation（朝向对齐相机水平面）
 local function stopFly()
 	if flyLv then pcall(function() flyLv:Destroy() end); flyLv = nil end
 	if flyAo then pcall(function() flyAo:Destroy() end); flyAo = nil end
@@ -175,7 +152,7 @@ local function startFly()
 	flyLv.Name = "MocFlyVelocity"
 	flyLv.Attachment0 = flyAtt
 	flyLv.VectorVelocity = Vector3.zero
-	flyLv.MaxForce = CFG.FlyMaxForce or math.huge
+	flyLv.MaxForce = CFG.FlyMaxForce
 	flyLv.RelativeTo = Enum.ActuatorRelativeTo.World
 	flyLv.Parent = root
 	flyAo = Instance.new("AlignOrientation")
@@ -183,8 +160,8 @@ local function startFly()
 	flyAo.Mode = Enum.OrientationAlignmentMode.OneAttachment
 	flyAo.Attachment0 = flyAtt
 	flyAo.CFrame = root.CFrame
-	flyAo.MaxTorque = CFG.FlyMaxTorque or math.huge
-	pcall(function() flyAo.MaxAngularVelocity = CFG.FlyMaxAngVel or 8 end)
+	flyAo.MaxTorque = CFG.FlyMaxTorque
+	pcall(function() flyAo.MaxAngularVelocity = CFG.FlyMaxAngVel end)
 	flyAo.Parent = root
 end
 
@@ -196,7 +173,7 @@ local function getVerticalInput()
 	return value
 end
 
--- 穿墙
+-- 穿墙：只负责碰撞属性，不碰旋转
 local function restoreCol()
 	for part, value in pairs(savedCol) do
 		if part and part.Parent then pcall(function() part.CanCollide = value end) end
@@ -213,7 +190,7 @@ local function applyNoClipOnce()
 	end
 end
 
--- 旋转（只负责施加角速度，不碰碰撞属性）
+-- 旋转（AngularVelocity 状态迁移驱动；与穿墙解耦）
 local function stopSpin()
 	if spinForce then spinForce.destroy(); spinForce = nil end
 	spinActive = false
@@ -244,7 +221,7 @@ end
 
 -- 角色绑定
 local function setupCharacter(character, humanoid, rootPart)
-	if not bag.alive() then return end
+	if not M.bag.alive() then return end
 	char = character
 	hum = humanoid
 	root = rootPart
@@ -265,7 +242,7 @@ local function setupCharacter(character, humanoid, rootPart)
 	cframeLastDir = Vector3.zero
 	cframeLastDirChange = os.clock()
 	stopSpin()
-	if seatConnection then bag.unreg(seatConnection); seatConnection = nil end
+	if seatConnection then M.bag.unreg(seatConnection); seatConnection = nil end
 	if hum then
 		seatConnection = hum:GetPropertyChangedSignal("SeatPart"):Connect(function()
 			if fly and hum.SeatPart then
@@ -273,7 +250,7 @@ local function setupCharacter(character, humanoid, rootPart)
 				else fly = false; stopFly() end
 			end
 		end)
-		reg(seatConnection)
+		M.reg(seatConnection)
 	end
 	table.clear(charParts)
 	table.clear(savedCol)
@@ -283,8 +260,8 @@ local function setupCharacter(character, humanoid, rootPart)
 			savedCol[descendant] = descendant.CanCollide
 		end
 	end
-	if descAdded then bag.unreg(descAdded); descAdded = nil end
-	if descRemoving then bag.unreg(descRemoving); descRemoving = nil end
+	if descAdded then M.bag.unreg(descAdded); descAdded = nil end
+	if descRemoving then M.bag.unreg(descRemoving); descRemoving = nil end
 	descAdded = character.DescendantAdded:Connect(function(descendant)
 		if descendant:IsA("BasePart") then
 			charParts[descendant] = true
@@ -296,8 +273,8 @@ local function setupCharacter(character, humanoid, rootPart)
 		charParts[descendant] = nil
 		savedCol[descendant] = nil
 	end)
-	reg(descAdded)
-	reg(descRemoving)
+	M.reg(descAdded)
+	M.reg(descRemoving)
 	table.clear(charFilterTable)
 	charFilterTable[1] = character
 	flyRayParams.FilterDescendantsInstances = charFilterTable
@@ -305,21 +282,21 @@ local function setupCharacter(character, humanoid, rootPart)
 	cframeRayParams.FilterDescendantsInstances = charFilterTable
 	if noClip then
 		task.defer(function()
-			if bag.alive() and noClip and char == character then applyNoClipOnce() end
+			if M.bag.alive() and noClip and char == character then applyNoClipOnce() end
 		end)
 	end
 end
 
-K.watchCharacter(bag, {
+K.watchCharacter(M.bag, {
 	ready = setupCharacter,
 	removed = function(old)
 		if old ~= char then return end
 		stopFly()
 		stopSpin()
 		restoreCol()
-		if seatConnection then bag.unreg(seatConnection); seatConnection = nil end
-		if descAdded then bag.unreg(descAdded); descAdded = nil end
-		if descRemoving then bag.unreg(descRemoving); descRemoving = nil end
+		if seatConnection then M.bag.unreg(seatConnection); seatConnection = nil end
+		if descAdded then M.bag.unreg(descAdded); descAdded = nil end
+		if descRemoving then M.bag.unreg(descRemoving); descRemoving = nil end
 		char, root, hum = nil, nil, nil
 		table.clear(charParts)
 		table.clear(savedCol)
@@ -330,13 +307,13 @@ K.watchCharacter(bag, {
 	end,
 }, {requireRoot = false})
 
-reg(UIS.JumpRequest:Connect(function()
+M.reg(UIS.JumpRequest:Connect(function()
 	if infJump and hum and not K.isTyping() then
 		pcall(function() hum:ChangeState(Enum.HumanoidStateType.Jumping) end)
 	end
 end))
 
--- CFrame 速度
+-- CFrame 速度：每帧直接写 CFrame（含贴墙滑动、贴地吸附、微抖动防判定）
 local function cFrameHasRealInput()
 	if K.isTyping() then return false end
 	if K.keyDown(Enum.KeyCode.W) or K.keyDown(Enum.KeyCode.A)
@@ -404,7 +381,8 @@ local function updateCFrameSpeed(dt)
 	local currentCF = root.CFrame
 	local targetY = currentPos.Y
 	if char then
-		local groundHit = workspace:Raycast(currentPos + Vector3.new(0, 2.5, 0), Vector3.new(0, -9, 0), cframeRayParams)
+		local groundHit = workspace:Raycast(currentPos + Vector3.new(0, 2.5, 0),
+			Vector3.new(0, -9, 0), cframeRayParams)
 		if groundHit then
 			local hip = (hum and hum.HipHeight > 0) and hum.HipHeight or 2
 			local idealY = groundHit.Position.Y + hip + (root.Size.Y * 0.5)
@@ -418,7 +396,7 @@ local function updateCFrameSpeed(dt)
 	end)
 end
 
--- RootVelocity 速度
+-- RootVelocity 速度：加速度限制的水平速度接管
 local function clearRootVelocity()
 	if root and root.Parent then
 		local cur = root.AssemblyLinearVelocity
@@ -478,7 +456,7 @@ local function updateSpeed(dt)
 	end
 end
 
--- 高跳
+-- 高跳（尊重原版 UseJumpPower 模式）
 local function updateHighJump()
 	if not (highJump and hum) then return end
 	pcall(function()
@@ -505,7 +483,7 @@ local function restoreJump()
 	end)
 end
 
--- 飞行碰撞
+-- 飞行碰撞：前向射线 + 前方盒扫，命中实体速度投影避免穿模
 local function isSolidCollisionInstance(instance)
 	if not instance then return false end
 	if instance:IsA("Terrain") then return true end
@@ -533,19 +511,17 @@ local function checkFlyCollision(velocity)
 		return workspace:GetPartBoundsInBox(scanCF, Vector3.new(2, 2, 2), flyBoxParams)
 	end)
 	if ok and parts and #parts > 0 then
-		local solidPart = nil
 		for _, candidate in ipairs(parts) do
-			if isSolidCollisionInstance(candidate) then solidPart = candidate; break end
-		end
-		if solidPart then
-			lastFlyCollisionHit = solidPart
-			velocity = velocity * 0.5
+			if isSolidCollisionInstance(candidate) then
+				lastFlyCollisionHit = candidate
+				velocity = velocity * 0.5
+				break
+			end
 		end
 	end
 	return velocity
 end
 
--- 飞行输入
 local function getFlyInput()
 	local fb, lr = 0, 0
 	if not K.isTyping() then
@@ -592,7 +568,8 @@ local function updateFly()
 				local md = hum.MoveDirection
 				if md.Magnitude > 0.01 then
 					local flatForward = Vector3.new(forward.X, 0, forward.Z)
-					if flatForward.Magnitude > 0.001 then flatForward = flatForward.Unit else flatForward = Vector3.new(0, 0, -1) end
+					if flatForward.Magnitude > 0.001 then flatForward = flatForward.Unit
+					else flatForward = Vector3.new(0, 0, -1) end
 					local moveH = Vector3.new(md.X, 0, md.Z).Unit
 					local dotFwd = moveH:Dot(flatForward)
 					velocity = moveH * flySpeed + Vector3.new(0, forward.Y * dotFwd * flySpeed, 0)
@@ -607,7 +584,7 @@ local function updateFly()
 	end
 end
 
--- 穿墙更新
+-- 穿墙节流清扫（30Hz，补新增部件）
 local noClipNextSweep = 0
 local NOCLIP_SWEEP_INTERVAL = 1 / 30
 
@@ -619,7 +596,7 @@ local function updateNoClip()
 	applyNoClipOnce()
 end
 
--- 夜视
+-- 夜视：ColorCorrection + 灯光保存/还原 + 可选去雾
 local nvEffect = nil
 local nvNextCheck = 0
 local nvSavedLighting = nil
@@ -701,7 +678,7 @@ local function setNV(on)
 	else nvClearEffect(); nvRestore() end
 end
 
-reg(RunService.Heartbeat:Connect(function()
+M.reg(RunService.Heartbeat:Connect(function()
 	if not nv then return end
 	local now = os.clock()
 	if now < nvNextCheck then return end
@@ -709,7 +686,7 @@ reg(RunService.Heartbeat:Connect(function()
 	nvSync()
 end))
 
--- 秒互动
+-- 秒互动：off/normal/force 三态，直接改写 ProximityPrompt 属性
 local NOCD_MODES = {"off", "normal", "force"}
 local noCdModeIndex = 1
 local noCdVersion = 0
@@ -759,14 +736,13 @@ local function scanPrompts()
 	task.spawn(function()
 		K.guard("moc:promptScan", function()
 			local count = 0
-			local descendants = workspace:GetDescendants()
-			for _, descendant in ipairs(descendants) do
+			for _, descendant in ipairs(workspace:GetDescendants()) do
 				if v ~= noCdVersion then return end
 				if descendant:IsA("ProximityPrompt") then
 					patchPrompt(descendant)
 					count += 1
 					if count > PROMPT_SCAN_CAP then break end
-					if count % (CFG.PromptScanBatch or 300) == 0 then task.wait() end
+					if count % CFG.PromptScanBatch == 0 then task.wait() end
 				end
 			end
 		end)
@@ -782,14 +758,14 @@ local function setNoCdMode(mode)
 	if noCdActive() then scanPrompts() end
 end
 
-reg(workspace.DescendantAdded:Connect(function(descendant)
+M.reg(workspace.DescendantAdded:Connect(function(descendant)
 	if noCdActive() and descendant:IsA("ProximityPrompt") then patchPrompt(descendant) end
 end))
 
 -- 主循环
 local simDt = K.dtTracker(0.1)
 
-reg(RunService.PreSimulation:Connect(function(step)
+M.reg(RunService.PreSimulation:Connect(function(step)
 	K.heartbeat()
 	if not char or not char:IsDescendantOf(workspace) then return end
 	local deltaTime = simDt(step)
@@ -808,8 +784,8 @@ CFG.PanelSize = UDim2.new(0, CFG.PanelW, 0, totalH)
 CFG.PanelPos = UDim2.new(0.5, -CFG.PanelW / 2, 0.4, -totalH / 2)
 CFG.CollapseSize = UDim2.new(0, CFG.PanelW, 0, CFG.TitleH)
 
-local gui, main = K.panel(NAME, CFG, bag)
-K.titleBar(main, CFG, bag, "移动增强", CFG.TitleH)
+local main = M.panel()
+K.titleBar(main, CFG, M.bag, "移动增强", CFG.TitleH)
 
 K.makeToggleRow(main, CFG.TitleH, CFG.RowH, "速度", false, function(on)
 	speedOn = on
@@ -825,23 +801,17 @@ K.makeToggleRow(main, CFG.TitleH, CFG.RowH, "速度", false, function(on)
 end, function() return spd end, function(val)
 	spd = val
 	K.savePrefixed(NAME, "Spd", spd)
-end, bag, CFG)
+end, M.bag, CFG)
 
-speedModeButton = mk("TextButton", {
+speedModeButton = K.btn(main, {
 	Size = UDim2.new(1, 0, 0, CFG.RowH),
 	Position = UDim2.new(0, 0, 0, CFG.TitleH + CFG.RowH),
 	BackgroundColor3 = CFG.Col.Off,
-	BackgroundTransparency = CFG.Alpha,
-	BorderSizePixel = 0,
 	Text = "速度模式 " .. speedMode,
-	TextColor3 = Color3.new(1, 1, 1),
-	TextSize = 11, Font = CFG.Font,
-	TextXAlignment = Enum.TextXAlignment.Center,
-	TextYAlignment = Enum.TextYAlignment.Center,
-}, main)
+}, CFG)
 refreshSpeedModeButton()
 
-reg(speedModeButton.Activated:Connect(function()
+M.reg(speedModeButton.Activated:Connect(function()
 	local oldMode = speedMode
 	local index = 1
 	for i, mode in ipairs(SPEED_MODES) do
@@ -866,7 +836,7 @@ _, _, flySetter = K.makeToggleRow(main, CFG.TitleH + CFG.RowH * 2, CFG.RowH, "�
 end, function() return flySpeed end, function(val)
 	flySpeed = val
 	K.savePrefixed(NAME, "FlySpd", flySpeed)
-end, bag, CFG)
+end, M.bag, CFG)
 
 K.makeToggleRow(main, CFG.TitleH + CFG.RowH * 3, CFG.RowH, "高跳", false, function(on)
 	highJump = on
@@ -874,12 +844,12 @@ K.makeToggleRow(main, CFG.TitleH + CFG.RowH * 3, CFG.RowH, "高跳", false, func
 end, function() return highJumpValue end, function(val)
 	highJumpValue = val
 	K.savePrefixed(NAME, "Jump", highJumpValue)
-end, bag, CFG)
+end, M.bag, CFG)
 
 K.fullInput(main, CFG.TitleH + CFG.RowH * 4, CFG.RowH, "转速", CFG.Col.Push,
 	function() return spinSpeed end,
 	function(v) spinSpeed = v; K.savePrefixed(NAME, "Spin", spinSpeed) end,
-	bag, CFG)
+	M.bag, CFG)
 
 local grid = mk("Frame", {
 	Size = UDim2.new(1, 0, 0, CFG.RowH * GRID_ROWS),
@@ -894,31 +864,31 @@ mk("UIGridLayout", {
 }, grid)
 
 local function gridBtn(text, order, onClick)
-	return K.mkBtn(grid, text, CFG.Col.Off, order, onClick, bag, CFG)
+	return K.mkBtn(grid, text, CFG.Col.Off, order, onClick, M.bag, CFG)
 end
 
-gridBtn(btnText("无限跳", infJump), 1, function(button)
+gridBtn(K.toggleText("无限跳", infJump), 1, function(button)
 	infJump = not infJump
-	button.Text = btnText("无限跳", infJump)
+	button.Text = K.toggleText("无限跳", infJump)
 	button.BackgroundColor3 = infJump and CFG.Col.On or button:GetAttribute("Base")
 end)
 
-gridBtn(btnText("穿墙", noClip), 2, function(button)
+gridBtn(K.toggleText("穿墙", noClip), 2, function(button)
 	noClip = not noClip
-	button.Text = btnText("穿墙", noClip)
+	button.Text = K.toggleText("穿墙", noClip)
 	button.BackgroundColor3 = noClip and CFG.Col.On or button:GetAttribute("Base")
 	if noClip then applyNoClipOnce() else restoreCol() end
 end)
 
-gridBtn(btnText("旋转", spinOn), 3, function(button)
+gridBtn(K.toggleText("旋转", spinOn), 3, function(button)
 	spinOn = not spinOn
-	button.Text = btnText("旋转", spinOn)
+	button.Text = K.toggleText("旋转", spinOn)
 	button.BackgroundColor3 = spinOn and CFG.Col.On or button:GetAttribute("Base")
 end)
 
-gridBtn(btnText("夜视", nv), 4, function(button)
+gridBtn(K.toggleText("夜视", nv), 4, function(button)
 	setNV(not nv)
-	button.Text = btnText("夜视", nv)
+	button.Text = K.toggleText("夜视", nv)
 	button.BackgroundColor3 = nv and CFG.Col.On or button:GetAttribute("Base")
 end)
 
@@ -937,15 +907,15 @@ end)
 
 local flyUpButton = gridBtn("按住上升", 7, function() end)
 local flyDownButton = gridBtn("按住下降", 8, function() end)
-K.holdButton(flyUpButton, bag, function() flyTouchUp = true end, function() flyTouchUp = false end)
-K.holdButton(flyDownButton, bag, function() flyTouchDown = true end, function() flyTouchDown = false end)
+K.holdButton(flyUpButton, M.bag, function() flyTouchUp = true end, function() flyTouchUp = false end)
+K.holdButton(flyDownButton, M.bag, function() flyTouchDown = true end, function() flyTouchDown = false end)
 
-reg(UIS.WindowFocusReleased:Connect(function()
+M.reg(UIS.WindowFocusReleased:Connect(function()
 	flyTouchUp, flyTouchDown = false, false
 end))
 
 -- 调试
-K.registerDebug(NAME, function()
+M.debug(function()
 	local lines = {}
 	local function log(msg) lines[#lines + 1] = tostring(msg) end
 	log("speedOn: " .. tostring(speedOn))
@@ -976,14 +946,12 @@ K.registerDebug(NAME, function()
 	end
 	log("flyCollisionHit: " .. tostring(lastFlyCollisionHit))
 	log("kitErrors(moc): " .. tostring(#K.getErrors("moc:promptScan")))
-	return K.debugDump("MOC", lines)
+	return K.debugDump(NAME, lines)
 end)
 
 -- 清理
-K.done(NAME, function()
-	if not bag.alive() then return end
-	bag.clear()
-	fly, speedOn, infJump, highJump, noClip, nv, spinOn = false, false, false, false, false, false, false
+M.done(function()
+	speedOn, fly, infJump, highJump, noClip, nv, spinOn = false, false, false, false, false, false, false
 	flyTouchUp, flyTouchDown = false, false
 	stopFly()
 	stopSpin()
@@ -998,7 +966,7 @@ K.done(NAME, function()
 	restoreJump()
 	setNV(false)
 	setNoCdMode("off")
-	if gui then pcall(function() gui:Destroy() end); gui = nil end
 end)
 
 print("[KIT] moc ready")
+

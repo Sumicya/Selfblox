@@ -1,60 +1,37 @@
--- 4_drift.lua
--- 砖块漂移控制
--- 依赖：kit-hud（KIT v9+）
+-- drift — 漂移控制（模块名 DRIFT）
+-- 依赖：kit v10；功能：按住加速/刹车施加推进力、自适应增推、失速采样、
+--       手机踏板绑定（MobilePedals）、状态栏
 -- 约定：缩进用单个 Tab
---
--- v9 改动：
---   1. 【P1】失速采样移到力计算之前。原版 getDriveAcceleration 读取 speedStallFor，
---      而 speedStallFor 在同一帧更后面才更新，boost 永远慢一帧（采样周期 0.1s）。
---   2. 【P1】踏板 DescendantAdded/Removing 增加 0.3s 静默期。原版在 bindPedals 里
---      连上这两个事件的瞬间就会被 GUI 自身构建触发，pedalDirty 常驻，
---      导致 5 秒轮询每次都重绑一次。
---   3. 【P2】去掉 CFG.BoostStartSpeed / BoostRange / BoostMaxMultiplier / BoostStallExtra /
---      FollowVelMinSpeed 的 `or 默认值` 兜底：它们与 CFG 同表定义，必然存在。
---   4. 【P2】调试输出改用 NAME 而非硬编码 "DRIFT"。
---   5. 【P2】失速采样里 hvStall 改名 horizontalVelForAligning，语义更明确。
-
-local K = _G.KIT
-if not K or K.ver < 9 or type(K.boot) ~= "function" then
-	error("[drift] 请先执行 kit-hud（需要 _G.KIT v9）", 0)
-end
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UIS = game:GetService("UserInputService")
 local player = Players.LocalPlayer
 
+local K = _G.KIT
+if not K or K.ver < 10 or type(K.mod) ~= "function" then
+	error("[drift] 请先执行 kit.lua（需要 _G.KIT v10）", 0)
+end
+
 local NAME = "DRIFT"
 local mk, isP = K.mk, K.isP
-local bag, reg = K.boot(NAME)
-
--- 配置
-local CFG = {
-	Accelerate = 5,
-	Brake = 10,
-	StickDeadzone = 0.18,
-	GroundProbeInterval = 0.05,
-	FollowVelMinSpeed = 8,
-	StallDetectSeconds = 0.8,
-	StallMinSpeed = 2,
-	StallMinGain = 0.04,
-	StallSampleInterval = 0.1,
-	StallAlignFloor = 0.7,
-	AdaptiveBoost = true,
-	BoostStartSpeed = 110,
-	BoostRange = 120,
-	BoostMaxMultiplier = 2.5,
-	BoostStallExtra = 0.5,
-	DisplayOrder = 99997,
-	Alpha = 0.72,
-	BG = Color3.fromRGB(20, 22, 28),
-	Font = K.font(true),
-	DragTol = 4,
-	TitleH = 20,
-	RowH = 30,
-	PanelW = 120,
-	Col = K.Col,
-}
+local M = K.mod(NAME, {DisplayOrder = 99997})
+local CFG = M.cfg
+CFG.Accelerate = 5
+CFG.Brake = 10
+CFG.StickDeadzone = 0.18
+CFG.GroundProbeInterval = 0.05
+CFG.FollowVelMinSpeed = 8
+CFG.StallDetectSeconds = 0.8
+CFG.StallMinSpeed = 2
+CFG.StallMinGain = 0.04
+CFG.StallSampleInterval = 0.1
+CFG.StallAlignFloor = 0.7
+CFG.AdaptiveBoost = true
+CFG.BoostStartSpeed = 110
+CFG.BoostRange = 120
+CFG.BoostMaxMultiplier = 2.5
+CFG.BoostStallExtra = 0.5
 
 CFG.Accelerate = K.loadPrefixedNumber(NAME, "Acc", CFG.Accelerate)
 CFG.Brake = K.loadPrefixedNumber(NAME, "Brake", CFG.Brake)
@@ -75,26 +52,24 @@ local currentBoostMultiplier, currentDriveAcceleration = 1, CFG.Accelerate
 local lastFollowVelActive = false
 local drive = nil
 
-local toggleText = K.toggleText
-
 -- GUI
 local totalH = CFG.TitleH + CFG.RowH * 3 + 20
 CFG.PanelSize = UDim2.new(0, CFG.PanelW, 0, totalH)
 CFG.PanelPos = UDim2.new(0.5, -CFG.PanelW / 2, 0.4, -totalH / 2)
 CFG.CollapseSize = UDim2.new(0, CFG.PanelW, 0, CFG.TitleH)
 
-local gui, main = K.panel(NAME, CFG, bag)
-K.titleBar(main, CFG, bag, "漂移控制", CFG.TitleH)
+local main = M.panel()
+K.titleBar(main, CFG, M.bag, "漂移控制", CFG.TitleH)
 
 K.fullInput(main, CFG.TitleH, CFG.RowH, "加速", CFG.Col.Accel,
 	function() return CFG.Accelerate end,
 	function(v) CFG.Accelerate = v; K.savePrefixed(NAME, "Acc", v) end,
-	bag, CFG)
+	M.bag, CFG)
 
 K.fullInput(main, CFG.TitleH + CFG.RowH, CFG.RowH, "刹车", CFG.Col.Decel,
 	function() return CFG.Brake end,
 	function(v) CFG.Brake = v; K.savePrefixed(NAME, "Brake", v) end,
-	bag, CFG)
+	M.bag, CFG)
 
 local buttonRow = mk("Frame", {
 	Size = UDim2.new(1, 0, 0, CFG.RowH),
@@ -102,39 +77,17 @@ local buttonRow = mk("Frame", {
 	BackgroundTransparency = 1,
 }, main)
 
-local enableButton = mk("TextButton", {
-	Size = UDim2.new(0.5, 0, 1, 0),
-	BackgroundColor3 = enabled and CFG.Col.On or CFG.Col.Off,
-	BackgroundTransparency = CFG.Alpha,
-	BorderSizePixel = 0,
-	Text = toggleText("加速", enabled),
-	TextColor3 = Color3.new(1, 1, 1),
-	TextSize = 11, Font = CFG.Font,
-	TextXAlignment = Enum.TextXAlignment.Center,
-	TextYAlignment = Enum.TextYAlignment.Center,
-}, buttonRow)
+local enableButton = K.halfButton(buttonRow, K.toggleText("加速", enabled),
+	0, 0, enabled and CFG.Col.On or CFG.Col.Off, CFG.RowH, CFG)
 
-local rebindButton = mk("TextButton", {
-	Size = UDim2.new(0.5, 0, 1, 0),
-	Position = UDim2.new(0.5, 0, 0, 0),
-	BackgroundColor3 = CFG.Col.Bind,
-	BackgroundTransparency = CFG.Alpha,
-	BorderSizePixel = 0,
-	Text = "重新绑定",
-	TextColor3 = Color3.new(1, 1, 1),
-	TextSize = 11, Font = CFG.Font,
-	TextXAlignment = Enum.TextXAlignment.Center,
-	TextYAlignment = Enum.TextYAlignment.Center,
-}, buttonRow)
+local rebindButton = K.halfButton(buttonRow, "重新绑定",
+	0.5, 0, CFG.Col.Bind, CFG.RowH, CFG)
 
-local status = mk("TextLabel", {
+local status = K.label(main, {
 	Size = UDim2.new(1, 0, 0, 20),
 	Position = UDim2.new(0, 0, 0, CFG.TitleH + CFG.RowH * 3),
-	BackgroundTransparency = 1, BorderSizePixel = 0,
-	Text = "等待角色…", TextColor3 = CFG.Col.Wait, TextSize = 10, Font = CFG.Font,
-	TextXAlignment = Enum.TextXAlignment.Center,
-	TextYAlignment = Enum.TextYAlignment.Center,
-}, main)
+	Text = "等待角色…", TextColor3 = CFG.Col.Wait, TextSize = 10,
+}, CFG)
 
 local function setStatus(text, color)
 	status.Text = text
@@ -158,16 +111,16 @@ local function getDrive()
 	return drive
 end
 
-reg(enableButton.Activated:Connect(function()
+M.reg(enableButton.Activated:Connect(function()
 	enabled = not enabled
 	if not enabled and drive then drive.set(Vector3.zero) end
-	enableButton.Text = toggleText("加速", enabled)
+	enableButton.Text = K.toggleText("加速", enabled)
 	enableButton.BackgroundColor3 = enabled and CFG.Col.On or CFG.Col.Off
 	K.savePrefixed(NAME, "Enabled", enabled)
 end))
 
 -- 角色绑定
-local rebindCharacter = K.watchCharacter(bag, {
+local rebindCharacter = K.watchCharacter(M.bag, {
 	ready = function(char, hum, newRoot)
 		stopDrive()
 		character, root = char, newRoot
@@ -185,12 +138,12 @@ local rebindCharacter = K.watchCharacter(bag, {
 	end,
 }, {rootNames = {"Root", "HumanoidRootPart"}, requireHumanoid = false})
 
-reg(rebindButton.Activated:Connect(function()
+M.reg(rebindButton.Activated:Connect(function()
 	setStatus("重新绑定…", CFG.Col.Wait)
 	rebindCharacter()
 end))
 
--- 踏板绑定
+-- 踏板绑定（手机端 MobilePedals 的最左两个按钮 = 减速/加速）
 local function clearPedals()
 	for _, connection in ipairs(pedalConnections) do
 		pcall(function() connection:Disconnect() end)
@@ -212,9 +165,9 @@ local function bindPedals(frame)
 		return
 	end
 	pedalSource = frame
-	local function bind(button, role, setter)
+	local function bind(button, setter)
 		pedalConnections[#pedalConnections + 1] = button.InputBegan:Connect(function(input)
-			if isP(input) then activeTouch[input] = role; setter(true) end
+			if isP(input) then activeTouch[input] = setter; setter(true) end
 		end)
 		pedalConnections[#pedalConnections + 1] = button.InputEnded:Connect(function(input)
 			if isP(input) then activeTouch[input] = nil; setter(false) end
@@ -223,15 +176,14 @@ local function bindPedals(frame)
 			if not parent then setter(false) end
 		end)
 	end
-	bind(buttons[2], "W", function(val) touchW = val end)
-	bind(buttons[1], "S", function(val) touchS = val end)
-	-- 静默期：GUI 自身构建会触发 DescendantAdded，不在这段时间内标记为脏
-	pedalConnections[#pedalConnections + 1] = frame.DescendantAdded:Connect(function()
+	bind(buttons[2], function(val) touchW = val end)
+	bind(buttons[1], function(val) touchS = val end)
+	-- 静默期：GUI 自身构建会触发 DescendantAdded，不在该窗口内标记为脏
+	local function maybeDirty()
 		if os.clock() - pedalBoundAt > PEDAL_SETTLE then pedalDirty = true end
-	end)
-	pedalConnections[#pedalConnections + 1] = frame.DescendantRemoving:Connect(function()
-		if os.clock() - pedalBoundAt > PEDAL_SETTLE then pedalDirty = true end
-	end)
+	end
+	pedalConnections[#pedalConnections + 1] = frame.DescendantAdded:Connect(maybeDirty)
+	pedalConnections[#pedalConnections + 1] = frame.DescendantRemoving:Connect(maybeDirty)
 	pedalBoundAt = os.clock()
 	if #buttons == 2 then setStatus("踏板已绑定", CFG.Col.Good)
 	else setStatus("踏板已绑定（使用最左两个）", CFG.Col.Good) end
@@ -241,7 +193,7 @@ task.spawn(function()
 	K.guard("drift:pedalBind", function()
 		local playerGui = player:WaitForChild("PlayerGui")
 		local function tryBind()
-			if not bag.alive() then return end
+			if not M.bag.alive() then return end
 			local pedals = playerGui:FindFirstChild("MobilePedals")
 			local frame = pedals and pedals:FindFirstChild("Frame") or nil
 			if frame then
@@ -255,42 +207,35 @@ task.spawn(function()
 			end
 		end
 		tryBind()
-		reg(playerGui.ChildAdded:Connect(function(child)
+		M.reg(playerGui.ChildAdded:Connect(function(child)
 			if child.Name == "MobilePedals" then task.delay(0.15, tryBind) end
 		end))
-		reg(playerGui.ChildRemoved:Connect(function(child)
+		M.reg(playerGui.ChildRemoved:Connect(function(child)
 			if child.Name == "MobilePedals" then
 				clearPedals()
 				setStatus("等待踏板…", CFG.Col.Wait)
 			end
 		end))
-		while bag.alive() do
+		while M.bag.alive() do
 			task.wait(5)
 			if not pedalSource or pedalDirty then tryBind() end
 		end
 	end)
 end)
 
-reg(UIS.InputEnded:Connect(function(input)
-	if not isP(input) then return end
-	local role = activeTouch[input]
-	if not role then return end
+M.reg(UIS.InputEnded:Connect(function(input)
+	local setter = activeTouch[input]
+	if not setter then return end
 	activeTouch[input] = nil
-	if role == "W" then touchW = false else touchS = false end
+	setter(false)
 end))
 
-reg(UIS.WindowFocusReleased:Connect(function()
+M.reg(UIS.WindowFocusReleased:Connect(function()
 	touchW, touchS = false, false
 	table.clear(activeTouch)
 end))
 
--- 工具
-local function sign(n)
-	if n > 0 then return 1 end
-	if n < 0 then return -1 end
-	return 0
-end
-
+-- 力学工具
 local function getDriveAcceleration(forwardSpeed)
 	local multiplier = 1
 	if CFG.AdaptiveBoost then
@@ -307,7 +252,7 @@ local function getDriveAcceleration(forwardSpeed)
 	return currentDriveAcceleration
 end
 
--- 混合驱动方向
+-- 混合推进方向：高速且与速度方向有夹角时向速度方向偏移，减少侧滑抖动
 local function calculateBlendedThrustDirection(targetDir, horizontalVel)
 	local hSpeed = horizontalVel.Magnitude
 	if hSpeed <= CFG.FollowVelMinSpeed or targetDir.Magnitude < 0.001 then
@@ -342,8 +287,14 @@ local function sampleStall(w, direction, velocity, forwardSpeed)
 	lastForwardSpeedAt = sampleNow
 end
 
+local function sign(n)
+	if n > 0 then return 1 end
+	if n < 0 then return -1 end
+	return 0
+end
+
 -- 主循环
-reg(RunService.PreSimulation:Connect(function(step)
+M.reg(RunService.PreSimulation:Connect(function()
 	K.heartbeat()
 	if not enabled then
 		if drive then drive.set(Vector3.zero) end
@@ -392,7 +343,7 @@ reg(RunService.PreSimulation:Connect(function(step)
 	end
 	local velocity = root.AssemblyLinearVelocity
 	local forwardSpeed = velocity:Dot(direction)
-	-- 先采样失速，再算加速度（W+S 同时按下视为刹车，不计入失速）
+	-- W+S 同时按下视为刹车，不计入失速
 	if not (w and s) then
 		sampleStall(w, direction, velocity, forwardSpeed)
 	end
@@ -415,7 +366,7 @@ reg(RunService.PreSimulation:Connect(function(step)
 end))
 
 -- 调试
-K.registerDebug(NAME, function()
+M.debug(function()
 	local lines = {}
 	local function log(msg) lines[#lines + 1] = tostring(msg) end
 	log("enabled: " .. tostring(enabled))
@@ -446,16 +397,13 @@ K.registerDebug(NAME, function()
 end)
 
 -- 清理
-K.done(NAME, function()
-	if not bag.alive() then return end
+M.done(function()
 	enabled = false
 	stopDrive()
 	root, character = nil, nil
 	touchW, touchS = false, false
 	table.clear(activeTouch)
 	clearPedals()
-	bag.clear()
-	if gui then pcall(function() gui:Destroy() end); gui = nil end
 end)
 
 print("[KIT] drift ready")

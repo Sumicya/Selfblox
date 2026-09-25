@@ -1,48 +1,33 @@
--- 5_log.lua | KIT 连续日志
--- 依赖：kit-hud（KIT v9+）；无 toast 自动降级
--- 产物：KIT_Log.txt + 最多 3 个归档（_1/_2/_3），每档 512KB
+-- log — KIT 连续日志（模块名 KITLOG）
+-- 依赖：kit v10；产物：KIT_Log.txt + 最多 3 个归档（_1/_2/_3），每档 512KB
+-- 需要执行器提供 appendfile / writefile
 
-local NAME = "KITLOG"
 local K = _G.KIT
-if not K or K.ver < 9 or type(K.boot) ~= "function" then
-	error("[kitlog] 请先执行 kit-hud（需要 _G.KIT v9）", 0)
+if not K or K.ver < 10 or type(K.mod) ~= "function" then
+	error("[kitlog] 请先执行 kit.lua（需要 _G.KIT v10）", 0)
 end
 if not (type(appendfile) == "function" and type(writefile) == "function") then
 	error("[kitlog] 当前执行器不支持 appendfile/writefile", 0)
 end
 
-local mk = K.mk
-local bag, reg = K.boot(NAME)
-local toast = type(K.toast) == "function" and K.toast or function() end
-
--- 配置
-local CFG = {
-	DisplayOrder = 99996,
-	Alpha = 0.72,
-	BG = Color3.fromRGB(20, 22, 28),
-	Font = K.font(true),
-	DragTol = 4,
-	TitleH = 20,
-	RowH = 30,
-	PanelW = 128,
-	Interval = K.loadPrefixedNumber(NAME, "Interval", 2),
-	MaxBytes = 512 * 1024,
-	MaxArchives = 3,
-	File = "KIT_Log.txt",
-	Col = K.Col,
-}
+local NAME = "KITLOG"
+local M = K.mod(NAME, {DisplayOrder = 99996, PanelW = 128})
+local CFG = M.cfg
+CFG.Interval = K.loadPrefixedNumber(NAME, "Interval", 2)
+CFG.MaxBytes = 512 * 1024
+CFG.MaxArchives = 3
+CFG.File = "KIT_Log.txt"
 
 local running = true
 local samples = 0
 local written = 0
 
--- 归档滚动
+-- 归档滚动：删最老 → 逐级后移 → 当前文件进 _1 → 写新文件头
 local function archivePath(index)
 	return "KIT_Log_" .. index .. ".txt"
 end
 
 local function rollFile(reason)
-	-- 删除最老归档
 	local oldest = archivePath(CFG.MaxArchives)
 	if K.env.hasIsfile then
 		local okE, exists = pcall(isfile, oldest)
@@ -50,19 +35,16 @@ local function rollFile(reason)
 			pcall(delfile, oldest)
 		end
 	end
-	-- 后移：_2→_3, _1→_2
 	for i = CFG.MaxArchives - 1, 1, -1 do
 		local src = archivePath(i)
-		local dst = archivePath(i + 1)
 		if K.env.hasIsfile then
 			local okS, exists = pcall(isfile, src)
 			if okS and exists then
 				local okR, content = pcall(readfile, src)
-				if okR then pcall(writefile, dst, content) end
+				if okR then pcall(writefile, archivePath(i + 1), content) end
 			end
 		end
 	end
-	-- 当前 → _1
 	if K.env.hasIsfile then
 		local okC, exists = pcall(isfile, CFG.File)
 		if okC and exists then
@@ -70,16 +52,14 @@ local function rollFile(reason)
 			if okR then pcall(writefile, archivePath(1), content) end
 		end
 	end
-	-- 新文件头
 	local header = "---- " .. reason .. " " .. os.date("%H:%M:%S") .. " ----\n"
 	pcall(writefile, CFG.File, header)
 	written = #header
 end
 
--- 会话开始
 rollFile("会话开始 " .. os.date("%Y-%m-%d %H:%M:%S"))
 
--- 收集所有模块调试输出
+-- 收集所有已注册模块的调试输出 + 核心错误
 local function collectSamples()
 	local parts = {}
 	local names = {}
@@ -96,7 +76,6 @@ local function collectSamples()
 		end
 	end
 	K.quietDump = prevQuiet
-	-- 附加核心错误
 	local errCount = #K.errors
 	if errCount > 0 then
 		local seg = {"=== KITERRORS ===", ("count: %d"):format(errCount)}
@@ -123,21 +102,21 @@ local function sample()
 		.. table.concat(parts, "\n") .. "\n"
 	if written + #text > CFG.MaxBytes then
 		rollFile("滚动归档")
-		toast("日志归档滚动", K.Col.Wait)
+		K.toast("日志归档滚动", K.Col.Wait)
 	end
 	appendText(text)
 	samples += 1
 end
 
--- GUI（精确高度：标题20 + 输入26 + 按钮30 + 状态20 = 96）
+-- GUI：标题 + 间隔输入 + 录制/卸载 + 状态
 local inputRowH = 26
 local totalH = CFG.TitleH + inputRowH + CFG.RowH + 20
 CFG.PanelSize = UDim2.new(0, CFG.PanelW, 0, totalH)
 CFG.PanelPos = UDim2.new(0.02, 0, 0.72, 0)
 CFG.CollapseSize = UDim2.new(0, CFG.PanelW, 0, CFG.TitleH)
 
-local gui, main = K.panel(NAME, CFG, bag)
-K.titleBar(main, CFG, bag, "连续日志", CFG.TitleH)
+local main = M.panel()
+K.titleBar(main, CFG, M.bag, "连续日志", CFG.TitleH)
 
 K.fullInput(main, CFG.TitleH, inputRowH, "间隔", CFG.Col.Bind,
 	function() return CFG.Interval end,
@@ -145,45 +124,27 @@ K.fullInput(main, CFG.TitleH, inputRowH, "间隔", CFG.Col.Bind,
 		CFG.Interval = math.clamp(v, 0.5, 30)
 		K.savePrefixed(NAME, "Interval", CFG.Interval)
 	end,
-	bag, CFG)
+	M.bag, CFG)
 
-local recordButton = mk("TextButton", {
+local recordButton = K.btn(main, {
 	Size = UDim2.new(0.5, 0, 0, CFG.RowH),
 	Position = UDim2.new(0, 0, 0, CFG.TitleH + inputRowH),
-	BackgroundColor3 = running and CFG.Col.On or CFG.Col.Off,
-	BackgroundTransparency = CFG.Alpha,
-	BorderSizePixel = 0,
+	BackgroundColor3 = CFG.Col.On,
 	Text = K.toggleText("录制", running),
-	TextColor3 = Color3.new(1, 1, 1),
-	TextSize = 11, Font = CFG.Font,
-	TextXAlignment = Enum.TextXAlignment.Center,
-	TextYAlignment = Enum.TextYAlignment.Center,
-}, main)
+}, CFG)
 
-local unloadButton = mk("TextButton", {
+local unloadButton = K.btn(main, {
 	Size = UDim2.new(0.5, 0, 0, CFG.RowH),
 	Position = UDim2.new(0.5, 0, 0, CFG.TitleH + inputRowH),
 	BackgroundColor3 = CFG.Col.Stop,
-	BackgroundTransparency = CFG.Alpha,
-	BorderSizePixel = 0,
 	Text = "卸载",
-	TextColor3 = Color3.new(1, 1, 1),
-	TextSize = 11, Font = CFG.Font,
-	TextXAlignment = Enum.TextXAlignment.Center,
-	TextYAlignment = Enum.TextYAlignment.Center,
-}, main)
+}, CFG)
 
-local status = mk("TextLabel", {
+local status = K.label(main, {
 	Size = UDim2.new(1, 0, 0, 20),
 	Position = UDim2.new(0, 0, 0, CFG.TitleH + inputRowH + CFG.RowH),
-	BackgroundTransparency = 1,
-	BorderSizePixel = 0,
-	Text = "启动中…",
-	TextColor3 = CFG.Col.Wait,
-	TextSize = 10, Font = CFG.Font,
-	TextXAlignment = Enum.TextXAlignment.Center,
-	TextYAlignment = Enum.TextYAlignment.Center,
-}, main)
+	Text = "启动中…", TextColor3 = CFG.Col.Wait, TextSize = 10,
+}, CFG)
 
 local function setRunning(on)
 	running = on
@@ -191,45 +152,42 @@ local function setRunning(on)
 	recordButton.BackgroundColor3 = on and CFG.Col.On or CFG.Col.Off
 end
 
-reg(recordButton.Activated:Connect(function() setRunning(not running) end))
+M.reg(recordButton.Activated:Connect(function() setRunning(not running) end))
 
-local function cleanupSelf()
-	if not bag.alive() then return end
-	running = false
-	appendText("==== 会话结束 " .. os.date("%H:%M:%S") .. " ====\n")
-	bag.clear()
-	if gui then pcall(function() gui:Destroy() end); gui = nil end
+local function setStatus()
+	if running then
+		status.Text = string.format("样本 %d · %.0f KB", samples, written / 1024)
+		status.TextColor3 = CFG.Col.Good
+	else
+		status.Text = "已暂停 · 样本 " .. samples
+		status.TextColor3 = CFG.Col.Wait
+	end
 end
 
-reg(unloadButton.Activated:Connect(function() cleanupSelf() end))
-
--- 首次采样
 sample()
-status.Text = string.format("样本 %d · %.0f KB", samples, written / 1024)
-status.TextColor3 = CFG.Col.Good
+setStatus()
 
 -- 主循环
 task.spawn(function()
-	while bag.alive() do
+	while M.bag.alive() do
 		task.wait(math.clamp(CFG.Interval, 0.5, 30))
-		if not bag.alive() then break end
+		if not M.bag.alive() then break end
 		if running then
 			sample()
-			status.Text = string.format("样本 %d · %.0f KB", samples, written / 1024)
-			status.TextColor3 = CFG.Col.Good
-		else
-			status.Text = "已暂停 · 样本 " .. samples
-			status.TextColor3 = CFG.Col.Wait
 		end
+		setStatus()
 	end
 end)
 
--- 调试注册
-K.registerDebug(NAME, function()
+M.debug(function()
 	return string.format("=== KITLOG ===\nrun=%s int=%.1fs n=%d %.0fKB/%dKB archives=%d\n=== END ===",
 		tostring(running), CFG.Interval, samples,
 		written / 1024, CFG.MaxBytes / 1024, CFG.MaxArchives)
 end)
 
-K.done(NAME, cleanupSelf)
+M.done(function()
+	running = false
+	appendText("==== 会话结束 " .. os.date("%H:%M:%S") .. " ====\n")
+end)
+
 print("[kitlog] 就绪：每 " .. string.format("%.1f", CFG.Interval) .. "s → KIT_Log.txt（归档×" .. CFG.MaxArchives .. "）")
