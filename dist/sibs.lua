@@ -27,6 +27,7 @@ local M = K.mod(NAME, {DisplayOrder = 99998, TitleH = 24, InputRowH = 26, RowH =
 local CFG = M.cfg
 CFG.Acceleration = 500
 CFG.TurnSpeed = 2.2
+CFG.TurnRefSpeed = 25 -- 轮胎转向：车速达此值才给满转向角，以下按车速线性衰减，静止不转
 CFG.TurnGrip = 5
 CFG.HighSpeedTurnFloor = 0.62
 CFG.NoCharScan = 0.8
@@ -1169,6 +1170,7 @@ end
 
 -- 主物理循环：锁定维护 → 穿墙 → 油门/刹车/定速 → 转向+抓地 → 旋转
 local simDt = K.dtTracker(0.1)
+local spinWasActive = false
 
 M.reg(RunService.PreSimulation:Connect(function(step)
 	K.heartbeat()
@@ -1183,6 +1185,24 @@ M.reg(RunService.PreSimulation:Connect(function(step)
 		pcall(function() part.AssemblyLinearVelocity = Vector3.zero end)
 		velocity = Vector3.zero
 	end
+	-- 旋转滑条：放在循环最前，停止/飞车等早退分支也会更新——回中立刻停转（复位）
+	local spinActive = math.abs(spinSpeed) > 0.1
+	if spinActive then
+		if not spinHandle or not spinHandle.alive() or spinHandle.part ~= part then
+			if spinHandle then spinHandle.destroy() end
+			spinHandle = K.force.angular(part, "SIBS_Spin")
+		end
+		if spinHandle then spinHandle.set(Vector3.new(0, spinSpeed, 0)) end
+	else
+		if spinHandle then spinHandle.set(Vector3.zero) end
+		if spinWasActive then
+			pcall(function()
+				local av = part.AssemblyAngularVelocity
+				part.AssemblyAngularVelocity = Vector3.new(av.X, 0, av.Z)
+			end)
+		end
+	end
+	spinWasActive = spinActive
 	local seatThrottle, seatSteer = 0, 0
 	if seat and seat:IsA("VehicleSeat") and seat.Parent then
 		local okT, t = pcall(function() return seat.Throttle end)
@@ -1226,16 +1246,19 @@ M.reg(RunService.PreSimulation:Connect(function(step)
 			return
 		end
 	end
-	-- 转向：直接旋转向量（速度不敏感的角位移）
+	-- 轮胎转向：角速度 ∝ 车速（自行车模型，转弯半径恒定），静止时打方向不转
 	local turned = false
 	if math.abs(steerInput) > 0.02 then
-		turned = true
 		local speed = velocity.Magnitude
-		local speedFactor = math.clamp(1 - (speed / 180) * 0.35, CFG.HighSpeedTurnFloor, 1)
-		local turnAngle = steerInput * CFG.TurnSpeed * speedFactor * deltaTime
-		local pos = part.Position
-		local rot = CFrame.fromAxisAngle(Vector3.new(0, 1, 0), turnAngle)
-		pcall(function() part.CFrame = (rot * (part.CFrame - pos)) + pos end)
+		local speedGate = math.clamp(speed / CFG.TurnRefSpeed, 0, 1)
+		if speedGate > 0 then
+			turned = true
+			local speedFactor = math.clamp(1 - (speed / 180) * 0.35, CFG.HighSpeedTurnFloor, 1)
+			local turnAngle = steerInput * CFG.TurnSpeed * speedFactor * speedGate * deltaTime
+			local pos = part.Position
+			local rot = CFrame.fromAxisAngle(Vector3.new(0, 1, 0), turnAngle)
+			pcall(function() part.CFrame = (rot * (part.CFrame - pos)) + pos end)
+		end
 	end
 	local hasInput = wantAccel or wantDecel or cruise
 	lastGrounded = isGrounded(part)
@@ -1305,16 +1328,7 @@ M.reg(RunService.PreSimulation:Connect(function(step)
 			end
 		end
 	end
-	-- 旋转滑条（角速度常驻）
-	if math.abs(spinSpeed) > 0.1 then
-		if not spinHandle or not spinHandle.alive() or spinHandle.part ~= part then
-			if spinHandle then spinHandle.destroy() end
-			spinHandle = K.force.angular(part, "SIBS_Spin")
-		end
-		if spinHandle then spinHandle.set(Vector3.new(0, spinSpeed, 0)) end
-	else
-		if spinHandle then spinHandle.set(Vector3.zero) end
-	end
+	-- 旋转逻辑已提前到循环开头（见 spinActive）
 end))
 
 -- 座位同步（含 MaxSpeed 保存/还原，避免离座后永久失去限速）
@@ -2012,7 +2026,7 @@ local function createSteerSlider()
 		if sx then
 			local vp = K.vp()
 			local cx = math.clamp(tonumber(ox) or 12, 0, math.max(vp.X - STEER_W, 0))
-			local cy = math.clamp(tonumber(oy) or 0, 0, math.max(vp.Y - STEER_H, 0))
+			local cy = math.clamp(tonumber(oy) or 0, K.SAFE_TOP, math.max(vp.Y - STEER_H, K.SAFE_TOP))
 			steerTrack.Position = UDim2.new(tonumber(sx) or 0, cx, tonumber(sy) or 0.55, cy)
 		end
 	end
@@ -2034,9 +2048,12 @@ local function createSteerSlider()
 			and input.UserInputType ~= Enum.UserInputType.Touch then return end
 		local cur = Vector2.new(input.Position.X, input.Position.Y)
 		local delta = cur - steerOrigin
-		-- 轴向定模式：横滑 = 转向，竖滑 = 挪位置（8px 判定，定后不变）
+		-- 轴向定模式：横滑 = 转向；竖滑 = 挪位置，但仅面板折叠时允许（展开时竖滑作废）
 		if not steerAxis and (math.abs(delta.X) + math.abs(delta.Y)) > 8 then
 			steerAxis = (math.abs(delta.X) >= math.abs(delta.Y)) and "steer" or "move"
+			if steerAxis == "move" and K.collapsedState[main] ~= true then
+				steerAxis = "none"
+			end
 		end
 		if steerAxis == "move" then
 			steerMoving = true
@@ -2044,7 +2061,7 @@ local function createSteerSlider()
 			local minX = -steerBasePos.X.Scale * vp.X
 			local maxX = vp.X - STEER_W - steerBasePos.X.Scale * vp.X
 			if minX > maxX then minX, maxX = maxX, minX end
-			local minY = -steerBasePos.Y.Scale * vp.Y
+			local minY = K.SAFE_TOP - steerBasePos.Y.Scale * vp.Y
 			local maxY = vp.Y - STEER_H - steerBasePos.Y.Scale * vp.Y
 			if minY > maxY then minY, maxY = maxY, minY end
 			steerTrack.Position = UDim2.new(

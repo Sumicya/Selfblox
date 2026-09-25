@@ -716,6 +716,8 @@ end
 
 -- 面板位置安全区：顶部留出这段，防止标题栏被拖出/存出可点区（手机状态栏/顶栏手势区）
 local SAFE_TOP = 48
+K.SAFE_TOP = SAFE_TOP
+K.collapsedState = K.collapsedState or {}
 
 -- 带容差的拖拽；松手后把位置写进配置（key = ScreenGui.Name）
 function K.drag(handle, frame, bag, tolerance)
@@ -816,11 +818,13 @@ function K.titleBar(main, config, bag, title, height)
 	}, main)
 	local dragMoved = K.drag(button, main, bag, config.DragTol)
 	local collapsed = false
+	K.collapsedState[main] = false
 	local collapseSize = config.CollapseSize
 		or UDim2.new(config.PanelSize.X.Scale, config.PanelSize.X.Offset, 0, height)
 	bag.reg(button.Activated:Connect(function()
 		if dragMoved() then return end
 		collapsed = not collapsed
+		K.collapsedState[main] = collapsed
 		button.Text = title .. (collapsed and " [+]" or " [-]")
 		main.Size = collapsed and collapseSize or config.PanelSize
 	end))

@@ -249,6 +249,7 @@ end
 
 -- 主物理循环：锁定维护 → 穿墙 → 油门/刹车/定速 → 转向+抓地 → 旋转
 local simDt = K.dtTracker(0.1)
+local spinWasActive = false
 
 M.reg(RunService.PreSimulation:Connect(function(step)
 	K.heartbeat()
@@ -263,6 +264,24 @@ M.reg(RunService.PreSimulation:Connect(function(step)
 		pcall(function() part.AssemblyLinearVelocity = Vector3.zero end)
 		velocity = Vector3.zero
 	end
+	-- 旋转滑条：放在循环最前，停止/飞车等早退分支也会更新——回中立刻停转（复位）
+	local spinActive = math.abs(spinSpeed) > 0.1
+	if spinActive then
+		if not spinHandle or not spinHandle.alive() or spinHandle.part ~= part then
+			if spinHandle then spinHandle.destroy() end
+			spinHandle = K.force.angular(part, "SIBS_Spin")
+		end
+		if spinHandle then spinHandle.set(Vector3.new(0, spinSpeed, 0)) end
+	else
+		if spinHandle then spinHandle.set(Vector3.zero) end
+		if spinWasActive then
+			pcall(function()
+				local av = part.AssemblyAngularVelocity
+				part.AssemblyAngularVelocity = Vector3.new(av.X, 0, av.Z)
+			end)
+		end
+	end
+	spinWasActive = spinActive
 	local seatThrottle, seatSteer = 0, 0
 	if seat and seat:IsA("VehicleSeat") and seat.Parent then
 		local okT, t = pcall(function() return seat.Throttle end)
@@ -306,16 +325,19 @@ M.reg(RunService.PreSimulation:Connect(function(step)
 			return
 		end
 	end
-	-- 转向：直接旋转向量（速度不敏感的角位移）
+	-- 轮胎转向：角速度 ∝ 车速（自行车模型，转弯半径恒定），静止时打方向不转
 	local turned = false
 	if math.abs(steerInput) > 0.02 then
-		turned = true
 		local speed = velocity.Magnitude
-		local speedFactor = math.clamp(1 - (speed / 180) * 0.35, CFG.HighSpeedTurnFloor, 1)
-		local turnAngle = steerInput * CFG.TurnSpeed * speedFactor * deltaTime
-		local pos = part.Position
-		local rot = CFrame.fromAxisAngle(Vector3.new(0, 1, 0), turnAngle)
-		pcall(function() part.CFrame = (rot * (part.CFrame - pos)) + pos end)
+		local speedGate = math.clamp(speed / CFG.TurnRefSpeed, 0, 1)
+		if speedGate > 0 then
+			turned = true
+			local speedFactor = math.clamp(1 - (speed / 180) * 0.35, CFG.HighSpeedTurnFloor, 1)
+			local turnAngle = steerInput * CFG.TurnSpeed * speedFactor * speedGate * deltaTime
+			local pos = part.Position
+			local rot = CFrame.fromAxisAngle(Vector3.new(0, 1, 0), turnAngle)
+			pcall(function() part.CFrame = (rot * (part.CFrame - pos)) + pos end)
+		end
 	end
 	local hasInput = wantAccel or wantDecel or cruise
 	lastGrounded = isGrounded(part)
@@ -385,16 +407,7 @@ M.reg(RunService.PreSimulation:Connect(function(step)
 			end
 		end
 	end
-	-- 旋转滑条（角速度常驻）
-	if math.abs(spinSpeed) > 0.1 then
-		if not spinHandle or not spinHandle.alive() or spinHandle.part ~= part then
-			if spinHandle then spinHandle.destroy() end
-			spinHandle = K.force.angular(part, "SIBS_Spin")
-		end
-		if spinHandle then spinHandle.set(Vector3.new(0, spinSpeed, 0)) end
-	else
-		if spinHandle then spinHandle.set(Vector3.zero) end
-	end
+	-- 旋转逻辑已提前到循环开头（见 spinActive）
 end))
 
 -- 座位同步（含 MaxSpeed 保存/还原，避免离座后永久失去限速）

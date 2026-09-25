@@ -22,6 +22,7 @@ local M = K.mod(NAME, {DisplayOrder = 99998, TitleH = 24, InputRowH = 26, RowH =
 local CFG = M.cfg
 CFG.Acceleration = 500
 CFG.TurnSpeed = 2.2
+CFG.TurnRefSpeed = 25 -- 轮胎转向：车速达此值才给满转向角，以下按车速线性衰减，静止不转
 CFG.TurnGrip = 5
 CFG.HighSpeedTurnFloor = 0.62
 CFG.NoCharScan = 0.8

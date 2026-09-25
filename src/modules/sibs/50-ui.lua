@@ -399,7 +399,7 @@ local function createSteerSlider()
 		if sx then
 			local vp = K.vp()
 			local cx = math.clamp(tonumber(ox) or 12, 0, math.max(vp.X - STEER_W, 0))
-			local cy = math.clamp(tonumber(oy) or 0, 0, math.max(vp.Y - STEER_H, 0))
+			local cy = math.clamp(tonumber(oy) or 0, K.SAFE_TOP, math.max(vp.Y - STEER_H, K.SAFE_TOP))
 			steerTrack.Position = UDim2.new(tonumber(sx) or 0, cx, tonumber(sy) or 0.55, cy)
 		end
 	end
@@ -421,9 +421,12 @@ local function createSteerSlider()
 			and input.UserInputType ~= Enum.UserInputType.Touch then return end
 		local cur = Vector2.new(input.Position.X, input.Position.Y)
 		local delta = cur - steerOrigin
-		-- 轴向定模式：横滑 = 转向，竖滑 = 挪位置（8px 判定，定后不变）
+		-- 轴向定模式：横滑 = 转向；竖滑 = 挪位置，但仅面板折叠时允许（展开时竖滑作废）
 		if not steerAxis and (math.abs(delta.X) + math.abs(delta.Y)) > 8 then
 			steerAxis = (math.abs(delta.X) >= math.abs(delta.Y)) and "steer" or "move"
+			if steerAxis == "move" and K.collapsedState[main] ~= true then
+				steerAxis = "none"
+			end
 		end
 		if steerAxis == "move" then
 			steerMoving = true
@@ -431,7 +434,7 @@ local function createSteerSlider()
 			local minX = -steerBasePos.X.Scale * vp.X
 			local maxX = vp.X - STEER_W - steerBasePos.X.Scale * vp.X
 			if minX > maxX then minX, maxX = maxX, minX end
-			local minY = -steerBasePos.Y.Scale * vp.Y
+			local minY = K.SAFE_TOP - steerBasePos.Y.Scale * vp.Y
 			local maxY = vp.Y - STEER_H - steerBasePos.Y.Scale * vp.Y
 			if minY > maxY then minY, maxY = maxY, minY end
 			steerTrack.Position = UDim2.new(
