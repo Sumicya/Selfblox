@@ -100,7 +100,7 @@ function K.titleBar(main, config, bag, title, height)
 	local button = K.mk("TextButton", {
 		Size = UDim2.new(1, 0, 0, height),
 		BackgroundColor3 = config.BG or K.THEME.BG,
-		BackgroundTransparency = config.Alpha or K.THEME.Alpha,
+		BackgroundTransparency = 0, -- 标题栏纯色：避免与面板叠色出现透光接缝
 		BorderSizePixel = 0, Active = true, Text = title .. " [-]",
 		TextColor3 = Color3.new(1, 1, 1), TextSize = 13, Font = config.Font or K.THEME.Font,
 		TextXAlignment = Enum.TextXAlignment.Center, TextYAlignment = Enum.TextYAlignment.Center,
