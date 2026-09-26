@@ -28,10 +28,13 @@ local function reg(c)
 end
 
 local function mk(className, props, parent)
-	local inst = Instance.new(className, props)
-	if parent then
-		inst.Parent = parent
+	local inst = Instance.new(className)
+	for k, v in pairs(props or {}) do
+		if k ~= "Parent" then
+			inst[k] = v
+		end
 	end
+	inst.Parent = parent or props.Parent
 	return inst
 end
 
