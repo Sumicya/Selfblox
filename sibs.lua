@@ -175,7 +175,8 @@ local ALPHA = 0.72
 local SAFE_TOP = 48
 local TITLE_H, INPUT_ROW_H, ROW_H, SIG_ROW_H, BTN_H, PANEL_W = 24, 26, 32, 30, 44, 180
 
-local seat = nil
+local B = {} -- UI/状态合并表(避免超 200 local 寄存器上限)
+B.seat = nil
 local acceleration = CFG.Acceleration
 local accelerating, decelerating = false, false
 local steerValue = 0
@@ -191,23 +192,22 @@ local noClip = cfgGet("SIBSNoClip", false) == true
 local carFly = false
 local flyUp, flyDown = false, false
 local flyVertVel = 0
-local driveForce, driveAtt = nil, nil
-local carFlyForce, carFlyAtt = nil, nil
 local lightsOn = false
-local nativeHead, nativeTail = {}, {}
-local createdLamps = {}
+B.nativeHead = {}
+B.nativeTail = {}
+B.createdLamps = {}
 local lightSteady = false
 local hornSteady = false
 local flashUntil, beepUntil = 0, 0
 local hornKeyIsDown = false
-local clipParts, clipWheels = {}, {}
+B.clipParts = {}
+B.clipWheels = {}
 local clipDirty = true
 local clipOriginal = setmetatable({}, { __mode = "k" })
 local clipSetState = setmetatable({}, { __mode = "k" })
-local clipModel = nil
+B.clipModel = nil
 local clipFalling = false
 local reverseHold = false
-local myVehicleModel, myVehicleName, myVehicleAsm = nil, nil, nil
 local lastAim = nil
 local learnedRoots = setmetatable({}, { __mode = "k" })
 local modelAddedConn = nil
@@ -219,12 +219,9 @@ local forceRescan = false
 local seatMaxSpeedSaved = setmetatable({}, { __mode = "k" })
 
 -- UI 按钮 local（定义早、赋值晚：帮助函数可先引用）
-local switchButton, stopButton
 local collapsed = false
 
 -- 前向声明：这些函数在后面才定义，但锁定/座位/面板逻辑会调用
-local rearmLights, collectEngineSounds, clearDrive, ensureDrive, setDriveForce
-local steerRelease
 
 -- ===== 3. 工具 / 输入 =====
 
@@ -271,10 +268,10 @@ local function isPointer(input)
 		or input.UserInputType == Enum.UserInputType.MouseButton1
 end
 
-local toastGui = nil
+B.toastGui = nil
 local function toast(text, color)
-	if not toastGui or not toastGui.Parent then
-		toastGui = mk("ScreenGui", {
+	if not B.toastGui or not B.toastGui.Parent then
+		B.toastGui = mk("ScreenGui", {
 			Name = NAME .. "_Toast", ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = 100000,
 		}, GuiRoot)
 	end
@@ -284,7 +281,7 @@ local function toast(text, color)
 		BorderSizePixel = 0, Text = tostring(text), TextColor3 = color or Color3.fromRGB(240, 244, 255),
 		TextSize = 13, Font = FONT, TextXAlignment = Enum.TextXAlignment.Center,
 		TextYAlignment = Enum.TextYAlignment.Center,
-	}, toastGui)
+	}, B.toastGui)
 	task.delay(2.2, function()
 		pcall(function() label:Destroy() end)
 	end)
@@ -688,13 +685,13 @@ local function rememberMyVehicle(model, anchor)
 	if not model or not model.Parent then
 		return
 	end
-	myVehicleModel = model
-	myVehicleAsm = nil
-	myVehicleName = vehicleLabelFrom(anchor or model)
+	B.myVehicleModel = model
+	B.myVehicleAsm = nil
+	B.myVehicleName = vehicleLabelFrom(anchor or model)
 	if anchor and anchor.Parent then
 		local okA, asm = pcall(function() return anchor.AssemblyRootPart end)
 		if okA and asm and asm.Parent then
-			myVehicleAsm = asm
+			B.myVehicleAsm = asm
 		end
 	end
 end
@@ -707,21 +704,21 @@ local function isMyVehicle(model)
 	if not rp then
 		return false
 	end
-	if myVehicleAsm then
+	if B.myVehicleAsm then
 		local okA, asm = pcall(function() return rp.AssemblyRootPart end)
-		if okA and asm == myVehicleAsm then
+		if okA and asm == B.myVehicleAsm then
 			return true
 		end
 	end
-	if myVehicleName and vehicleLabelFrom(rp) == myVehicleName then
+	if B.myVehicleName and vehicleLabelFrom(rp) == B.myVehicleName then
 		return true
 	end
-	return model == myVehicleModel
+	return model == B.myVehicleModel
 end
 
 local function getControlledVehicleModel()
-	if seat and seat.Parent then
-		local m = seat:FindFirstAncestorWhichIsA("Model")
+	if B.seat and B.seat.Parent then
+		local m = B.seat:FindFirstAncestorWhichIsA("Model")
 		if m then
 			return m
 		end
@@ -1018,8 +1015,8 @@ end
 
 -- 载具水平朝向：座位 → 控制座位 → 锁定根
 local function getVehicleFacing(root)
-	if seat and seat.Parent then
-		local l = seat.CFrame.LookVector
+	if B.seat and B.seat.Parent then
+		local l = B.seat.CFrame.LookVector
 		local f = flat(l)
 		if f.Magnitude > 0.001 then
 			return f.Unit
@@ -1047,11 +1044,11 @@ end
 -- ===== 5. 锁定 / 换车 / 自动锁定 =====
 
 local function setNoCharLabel(extra)
-	if not switchButton then
+	if not B.switchButton then
 		return
 	end
 	if locked and lockModel then
-		local name = tostring(myVehicleName or lockModel.Name)
+		local name = tostring(B.myVehicleName or lockModel.Name)
 		local tag = " "
 		if playerOwnsModel(lockModel) then
 			tag = "·主"
@@ -1062,9 +1059,9 @@ local function setNoCharLabel(extra)
 		if #name > maxLen then
 			name = name:sub(1, maxLen - 1) .. "…"
 		end
-		switchButton.Text = "换车 " .. name .. tag
+		B.switchButton.Text = "换车 " .. name .. tag
 	else
-		switchButton.Text = extra or "换车"
+		B.switchButton.Text = extra or "换车"
 	end
 end
 
@@ -1104,10 +1101,10 @@ local function applyLock(model)
 	clipFalling = false
 	rememberMyVehicle(model, lockPart)
 	learnContainerFromModel(model)
-	rearmLights()
-	collectEngineSounds()
+	B.rearmLights()
+	B.collectEngineSounds()
 	setNoCharLabel()
-	toast("锁定 " .. tostring(myVehicleName or model.Name), COL.Good)
+	toast("锁定 " .. tostring(B.myVehicleName or model.Name), COL.Good)
 	if modelAddedConn then
 		pcall(function() modelAddedConn:Disconnect() end)
 		modelAddedConn = nil
@@ -1124,8 +1121,8 @@ local function applyLock(model)
 				if newScore > lockPartScore then
 					lockPart = resolveAssemblyAnchor(desc)
 					lockPartScore = newScore
-					clearDrive()
-					ensureDrive(lockPart)
+					B.clearDrive()
+					B.ensureDrive(lockPart)
 					if newScore >= 90 and modelAddedConn then
 						pcall(function() modelAddedConn:Disconnect() end)
 						modelAddedConn = nil
@@ -1253,11 +1250,11 @@ local function updateLockBinding(now)
 			end
 			return
 		end
-		clearDrive()
+		B.clearDrive()
 		locked = false
 		reconnectTarget = lockModel
 		resetLockState()
-		collectEngineSounds()
+		B.collectEngineSounds()
 		setNoCharLabel("重连新车…")
 		toast("锁定丢失", COL.Bad)
 	end
@@ -1285,13 +1282,13 @@ local function updateLockBinding(now)
 		return
 	end
 	-- 优先找回我的车（装配体 → 容器名）
-	if myVehicleAsm then
+	if B.myVehicleAsm then
 		for _, m in ipairs(models) do
 			if modelIsVehicleLike(m) and not modelExcluded(m) then
 				local rp = getRootPart(m)
 				if rp then
 					local okA, asm = pcall(function() return rp.AssemblyRootPart end)
-					if okA and asm == myVehicleAsm then
+					if okA and asm == B.myVehicleAsm then
 						if applyLock(m) then
 							return
 						end
@@ -1300,11 +1297,11 @@ local function updateLockBinding(now)
 			end
 		end
 	end
-	if myVehicleName then
+	if B.myVehicleName then
 		for _, m in ipairs(models) do
 			if modelIsVehicleLike(m) and not modelExcluded(m) then
 				local rp = getRootPart(m)
-				if rp and vehicleLabelFrom(rp) == myVehicleName then
+				if rp and vehicleLabelFrom(rp) == B.myVehicleName then
 					if applyLock(m) then
 						return
 					end
@@ -1355,20 +1352,20 @@ end))
 
 -- ===== 6. 驱动力 / 穿墙 / 悬浮 / 翻转 / 飞车 =====
 
-clearDrive = function()
-	if driveForce then
-		pcall(function() driveForce:Destroy() end)
-		driveForce = nil
+B.clearDrive = function()
+	if B.driveForce then
+		pcall(function() B.driveForce:Destroy() end)
+		B.driveForce = nil
 	end
-	if driveAtt then
-		pcall(function() driveAtt:Destroy() end)
-		driveAtt = nil
+	if B.driveAtt then
+		pcall(function() B.driveAtt:Destroy() end)
+		B.driveAtt = nil
 	end
 end
 
-ensureDrive = function(part)
+B.ensureDrive = function(part)
 	if not part or not part.Parent then
-		clearDrive()
+		B.clearDrive()
 		return nil
 	end
 	if part.Anchored then
@@ -1382,7 +1379,7 @@ ensureDrive = function(part)
 			end
 		end
 		if part.Anchored then
-			clearDrive()
+			B.clearDrive()
 			return nil
 		end
 	end
@@ -1390,22 +1387,22 @@ ensureDrive = function(part)
 	if okR and asmRoot and asmRoot ~= part and asmRoot.Parent and not asmRoot.Anchored then
 		part = asmRoot
 	end
-	if driveForce and driveForce.Parent == part then
-		return driveForce
+	if B.driveForce and B.driveForce.Parent == part then
+		return B.driveForce
 	end
-	clearDrive()
-	driveAtt = mk("Attachment", { Name = "SIBS_DriveAtt" }, part)
-	driveForce = mk("VectorForce", {
-		Name = "SIBS_DriveForce", Attachment0 = driveAtt,
+	B.clearDrive()
+	B.driveAtt = mk("Attachment", { Name = "SIBS_DriveAtt" }, part)
+	B.driveForce = mk("VectorForce", {
+		Name = "SIBS_DriveForce", Attachment0 = B.driveAtt,
 		Force = Vector3.zero, RelativeTo = Enum.ActuatorRelativeTo.World,
 		ApplyAtCenterOfMass = true,
 	}, part)
-	return driveForce
+	return B.driveForce
 end
 
-setDriveForce = function(v)
-	if driveForce then
-		pcall(function() driveForce.Force = v end)
+B.setDriveForce = function(v)
+	if B.driveForce then
+		pcall(function() B.driveForce.Force = v end)
 	end
 end
 
@@ -1438,25 +1435,25 @@ local function setPartCollision(part, value)
 end
 
 local function rebuildClipParts()
-	for _, part in ipairs(clipParts) do
+	for _, part in ipairs(B.clipParts) do
 		if part and part.Parent then
 			local original = clipOriginal[part]
 			pcall(function() part.CanCollide = original ~= false end)
 		end
 		clipSetState[part] = nil
 	end
-	for _, w in ipairs(clipWheels) do
+	for _, w in ipairs(B.clipWheels) do
 		if w and w.Parent then
 			local original = clipOriginal[w]
 			pcall(function() w.CanCollide = original ~= false end)
 		end
 		clipSetState[w] = nil
 	end
-	table.clear(clipParts)
-	table.clear(clipWheels)
+	table.clear(B.clipParts)
+	table.clear(B.clipWheels)
 	local model = getControlledVehicleModel()
 	if not model then
-		clipModel = nil
+		B.clipModel = nil
 		clipDirty = false
 		return
 	end
@@ -1464,13 +1461,13 @@ local function rebuildClipParts()
 		if descendant:IsA("BasePart") then
 			rememberOriginal(descendant)
 			if isWheel(descendant) then
-				clipWheels[#clipWheels + 1] = descendant
+				B.clipWheels[#B.clipWheels + 1] = descendant
 			else
-				clipParts[#clipParts + 1] = descendant
+				B.clipParts[#B.clipParts + 1] = descendant
 			end
 		end
 	end
-	clipModel = model
+	B.clipModel = model
 	clipDirty = false
 end
 
@@ -1478,32 +1475,32 @@ local function applyClipCollision()
 	if clipDirty then
 		rebuildClipParts()
 	end
-	for _, part in ipairs(clipParts) do
+	for _, part in ipairs(B.clipParts) do
 		setPartCollision(part, clipFalling and (clipOriginal[part] ~= false) or false)
 	end
-	for _, wheel in ipairs(clipWheels) do
+	for _, wheel in ipairs(B.clipWheels) do
 		setPartCollision(wheel, clipFalling and (clipOriginal[wheel] ~= false) or false)
 	end
 end
 
 local function restoreClip()
-	for _, part in ipairs(clipParts) do
+	for _, part in ipairs(B.clipParts) do
 		if part and part.Parent then
 			local original = clipOriginal[part]
 			pcall(function() part.CanCollide = original ~= false end)
 		end
 	end
-	for _, w in ipairs(clipWheels) do
+	for _, w in ipairs(B.clipWheels) do
 		if w and w.Parent then
 			local original = clipOriginal[w]
 			pcall(function() w.CanCollide = original ~= false end)
 		end
 	end
-	table.clear(clipParts)
-	table.clear(clipWheels)
+	table.clear(B.clipParts)
+	table.clear(B.clipWheels)
 	table.clear(clipOriginal)
 	table.clear(clipSetState)
-	clipModel = nil
+	B.clipModel = nil
 	clipFalling = false
 end
 
@@ -1567,13 +1564,13 @@ local function updateWallClip(part)
 	if noClip then
 		local ownModel = getControlledVehicleModel()
 		if not ownModel or not part or not part.Parent then
-			if clipModel then
+			if B.clipModel then
 				restoreClip()
 				clipDirty = true
 			end
 			return
 		end
-		if clipModel ~= ownModel then
+		if B.clipModel ~= ownModel then
 			restoreClip()
 			clipDirty = true
 			clipNextRebuild = 0
@@ -1602,7 +1599,7 @@ local function updateWallClip(part)
 			hoverSupport(part)
 		end
 	else
-		if clipModel then
+		if B.clipModel then
 			restoreClip()
 			clipDirty = true
 		end
@@ -1611,7 +1608,7 @@ end
 
 -- 翻转：旋转整个装配体（只转根部件会把车撕开）
 local function flipVehicle()
-	local part = seat or lockPart
+	local part = B.seat or lockPart
 	if not part or not part.Parent then
 		toast("无锁定车辆", COL.Wait)
 		return
@@ -1633,13 +1630,13 @@ end
 
 -- 飞车（LinearVelocity 接管；前向用锁定朝向，垂直由加速度积分）
 local function stopCarFly()
-	if carFlyForce then
-		pcall(function() carFlyForce:Destroy() end)
-		carFlyForce = nil
+	if B.carFlyForce then
+		pcall(function() B.carFlyForce:Destroy() end)
+		B.carFlyForce = nil
 	end
-	if carFlyAtt then
-		pcall(function() carFlyAtt:Destroy() end)
-		carFlyAtt = nil
+	if B.carFlyAtt then
+		pcall(function() B.carFlyAtt:Destroy() end)
+		B.carFlyAtt = nil
 	end
 	flyVertVel = 0
 end
@@ -1649,15 +1646,15 @@ local function updateCarFly(part, dt, seatThrottle)
 		stopCarFly()
 		return
 	end
-	if not carFlyForce or carFlyForce.Parent ~= part then
+	if not B.carFlyForce or B.carFlyForce.Parent ~= part then
 		stopCarFly()
-		carFlyAtt = mk("Attachment", { Name = "SIBS_FlyAtt" }, part)
-		carFlyForce = mk("LinearVelocity", {
-			Name = "SIBS_FlyVelocity", Attachment0 = carFlyAtt,
+		B.carFlyAtt = mk("Attachment", { Name = "SIBS_FlyAtt" }, part)
+		B.carFlyForce = mk("LinearVelocity", {
+			Name = "SIBS_FlyVelocity", Attachment0 = B.carFlyAtt,
 			VectorVelocity = Vector3.zero, MaxForce = math.huge,
 			RelativeTo = Enum.ActuatorRelativeTo.World,
 		}, part)
-		if not carFlyForce then
+		if not B.carFlyForce then
 			return
 		end
 	end
@@ -1690,7 +1687,7 @@ local function updateCarFly(part, dt, seatThrottle)
 	local cruiseSpeed = math.max(currentHVel.Magnitude, CFG.FlySpeed)
 	local targetHVel = (fwdInput ~= 0) and (look * (cruiseSpeed * fwdInput)) or currentHVel
 	pcall(function()
-		carFlyForce.VectorVelocity = Vector3.new(targetHVel.X, flyVertVel, targetHVel.Z)
+		B.carFlyForce.VectorVelocity = Vector3.new(targetHVel.X, flyVertVel, targetHVel.Z)
 	end)
 end
 
@@ -1719,20 +1716,20 @@ local function simDt(step)
 end
 
 local function refreshStopButton()
-	if not stopButton then
+	if not B.stopButton then
 		return
 	end
-	stopButton.Text = stopped and "急刹 开" or "急刹 关"
-	stopButton.BackgroundColor3 = stopped and COL.On or COL.Stop
+	B.stopButton.Text = stopped and "急刹 开" or "急刹 关"
+	B.stopButton.BackgroundColor3 = stopped and COL.On or COL.Stop
 end
 
 reg(RunService.PreSimulation:Connect(function(step)
 	local deltaTime = simDt(step)
 	local now = os.clock()
-	if not seat then
+	if not B.seat then
 		updateLockBinding(now)
 	end
-	local part = seat or lockPart
+	local part = B.seat or lockPart
 	updateWallClip(part)
 	if not part or not part:IsDescendantOf(workspace) then
 		return
@@ -1743,12 +1740,12 @@ reg(RunService.PreSimulation:Connect(function(step)
 		velocity = Vector3.zero
 	end
 	local seatThrottle, seatSteer = 0, 0
-	if seat and seat:IsA("VehicleSeat") and seat.Parent then
-		local okT, t = pcall(function() return seat.Throttle end)
+	if B.seat and B.seat:IsA("VehicleSeat") and B.seat.Parent then
+		local okT, t = pcall(function() return B.seat.Throttle end)
 		if okT then
 			seatThrottle = t
 		end
-		local okS, s = pcall(function() return seat.Steer end)
+		local okS, s = pcall(function() return B.seat.Steer end)
 		if okS then
 			seatSteer = s
 		end
@@ -1773,16 +1770,16 @@ reg(RunService.PreSimulation:Connect(function(step)
 			refreshStopButton()
 		else
 			targetSpeed = 0
-			local frc = ensureDrive(part)
+			local frc = B.ensureDrive(part)
 			if frc then
 				local mass = math.max(part.AssemblyMass, 1)
 				local hv = flat(velocity)
 				local spd = hv.Magnitude
 				if spd > CFG.BrakeDeadzone then
 					local brakeMult = math.clamp(spd / 50, 0.1, 1)
-					setDriveForce(-hv.Unit * (mass * brakeRate * brakeMult))
+					B.setDriveForce(-hv.Unit * (mass * brakeRate * brakeMult))
 				else
-					setDriveForce(Vector3.zero)
+					B.setDriveForce(Vector3.zero)
 					if hv.Magnitude > 0.1 then
 						pcall(function() part.AssemblyLinearVelocity = Vector3.new(0, velocity.Y, 0) end)
 					end
@@ -1808,7 +1805,7 @@ reg(RunService.PreSimulation:Connect(function(step)
 	local hasInput = wantAccel or wantDecel or cruise
 	lastGrounded = isGrounded(part)
 	if hasInput then
-		local frc = ensureDrive(part)
+		local frc = B.ensureDrive(part)
 		if frc then
 			local mass = math.max(part.AssemblyMass, 1)
 			local hv = flat(velocity)
@@ -1853,15 +1850,15 @@ reg(RunService.PreSimulation:Connect(function(step)
 			if force.Magnitude > maxForceLimit then
 				force = force.Unit * maxForceLimit
 			end
-			setDriveForce(force)
+			B.setDriveForce(force)
 			if not cruise then
 				targetSpeed = velocity:Dot(moveDir)
 			end
 		else
-			clearDrive()
+			B.clearDrive()
 		end
 	else
-		clearDrive()
+		B.clearDrive()
 		reverseHold = false
 		if not cruise then
 			local hv = flat(velocity)
@@ -1889,11 +1886,11 @@ end))
 
 -- 座位同步（含 MaxSpeed 保存/还原，避免离座后永久失去限速）
 local function setSeat(newSeat)
-	if seat == newSeat then
+	if B.seat == newSeat then
 		return
 	end
-	clearDrive()
-	local oldSeat = seat
+	B.clearDrive()
+	local oldSeat = B.seat
 	if oldSeat and oldSeat.Parent then
 		local original = seatMaxSpeedSaved[oldSeat]
 		if original then
@@ -1903,7 +1900,7 @@ local function setSeat(newSeat)
 	if oldSeat then
 		seatMaxSpeedSaved[oldSeat] = nil
 	end
-	seat = nil
+	B.seat = nil
 	accelerating, decelerating = false, false
 	steerValue = 0
 	cruise, stopped = false, false
@@ -1914,17 +1911,17 @@ local function setSeat(newSeat)
 	if not newSeat or (not newSeat:IsA("VehicleSeat") and not newSeat:IsA("Seat")) then
 		return
 	end
-	seat = newSeat
+	B.seat = newSeat
 	learnContainerFromModel(newSeat:FindFirstAncestorWhichIsA("Model"))
-	if seatMaxSpeedSaved[seat] == nil then
-		local okM, orig = pcall(function() return seat.MaxSpeed end)
+	if seatMaxSpeedSaved[B.seat] == nil then
+		local okM, orig = pcall(function() return B.seat.MaxSpeed end)
 		if okM then
-			seatMaxSpeedSaved[seat] = orig
+			seatMaxSpeedSaved[B.seat] = orig
 		end
 	end
-	pcall(function() seat.MaxSpeed = math.huge end)
-	rearmLights()
-	collectEngineSounds()
+	pcall(function() B.seat.MaxSpeed = math.huge end)
+	B.rearmLights()
+	B.collectEngineSounds()
 end
 
 local seatConns = {}
@@ -1962,7 +1959,7 @@ reg(player.CharacterAdded:Connect(bindSeatCharacter))
 local ENGINE_KEYWORDS = { "engine", "motor", "idle" }
 local engineSounds = {}
 
-collectEngineSounds = function()
+B.collectEngineSounds = function()
 	for _, rec in ipairs(engineSounds) do
 		if not rec.foreign then
 			pcall(function() rec.sound.PlaybackSpeed = rec.base end)
@@ -1992,7 +1989,7 @@ collectEngineSounds = function()
 end
 
 local function updateEngineSounds()
-	local part = seat or lockPart
+	local part = B.seat or lockPart
 	if not part or not part.Parent or #engineSounds == 0 then
 		return
 	end
@@ -2021,24 +2018,24 @@ end
 
 -- 灯光：优先接管车体自带灯（前向分组），否则创建三只覆盖灯
 local function restoreLamps()
-	for _, rec in ipairs(nativeHead) do
+	for _, rec in ipairs(B.nativeHead) do
 		pcall(function() rec.light.Enabled = rec.saved end)
 	end
-	for _, rec in ipairs(nativeTail) do
+	for _, rec in ipairs(B.nativeTail) do
 		pcall(function() rec.light.Enabled = rec.saved end)
 	end
-	table.clear(nativeHead)
-	table.clear(nativeTail)
-	for _, l in ipairs(createdLamps) do
+	table.clear(B.nativeHead)
+	table.clear(B.nativeTail)
+	for _, l in ipairs(B.createdLamps) do
 		pcall(function() l:Destroy() end)
 	end
-	table.clear(createdLamps)
+	table.clear(B.createdLamps)
 	lightsOn = false
 end
 
 local function collectNativeLights()
 	local model = getControlledVehicleModel()
-	local part = seat or lockPart
+	local part = B.seat or lockPart
 	if not model or not part or not part.Parent then
 		return
 	end
@@ -2061,12 +2058,12 @@ local function collectNativeLights()
 			local rel = (d.Parent.Position - anchorPos):Dot(fwd)
 			local rec = { light = d, saved = d.Enabled }
 			if rel >= 0 then
-				if #nativeHead < 12 then
-					nativeHead[#nativeHead + 1] = rec
+				if #B.nativeHead < 12 then
+					B.nativeHead[#B.nativeHead + 1] = rec
 				end
 			else
-				if #nativeTail < 8 then
-					nativeTail[#nativeTail + 1] = rec
+				if #B.nativeTail < 8 then
+					B.nativeTail[#B.nativeTail + 1] = rec
 				end
 			end
 		end
@@ -2078,12 +2075,12 @@ local function armLights()
 		return true
 	end
 	local model = getControlledVehicleModel()
-	local part = seat or lockPart
+	local part = B.seat or lockPart
 	if not model or not part or not part.Parent then
 		return false
 	end
 	collectNativeLights()
-	if #nativeHead > 0 or #nativeTail > 0 then
+	if #B.nativeHead > 0 or #B.nativeTail > 0 then
 		lightsOn = true
 		return true
 	end
@@ -2095,23 +2092,23 @@ local function armLights()
 				Name = "SIBS_OvFront", Brightness = 14, Range = 160, Angle = 85,
 				Face = Enum.NormalId.Front, Enabled = false,
 			}, parentPart)
-			createdLamps[#createdLamps + 1] = front
+			B.createdLamps[#B.createdLamps + 1] = front
 			local back = mk("SpotLight", {
 				Name = "SIBS_OvBack", Brightness = 8, Range = 80, Angle = 75,
 				Color = Color3.fromRGB(255, 40, 40), Face = Enum.NormalId.Back, Enabled = false,
 			}, parentPart)
-			createdLamps[#createdLamps + 1] = back
+			B.createdLamps[#B.createdLamps + 1] = back
 			local glow = mk("PointLight", {
 				Name = "SIBS_OvGlow", Brightness = 4, Range = 60, Enabled = false,
 			}, parentPart)
-			createdLamps[#createdLamps + 1] = glow
+			B.createdLamps[#B.createdLamps + 1] = glow
 		end)
-		lightsOn = #createdLamps > 0
+		lightsOn = #B.createdLamps > 0
 	end
 	return lightsOn
 end
 
-rearmLights = function()
+B.rearmLights = function()
 	restoreLamps()
 	if lightSteady or (os.clock() < flashUntil) then
 		armLights()
@@ -2119,13 +2116,13 @@ rearmLights = function()
 end
 
 local function applyLamps(on)
-	for _, rec in ipairs(nativeHead) do
+	for _, rec in ipairs(B.nativeHead) do
 		pcall(function() rec.light.Enabled = on end)
 	end
-	for _, rec in ipairs(nativeTail) do
+	for _, rec in ipairs(B.nativeTail) do
 		pcall(function() rec.light.Enabled = on end)
 	end
-	for _, l in ipairs(createdLamps) do
+	for _, l in ipairs(B.createdLamps) do
 		if l and l.Parent then
 			pcall(function() l.Enabled = on end)
 		end
@@ -2166,7 +2163,7 @@ local function detectHornKey()
 		return false
 	end
 	local container = getControlledVehicleModel()
-	if not container or not (seat and seat.Parent) then
+	if not container or not (B.seat and B.seat.Parent) then
 		toast("先坐进车里再点喇叭", COL.Wait)
 		return false
 	end
@@ -2261,16 +2258,16 @@ end
 
 -- ===== 8. 主面板 =====
 
-local panelSize = UDim2.new(0, PANEL_W, 0, 396)
-local panelPos = UDim2.new(0.5, -PANEL_W / 2, 0.4, -198)
+B.panelSize = UDim2.new(0, PANEL_W, 0, 396)
+B.panelPos = UDim2.new(0.5, -PANEL_W / 2, 0.4, -198)
 
-local gui = mk("ScreenGui", {
+B.gui = mk("ScreenGui", {
 	Name = NAME, ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = 99998,
 }, GuiRoot)
-local main = mk("Frame", {
-	Size = panelSize, Position = panelPos, BackgroundColor3 = BG,
+B.main = mk("Frame", {
+	Size = B.panelSize, Position = B.panelPos, BackgroundColor3 = BG,
 	BackgroundTransparency = ALPHA, BorderSizePixel = 0, ClipsDescendants = true,
-}, gui)
+}, B.gui)
 
 do
 	local saved = cfgGet("UI.Pos." .. NAME, nil)
@@ -2278,30 +2275,30 @@ do
 	if typeof(saved) == "string" then
 		local sx, ox, sy, oy = saved:match("^([%-%d%.]+),([%-%d]+),([%-%d%.]+),([%-%d]+)$")
 		if sx then
-			local w, h = PANEL_W, panelSize.Y.Offset
+			local w, h = PANEL_W, B.panelSize.Y.Offset
 			local absX = math.clamp(tonumber(ox) or 0, 0, math.max(vp.X - w, 0))
 			local absY = math.clamp(tonumber(oy) or 0, SAFE_TOP, math.max(vp.Y - h, SAFE_TOP))
-			main.Position = UDim2.new(tonumber(sx) or 0, absX, tonumber(sy) or 0, absY)
+			B.main.Position = UDim2.new(tonumber(sx) or 0, absX, tonumber(sy) or 0, absY)
 		end
 	end
 end
 
-local titleBar = mk("TextButton", {
+B.titleBar = mk("TextButton", {
 	Size = UDim2.new(1, 0, 0, TITLE_H), BackgroundColor3 = BG, BackgroundTransparency = 1,
 	BorderSizePixel = 0, Text = "车辆控制 [-]", TextColor3 = Color3.new(1, 1, 1),
 	TextSize = 13, Font = FONT, TextXAlignment = Enum.TextXAlignment.Center,
 	TextYAlignment = Enum.TextYAlignment.Center,
-}, main)
+}, B.main)
 
 do
 	local dragging, moved, origin, base = false, false, Vector2.zero, UDim2.new()
-	reg(titleBar.InputBegan:Connect(function(input)
+	reg(B.titleBar.InputBegan:Connect(function(input)
 		if not isPointer(input) then
 			return
 		end
 		dragging, moved = true, false
 		origin = input.Position
-		base = main.Position
+		base = B.main.Position
 	end))
 	reg(UIS.InputChanged:Connect(function(input)
 		if not dragging then
@@ -2316,7 +2313,7 @@ do
 			moved = true
 		end
 		local vp = workspace.CurrentCamera.ViewportSize
-		local size = main.AbsoluteSize
+		local size = B.main.AbsoluteSize
 		local minX = -base.X.Scale * vp.X
 		local maxX = vp.X - size.X - base.X.Scale * vp.X
 		if minX > maxX then
@@ -2327,7 +2324,7 @@ do
 		if minY > maxY then
 			minY, maxY = maxY, minY
 		end
-		main.Position = UDim2.new(
+		B.main.Position = UDim2.new(
 			base.X.Scale, math.clamp(base.X.Offset + delta.X, minX, maxX),
 			base.Y.Scale, math.clamp(base.Y.Offset + delta.Y, minY, maxY))
 	end))
@@ -2338,8 +2335,8 @@ do
 		dragging = false
 		if moved then
 			cfgSet("UI.Pos." .. NAME, string.format("%.6f,%.0f,%.6f,%.0f",
-				main.Position.X.Scale, main.Position.X.Offset,
-				main.Position.Y.Scale, main.Position.Y.Offset))
+				B.main.Position.X.Scale, B.main.Position.X.Offset,
+				B.main.Position.Y.Scale, B.main.Position.Y.Offset))
 		end
 	end
 	reg(UIS.InputEnded:Connect(function(input)
@@ -2349,26 +2346,26 @@ do
 	end))
 	reg(UIS.WindowFocusReleased:Connect(release))
 
-	reg(titleBar.Activated:Connect(function()
+	reg(B.titleBar.Activated:Connect(function()
 		if moved then
 			return
 		end
 		collapsed = not collapsed
-		titleBar.Text = "车辆控制 " .. (collapsed and "[+]" or "[-]")
-		main.Size = collapsed and UDim2.new(0, PANEL_W, 0, TITLE_H) or panelSize
+		B.titleBar.Text = "车辆控制 " .. (collapsed and "[+]" or "[-]")
+		B.main.Size = collapsed and UDim2.new(0, PANEL_W, 0, TITLE_H) or B.panelSize
 		-- 展开时转向滑条立即松手回中（避免面板挡着还在转向）
 		if not collapsed then
-			steerRelease()
+			B.steerRelease()
 		end
 	end))
 end
 
-local scroll = mk("ScrollingFrame", {
+B.scroll = mk("ScrollingFrame", {
 	Size = UDim2.new(1, 0, 1, -TITLE_H), Position = UDim2.new(0, 0, 0, TITLE_H),
 	BackgroundTransparency = 1, BorderSizePixel = 0,
 	ScrollBarThickness = 2, ScrollingDirection = Enum.ScrollingDirection.Y,
 	CanvasSize = UDim2.new(0, 0, 0, 0), AutomaticCanvasSize = Enum.AutomaticSize.Y,
-}, main)
+}, B.main)
 
 local function label(parent, props)
 	local merged = {
@@ -2456,31 +2453,31 @@ local function holdOn(button, onStart, onEnd)
 	end))
 end
 
-fullInput(scroll, 0, INPUT_ROW_H, "加速", COL.Accel,
+fullInput(B.scroll, 0, INPUT_ROW_H, "加速", COL.Accel,
 	function() return acceleration end,
 	function(v)
 		acceleration = v
 		cfgSet("SIBSAcc", v)
 	end)
 
-fullInput(scroll, INPUT_ROW_H, INPUT_ROW_H, "抓地", COL.On,
+fullInput(B.scroll, INPUT_ROW_H, INPUT_ROW_H, "抓地", COL.On,
 	function() return CFG.TurnGrip end,
 	function(v)
 		CFG.TurnGrip = v
 		cfgSet("SIBSGrip", v)
 	end)
 
-local yBtn = INPUT_ROW_H * 2
+B.yBtn = INPUT_ROW_H * 2
 
-switchButton = halfButton(scroll, "换车", 0.5, yBtn, COL.Bind, ROW_H)
+B.switchButton = halfButton(B.scroll, "换车", 0.5, B.yBtn, COL.Bind, ROW_H)
 setNoCharLabel()
-reg(switchButton.Activated:Connect(function()
+reg(B.switchButton.Activated:Connect(function()
 	cycleVehicle()
 end))
 
-local clipButton = halfButton(scroll, noClip and "穿墙 开" or "穿墙 关", 0, yBtn,
+B.clipButton = halfButton(B.scroll, noClip and "穿墙 开" or "穿墙 关", 0, B.yBtn,
 	noClip and COL.On or COL.Off, ROW_H)
-reg(clipButton.Activated:Connect(function()
+reg(B.clipButton.Activated:Connect(function()
 	noClip = not noClip
 	if noClip then
 		clipDirty = true
@@ -2490,20 +2487,20 @@ reg(clipButton.Activated:Connect(function()
 		restoreClip()
 		clipDirty = true
 	end
-	clipButton.Text = noClip and "穿墙 开" or "穿墙 关"
-	clipButton.BackgroundColor3 = noClip and COL.On or COL.Off
+	B.clipButton.Text = noClip and "穿墙 开" or "穿墙 关"
+	B.clipButton.BackgroundColor3 = noClip and COL.On or COL.Off
 	cfgSet("SIBSNoClip", noClip)
 end))
 
-local yBtn2 = yBtn + ROW_H
-local cruiseButton = halfButton(scroll, "定速 关", 0, yBtn2, COL.Off, ROW_H)
-reg(cruiseButton.Activated:Connect(function()
-	if not (seat or lockPart) then
+B.yBtn2 = B.yBtn + ROW_H
+B.cruiseButton = halfButton(B.scroll, "定速 关", 0, B.yBtn2, COL.Off, ROW_H)
+reg(B.cruiseButton.Activated:Connect(function()
+	if not (B.seat or lockPart) then
 		return
 	end
 	cruise = not cruise
 	if cruise then
-		local p = seat or lockPart
+		local p = B.seat or lockPart
 		local look = getVehicleFacing(p)
 		if look.Magnitude < 0.001 then
 			look = Vector3.new(0, 0, 1)
@@ -2513,57 +2510,57 @@ reg(cruiseButton.Activated:Connect(function()
 		stopped = false
 		refreshStopButton()
 	end
-	cruiseButton.Text = cruise and "定速 开" or "定速 关"
-	cruiseButton.BackgroundColor3 = cruise and COL.On or COL.Off
+	B.cruiseButton.Text = cruise and "定速 开" or "定速 关"
+	B.cruiseButton.BackgroundColor3 = cruise and COL.On or COL.Off
 end))
 
-local flyButton = halfButton(scroll, "飞车 关", 0.5, yBtn2, COL.Off, ROW_H)
-reg(flyButton.Activated:Connect(function()
+B.flyButton = halfButton(B.scroll, "飞车 关", 0.5, B.yBtn2, COL.Off, ROW_H)
+reg(B.flyButton.Activated:Connect(function()
 	carFly = not carFly
 	if not carFly then
 		stopCarFly()
 	end
-	flyButton.Text = carFly and "飞车 开" or "飞车 关"
-	flyButton.BackgroundColor3 = carFly and COL.On or COL.Off
+	B.flyButton.Text = carFly and "飞车 开" or "飞车 关"
+	B.flyButton.BackgroundColor3 = carFly and COL.On or COL.Off
 end))
 
-local yBtn3 = yBtn2 + ROW_H
-local listButton = halfButton(scroll, "车列表", 0, yBtn3, COL.Bind, ROW_H)
+B.yBtn3 = B.yBtn2 + ROW_H
+B.listButton = halfButton(B.scroll, "车列表", 0, B.yBtn3, COL.Bind, ROW_H)
 
-local flipButton = halfButton(scroll, "翻转", 0.5, yBtn3, COL.Danger, ROW_H)
-reg(flipButton.Activated:Connect(function()
+B.flipButton = halfButton(B.scroll, "翻转", 0.5, B.yBtn3, COL.Danger, ROW_H)
+reg(B.flipButton.Activated:Connect(function()
 	flipVehicle()
 end))
 
 -- 灯/喇叭四键
-local ySig = yBtn3 + ROW_H
+B.ySig = B.yBtn3 + ROW_H
 
-local steadyLBtn = halfButton(scroll, "常亮", 0, ySig, COL.Off, SIG_ROW_H)
-local flashBtn = halfButton(scroll, "闪", 0, ySig + SIG_ROW_H, COL.Off, SIG_ROW_H)
-local steadySBtn = halfButton(scroll, "常声", 0.5, ySig, COL.Off, SIG_ROW_H)
-local beepBtn = halfButton(scroll, "声", 0.5, ySig + SIG_ROW_H, COL.Off, SIG_ROW_H)
+B.steadyLBtn = halfButton(B.scroll, "常亮", 0, B.ySig, COL.Off, SIG_ROW_H)
+B.flashBtn = halfButton(B.scroll, "闪", 0, B.ySig + SIG_ROW_H, COL.Off, SIG_ROW_H)
+B.steadySBtn = halfButton(B.scroll, "常声", 0.5, B.ySig, COL.Off, SIG_ROW_H)
+B.beepBtn = halfButton(B.scroll, "声", 0.5, B.ySig + SIG_ROW_H, COL.Off, SIG_ROW_H)
 
 local function refreshSigButtons()
-	steadyLBtn.BackgroundColor3 = lightSteady and COL.On or COL.Off
-	steadySBtn.BackgroundColor3 = hornSteady and COL.On or COL.Off
+	B.steadyLBtn.BackgroundColor3 = lightSteady and COL.On or COL.Off
+	B.steadySBtn.BackgroundColor3 = hornSteady and COL.On or COL.Off
 end
 
-reg(steadyLBtn.Activated:Connect(function()
+reg(B.steadyLBtn.Activated:Connect(function()
 	lightSteady = not lightSteady
 	if lightSteady then
 		armLights()
 	else
-		rearmLights()
+		B.rearmLights()
 	end
 	refreshSigButtons()
 end))
 
-reg(flashBtn.Activated:Connect(function()
+reg(B.flashBtn.Activated:Connect(function()
 	armLights()
 	flashUntil = os.clock() + 0.45
 end))
 
-reg(steadySBtn.Activated:Connect(function()
+reg(B.steadySBtn.Activated:Connect(function()
 	if not hornKeyFound then
 		detectHornKey()
 		return
@@ -2572,7 +2569,7 @@ reg(steadySBtn.Activated:Connect(function()
 	refreshSigButtons()
 end))
 
-reg(beepBtn.Activated:Connect(function()
+reg(B.beepBtn.Activated:Connect(function()
 	if not hornKeyFound then
 		detectHornKey()
 		return
@@ -2583,15 +2580,15 @@ end))
 refreshSigButtons()
 
 -- 急刹
-local yStop = ySig + SIG_ROW_H * 2
-stopButton = mk("TextButton", {
-	Size = UDim2.new(1, 0, 0, ROW_H), Position = UDim2.new(0, 0, 0, yStop),
+B.yStop = B.ySig + SIG_ROW_H * 2
+B.stopButton = mk("TextButton", {
+	Size = UDim2.new(1, 0, 0, ROW_H), Position = UDim2.new(0, 0, 0, B.yStop),
 	BackgroundColor3 = COL.Stop, BackgroundTransparency = ALPHA, BorderSizePixel = 0,
 	Text = "急刹 关", TextColor3 = Color3.new(1, 1, 1), TextSize = 13, Font = FONT,
 	TextXAlignment = Enum.TextXAlignment.Center, TextYAlignment = Enum.TextYAlignment.Center,
-}, scroll)
+}, B.scroll)
 
-reg(stopButton.Activated:Connect(function()
+reg(B.stopButton.Activated:Connect(function()
 	stopped = not stopped
 	refreshStopButton()
 	if stopped then
@@ -2601,23 +2598,23 @@ reg(stopButton.Activated:Connect(function()
 end))
 
 -- 按钮网格（车辆旋转已删：太难用）
-local yGrid = yStop + ROW_H
-local grid = mk("Frame", {
+B.yGrid = B.yStop + ROW_H
+B.grid = mk("Frame", {
 	Size = UDim2.new(1, 0, 0, BTN_H * 3),
-	Position = UDim2.new(0, 0, 0, yGrid),
+	Position = UDim2.new(0, 0, 0, B.yGrid),
 	BackgroundTransparency = 1,
-}, scroll)
+}, B.scroll)
 
-local accelHoldButton = halfButton(grid, "按住加速", 0, 0, COL.Accel, BTN_H)
-local decelHoldButton = halfButton(grid, "按住减速", 0.5, 0, COL.Decel, BTN_H)
-holdOn(accelHoldButton,
+B.accelHoldButton = halfButton(B.grid, "按住加速", 0, 0, COL.Accel, BTN_H)
+B.decelHoldButton = halfButton(B.grid, "按住减速", 0.5, 0, COL.Decel, BTN_H)
+holdOn(B.accelHoldButton,
 	function()
 		stopped = false
 		refreshStopButton()
 		accelerating = true
 	end,
 	function() accelerating = false end)
-holdOn(decelHoldButton,
+holdOn(B.decelHoldButton,
 	function()
 		stopped = false
 		refreshStopButton()
@@ -2625,13 +2622,13 @@ holdOn(decelHoldButton,
 	end,
 	function() decelerating = false end)
 
-local flyUpButton = halfButton(grid, "飞车↑", 0, BTN_H, COL.Off, BTN_H)
-local flyDownButton = halfButton(grid, "飞车↓", 0.5, BTN_H, COL.Off, BTN_H)
-holdOn(flyUpButton, function() flyUp = true end, function() flyUp = false end)
-holdOn(flyDownButton, function() flyDown = true end, function() flyDown = false end)
+B.flyUpButton = halfButton(B.grid, "飞车↑", 0, BTN_H, COL.Off, BTN_H)
+B.flyDownButton = halfButton(B.grid, "飞车↓", 0.5, BTN_H, COL.Off, BTN_H)
+holdOn(B.flyUpButton, function() flyUp = true end, function() flyUp = false end)
+holdOn(B.flyDownButton, function() flyDown = true end, function() flyDown = false end)
 
-local flip180Button = halfButton(grid, "翻转 180°", 0, BTN_H * 2, COL.Danger, BTN_H)
-reg(flip180Button.Activated:Connect(function()
+B.flip180Button = halfButton(B.grid, "翻转 180°", 0, BTN_H * 2, COL.Danger, BTN_H)
+reg(B.flip180Button.Activated:Connect(function()
 	flipVehicle()
 end))
 
@@ -2645,7 +2642,7 @@ reg(UIS.InputBegan:Connect(function(input, gameProcessed)
 		if lightSteady then
 			armLights()
 		else
-			rearmLights()
+			B.rearmLights()
 		end
 		refreshSigButtons()
 	end
@@ -2660,25 +2657,25 @@ end))
 -- ===== 9. 转向滑条（仅主面板折叠时响应）=====
 
 local STEER_W, STEER_H, STEER_KNOB_R = 150, 36, 14
-local steerGui = mk("ScreenGui", {
+B.steerGui = mk("ScreenGui", {
 	Name = NAME .. "_Steer", ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = 99999,
 }, GuiRoot)
-local steerTrack = mk("Frame", {
+B.steerTrack = mk("Frame", {
 	Size = UDim2.fromOffset(STEER_W, STEER_H),
 	Position = UDim2.new(0, 12, 0.55, -STEER_H / 2),
 	BackgroundColor3 = BG, BackgroundTransparency = 0.25, BorderSizePixel = 0,
 	Active = true,
-}, steerGui)
+}, B.steerGui)
 mk("Frame", {
 	Size = UDim2.new(0, 2, 0.6, 0), Position = UDim2.new(0.5, -1, 0.2, 0),
 	BackgroundColor3 = Color3.fromRGB(80, 84, 100), BorderSizePixel = 0,
-}, steerTrack)
-local steerKnob = mk("Frame", {
+}, B.steerTrack)
+B.steerKnob = mk("Frame", {
 	Size = UDim2.fromOffset(STEER_KNOB_R * 2, STEER_KNOB_R * 2),
 	Position = UDim2.new(0.5, -STEER_KNOB_R, 0.5, -STEER_KNOB_R),
 	BackgroundColor3 = Color3.fromRGB(140, 190, 155), BorderSizePixel = 0,
-}, steerTrack)
-mk("UICorner", { CornerRadius = UDim.new(0.5, 0) }, steerKnob)
+}, B.steerTrack)
+mk("UICorner", { CornerRadius = UDim.new(0.5, 0) }, B.steerKnob)
 
 do
 	local saved = cfgGet("UI.Pos." .. NAME .. "Steer", nil)
@@ -2688,79 +2685,79 @@ do
 			local vp = workspace.CurrentCamera.ViewportSize
 			local cx = math.clamp(tonumber(ox) or 12, 0, math.max(vp.X - STEER_W, 0))
 			local cy = math.clamp(tonumber(oy) or 0, SAFE_TOP, math.max(vp.Y - STEER_H, SAFE_TOP))
-			steerTrack.Position = UDim2.new(tonumber(sx) or 0, cx, tonumber(sy) or 0.55, cy)
+			B.steerTrack.Position = UDim2.new(tonumber(sx) or 0, cx, tonumber(sy) or 0.55, cy)
 		end
 	end
 end
 
-local steerDragging = false
-local steerMoving = false
-local steerAxis = nil
-local steerOrigin = Vector2.zero
-local steerBasePos = UDim2.new()
-local steerTween = nil
+B.steerDragging = false
+B.steerMoving = false
+B.steerAxis = nil
+B.steerOrigin = Vector2.zero
+B.steerBasePos = UDim2.new()
+B.steerTween = nil
 
 local function steerSavePos()
 	cfgSet("UI.Pos." .. NAME .. "Steer", string.format("%.6f,%.0f,%.6f,%.0f",
-		steerTrack.Position.X.Scale, math.floor(steerTrack.Position.X.Offset + 0.5),
-		steerTrack.Position.Y.Scale, math.floor(steerTrack.Position.Y.Offset + 0.5)))
+		B.steerTrack.Position.X.Scale, math.floor(B.steerTrack.Position.X.Offset + 0.5),
+		B.steerTrack.Position.Y.Scale, math.floor(B.steerTrack.Position.Y.Offset + 0.5)))
 end
 
 local function steerReturnCenter()
 	steerValue = 0
-	if steerTween then
-		pcall(function() steerTween:Cancel() end)
+	if B.steerTween then
+		pcall(function() B.steerTween:Cancel() end)
 	end
-	steerTween = TweenService:Create(steerKnob,
+	B.steerTween = TweenService:Create(B.steerKnob,
 		TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
 		{ Position = UDim2.new(0.5, -STEER_KNOB_R, 0.5, -STEER_KNOB_R) })
-	steerTween:Play()
+	B.steerTween:Play()
 end
 
 -- 触点 X → 转向值（按下即点转，横滑连续转向）
 local function steerApplyX(x)
 	local usable = STEER_W - STEER_KNOB_R * 2
-	local rel = (x - steerTrack.AbsolutePosition.X - STEER_KNOB_R) / math.max(usable, 1)
+	local rel = (x - B.steerTrack.AbsolutePosition.X - STEER_KNOB_R) / math.max(usable, 1)
 	steerValue = math.clamp(rel * 2 - 1, -1, 1)
 	local px = STEER_KNOB_R + usable * ((steerValue + 1) / 2)
-	steerKnob.Position = UDim2.new(0, px - STEER_KNOB_R, 0.5, -STEER_KNOB_R)
+	B.steerKnob.Position = UDim2.new(0, px - STEER_KNOB_R, 0.5, -STEER_KNOB_R)
 end
 
-steerRelease = function()
-	if not steerDragging then
+B.steerRelease = function()
+	if not B.steerDragging then
 		return
 	end
-	steerDragging = false
-	if steerMoving then
+	B.steerDragging = false
+	if B.steerMoving then
 		steerSavePos()
 	end
-	steerMoving = false
-	steerAxis = nil
+	B.steerMoving = false
+	B.steerAxis = nil
 	steerReturnCenter()
 end
 
-reg(steerTrack.InputBegan:Connect(function(input)
+reg(B.steerTrack.InputBegan:Connect(function(input)
 	-- 核心规则：只有面板折叠时才允许拖动转向（展开时拖动会干扰转向）
 	if not isPointer(input) or not collapsed then
 		return
 	end
-	steerDragging = true
-	steerMoving = false
-	steerAxis = nil
-	steerOrigin = Vector2.new(input.Position.X, input.Position.Y)
-	steerBasePos = steerTrack.Position
-	if steerTween then
-		pcall(function() steerTween:Cancel() end)
+	B.steerDragging = true
+	B.steerMoving = false
+	B.steerAxis = nil
+	B.steerOrigin = Vector2.new(input.Position.X, input.Position.Y)
+	B.steerBasePos = B.steerTrack.Position
+	if B.steerTween then
+		pcall(function() B.steerTween:Cancel() end)
 	end
 	steerApplyX(input.Position.X) -- 按下即点转
 end))
 
 reg(UIS.InputChanged:Connect(function(input)
-	if not steerDragging then
+	if not B.steerDragging then
 		return
 	end
 	if not collapsed then
-		steerRelease()
+		B.steerRelease()
 		return
 	end
 	if input.UserInputType ~= Enum.UserInputType.MouseMovement
@@ -2768,47 +2765,47 @@ reg(UIS.InputChanged:Connect(function(input)
 		return
 	end
 	local cur = Vector2.new(input.Position.X, input.Position.Y)
-	local delta = cur - steerOrigin
+	local delta = cur - B.steerOrigin
 	-- 轴向定模式：横滑 = 转向；竖滑 = 挪位置
-	if not steerAxis and (math.abs(delta.X) + math.abs(delta.Y)) > 8 then
-		steerAxis = (math.abs(delta.X) >= math.abs(delta.Y)) and "steer" or "move"
+	if not B.steerAxis and (math.abs(delta.X) + math.abs(delta.Y)) > 8 then
+		B.steerAxis = (math.abs(delta.X) >= math.abs(delta.Y)) and "steer" or "move"
 	end
-	if steerAxis == "move" then
-		steerMoving = true
+	if B.steerAxis == "move" then
+		B.steerMoving = true
 		local vp = workspace.CurrentCamera.ViewportSize
-		local minX = -steerBasePos.X.Scale * vp.X
-		local maxX = vp.X - STEER_W - steerBasePos.X.Scale * vp.X
+		local minX = -B.steerBasePos.X.Scale * vp.X
+		local maxX = vp.X - STEER_W - B.steerBasePos.X.Scale * vp.X
 		if minX > maxX then
 			minX, maxX = maxX, minX
 		end
-		local minY = SAFE_TOP - steerBasePos.Y.Scale * vp.Y
-		local maxY = vp.Y - STEER_H - steerBasePos.Y.Scale * vp.Y
+		local minY = SAFE_TOP - B.steerBasePos.Y.Scale * vp.Y
+		local maxY = vp.Y - STEER_H - B.steerBasePos.Y.Scale * vp.Y
 		if minY > maxY then
 			minY, maxY = maxY, minY
 		end
-		steerTrack.Position = UDim2.new(
-			steerBasePos.X.Scale, math.clamp(steerBasePos.X.Offset + delta.X, minX, maxX),
-			steerBasePos.Y.Scale, math.clamp(steerBasePos.Y.Offset + delta.Y, minY, maxY))
-	elseif steerAxis == "steer" then
+		B.steerTrack.Position = UDim2.new(
+			B.steerBasePos.X.Scale, math.clamp(B.steerBasePos.X.Offset + delta.X, minX, maxX),
+			B.steerBasePos.Y.Scale, math.clamp(B.steerBasePos.Y.Offset + delta.Y, minY, maxY))
+	elseif B.steerAxis == "steer" then
 		steerApplyX(cur.X)
 	end
 end))
 
 reg(UIS.InputEnded:Connect(function(input)
 	if isPointer(input) then
-		steerRelease()
+		B.steerRelease()
 	end
 end))
-reg(UIS.WindowFocusReleased:Connect(steerRelease))
+reg(UIS.WindowFocusReleased:Connect(B.steerRelease))
 
 -- ===== 10. 车辆列表（弹窗，按距离排序取前 10）=====
 
-local listGui = nil
+B.listGui = nil
 
 local function closeVehicleList()
-	if listGui then
-		pcall(function() listGui:Destroy() end)
-		listGui = nil
+	if B.listGui then
+		pcall(function() B.listGui:Destroy() end)
+		B.listGui = nil
 	end
 end
 
@@ -2834,7 +2831,7 @@ local function openVehicleList()
 	end
 	table.sort(entries, function(a, b) return a.dist < b.dist end)
 	local shown = math.min(#entries, 10)
-	listGui = mk("ScreenGui", {
+	B.listGui = mk("ScreenGui", {
 		Name = NAME .. "_List", ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = 99999,
 	}, GuiRoot)
 	local w, rowH = 170, 26
@@ -2842,7 +2839,7 @@ local function openVehicleList()
 		Size = UDim2.new(0, w, 0, 24 + (shown + 1) * rowH),
 		Position = UDim2.new(0.5, -w / 2, 0.3, 0),
 		BackgroundColor3 = BG, BackgroundTransparency = 0.08, BorderSizePixel = 0,
-	}, listGui)
+	}, B.listGui)
 	local title = halfButton(frame, "车辆 ×" .. tostring(#entries) .. "（点选）", 0, 0, BG, 24)
 	reg(title.Activated:Connect(closeVehicleList))
 	for i = 1, shown do
@@ -2870,8 +2867,8 @@ local function openVehicleList()
 	reg(rescan.Activated:Connect(openVehicleList))
 end
 
-reg(listButton.Activated:Connect(function()
-	if listGui then
+reg(B.listButton.Activated:Connect(function()
+	if B.listGui then
 		closeVehicleList()
 	else
 		openVehicleList()
@@ -2884,13 +2881,13 @@ local DBG = rawget(_G, "SB_DEBUG") or {}
 rawset(_G, "SB_DEBUG", DBG)
 DBG[NAME] = function()
 	local lines = {
-		"seat: " .. safeFullName(seat),
+		"seat: " .. safeFullName(B.seat),
 		"lockPart: " .. safeFullName(lockPart) .. " (score=" .. tostring(lockPartScore) .. ")",
 		"lockModel: " .. safeFullName(lockModel),
 		"container: " .. safeFullName(getControlledVehicleModel()),
 		"owned: " .. tostring(lockModel ~= nil and playerOwnsModel(lockModel) or false),
 		"aim: " .. safeFullName(lastAim),
-		"myVehicle: " .. tostring(myVehicleName or "nil"),
+		"myVehicle: " .. tostring(B.myVehicleName or "nil"),
 		"cruise: " .. tostring(cruise) .. " stopped: " .. tostring(stopped),
 		"locked: " .. tostring(locked) .. " vehicles: " .. tostring(vehicleCount),
 		"noClip: " .. tostring(noClip) .. " clipFalling: " .. tostring(clipFalling) .. " carFly: " .. tostring(carFly),
@@ -2899,7 +2896,7 @@ DBG[NAME] = function()
 		"accel: " .. tostring(acceleration) .. " grip: " .. tostring(CFG.TurnGrip) .. " targetSpeed: " .. tostring(targetSpeed),
 		"grounded: " .. tostring(lastGrounded),
 	}
-	local control = seat or lockPart
+	local control = B.seat or lockPart
 	if control then
 		local okVel, vel = pcall(function() return control.AssemblyLinearVelocity end)
 		if okVel then
@@ -2919,25 +2916,25 @@ local function destroy()
 	flyVertVel = 0
 	closeVehicleList()
 	setSeat(nil)
-	clearDrive()
+	B.clearDrive()
 	stopCarFly()
 	restoreClip()
 	restoreLamps()
-	collectEngineSounds()
+	B.collectEngineSounds()
 	table.clear(engineSounds)
 	setHornKey(false)
 	resetLockState()
-	myVehicleModel, myVehicleName, myVehicleAsm = nil, nil, nil
+	B.myVehicleModel, B.myVehicleName, B.myVehicleAsm = nil, nil, nil
 	for _, x in ipairs(seatConns) do
 		pcall(function() x:Disconnect() end)
 	end
 	table.clear(seatConns)
-	steerGui:Destroy()
-	if toastGui then
-		pcall(function() toastGui:Destroy() end)
-		toastGui = nil
+	B.steerGui:Destroy()
+	if B.toastGui then
+		pcall(function() B.toastGui:Destroy() end)
+		B.toastGui = nil
 	end
-	gui:Destroy()
+	B.gui:Destroy()
 	for _, c in ipairs(conns) do
 		pcall(function() c:Disconnect() end)
 	end
