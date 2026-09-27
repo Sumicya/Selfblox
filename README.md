@@ -1,52 +1,53 @@
-# Selfblox v11
+# Selfblox v12
 
-Roblox 客户端脚本套件，**激进重写**（ponytail 标准）：
-
-- **无框架**：没有 kit/core。每个文件自包含，直接 `loadstring` 执行，互不依赖。
-- **无构建**：仓库里的 `.lua` 文件本身就是最终产物。没有 build、没有 dist、没有冒烟 harness。
-- **现代 Luau**：`Instance.new(cls, props)`、`+=`、`continue`、泛型 for、`task.*`、`table.clear`。
-- **原生化**：只碰原生 API 与执行器原生 API（`Drawing` / `gethui` / `writefile` / `keypress` / `hookmetamethod` …），不再有包装层。
-
-> 从 v10 升级：旧文件不需要清理（重跑同名脚本会自动替换旧 GUI）；
-> 旧配置 `KIT_Config.txt` 首次加载时自动并入新文件 `Selfblox_cfg.txt`。
-
-## 文件
-
-| 文件 | 功能 |
-|---|---|
-| `moc.lua` | 移动：速度（RootVelocity / WalkSpeed / CFrame 三档）、飞行（含碰撞防穿模）、高跳、无限跳、穿墙、角色旋转、夜视、秒互动（off/普通/强制） |
-| `sibs.lua` | 载具：扫描/锁定/换车/车列表、加速/减速/抓地、转向滑条、定速、急刹、穿墙（+悬浮）、飞车、翻转 180°、灯光（常亮/闪/O 键）、喇叭（探测/常声/声/H 键）、引擎音调、无角色自动锁定与重连 |
-| `plane.lua` | 飞机侦察：模型体检评分、队伍推断（属性/Value/乘员/名字/涂装）、Remote 清单、FireServer 发送间谍（`hookmetamethod`）、OnClientEvent 接收监听、报告写 `plane_debug.txt`/剪贴板、队伍高亮、自动扫描+自动写 |
-| `drift.lua` | 漂移：W/S（或手机踏板）推进力、自适应增推、失速补偿、MobilePedals 自动绑定 |
-| `log.lua` | 连续日志：每 N 秒采样所有模块调试块 → `KIT_Log.txt`（512KB × 3 归档滚动） |
-| `brick.lua` | BitFarmer 刷砖：事件驱动即时收集 + 高频刷砖 + 倍率锁定。**再次执行 = 停止** |
-| `hud.lua` | 显示层：数据条（ping/fps/内存/时间/人数/坐标）+ 速度箭头（原生 GUI）+ 玩家 ESP（Drawing 直绘；执行器没有 Drawing 时 ESP 静默关闭，数据条照常） |
-
-## 使用
+一个文件、一个面板、七个模块。Delta（安卓）为目标，纯触屏。
 
 ```lua
-loadstring(game:HttpGet(".../moc.lua"))()    -- 各文件独立，按需执行
-loadstring(game:HttpGet(".../sibs.lua"))()
--- brick.lua 再执行一次 = 停止
+loadstring(game:HttpGet("https://raw.githubusercontent.com/Sumicya/Selfblox/main/selfblox.lua"))()
 ```
 
-- **重跑即替换**：每个文件开头先卸载旧实例（`_G.SB_<模块>` 句柄），重复执行安全。
-- **面板**：标题栏拖动移动（松手存位置）、点按折叠。SIBS 的**转向滑条仅在主面板折叠时响应**（展开时拖动会干扰转向）。
-- **配置持久化**：执行器有 `writefile`/`readfile` 时写 `Selfblox_cfg.txt`（0.5s 防抖，卸载时立即落盘）；没有则仅内存。
-- **调试采样**：各模块在 `_G.SB_DEBUG` 注册调试块，`log.lua` 采样进日志。
+重跑会自动先卸载；手动卸载 `_G.SB_UNLOAD()`。
 
-## 键位
+## 覆盖参数
 
-| 动作 | 键 |
-|---|---|
-| 飞行/飞车升降 | 空格/E 上 · Shift/Q 下（或面板按住键） |
-| 移动输入 | WASD / 方向键 / 手柄左摇杆 |
-| 车灯切换 | O |
-| 喇叭 | H（首次点「常声/声」自动探测） |
-| 漂移推进 | W/S 或手机 MobilePedals 最左两键 |
+执行前设 `_G.SB`，任何键都能覆盖（优先级 `_G.SB` > `Selfblox.json`(面板里改过的) > 默认）：
 
-## 备注
+```lua
+_G.SB = { spd = 60, flyspd = 120, hornkey = "H", only = {"moc", "sibs"} }
+```
 
-- 执行器 API（`Drawing`、`hookmetamethod` 等）全部 pcall 防护：缺失对应功能静默降级，不炸整个脚本。
-- 无框架 = 无全局一键卸载。单模块卸载：重跑同文件前先执行对应 `_G.SB_<MOC/SIBS/...>()`（或直接重启客户端）。
-- 真机行为以游戏内为准；本仓库不做任何本地模拟。
+| 键 | 默认 | 说明 |
+|---|---|---|
+| `only` | 全部 | 只装这些模块 `{"moc","sibs","drift","hud","log","plane","brick"}` |
+| `spd` / `spdmode` | 16 / `"root"` | 速度值 / 模式 `root` `walk` `cframe` |
+| `flyspd` `jump` `spin` `promptdist` | 50 50 50 1000 | 飞行速度 / 跳力 / 转速(负数反向) / 秒互动距离 |
+| `acc` `grip` `turn` `carfly` | 500 5 2.2 60 | 车: 加速度 / 抓地 / 转向速率 / 飞车速度 |
+| `hornkey` `carclip` | `"H"` false | 喇叭键 / 车穿墙默认开 |
+| `dacc` `dbrake` `drift` | 5 10 true | 漂移推进: 加速 / 刹车 / 开关 |
+| `stats` `arrow` `esp` | true | 数据条 / 速度箭头 / 玩家 ESP |
+| `logint` `logmax` | 2 512 | 日志间隔秒 / 上限 KB |
+| `pall` | false | 飞机侦察全录 Remote |
+| `bbatch` `bint` `bdrain` `bmult` `blevel` | 4 0.08 0.6 99999 9999 | 刷砖参数 |
+
+面板里改的数值直接生效并写进 `Selfblox.json`（面板位置、上次页签也在里面）。
+
+## 模块
+
+| 页签 | 模块 | 内容 |
+|---|---|---|
+| 动 | moc | 速度(3 模式) / 飞行 / 高跳 / 旋转 / 无限跳 / 穿墙 / 夜视 / 秒互动(普通·强制) |
+| 车 | sibs | 上车即控；没上车对准载具按「换车」准星锁定。加速·减速·定速·急刹·穿墙悬浮·飞车·翻转·灯·喇叭；屏幕底部滑条转向，游戏自带油门/方向盘同时生效 |
+| 漂 | drift | 人物 VectorForce 推进，自动绑 `MobilePedals`(左刹右油)，没有就用面板按钮 |
+| 显 | hud | 顶部数据条(延迟/帧率/内存/时间/人数/坐标) / 速度箭头 / 玩家 ESP(原生 Highlight + 名牌距离) |
+| 志 | log | 各模块状态定时追加 `Selfblox_log.txt`，超上限重写 |
+| 机 | plane | 找飞机、判队伍、列 Remote、发/收侦听(`__namecall` 钩子)、高亮、报告写 `plane_debug.txt` + 剪贴板 |
+| 砖 | brick | BitFarmer 刷砖，开关式 |
+
+## v11 → v12 砍掉的
+
+- 7 个文件 → 1 个；每文件自带的配置/拖拽/输入样板全删，UI 拖拽用原生 `UIDragDetector`
+- sibs 的自动锁车/所有权嗅探/车辆列表/学习缓存 → 只剩「坐着」和「准星换车」
+- 各种人为上限（换车距离、扫描数量、飞行防穿减速、转向门槛、速度地板）全没了，参数随便填
+- 键盘/手柄输入路径（纯触屏；要 PC 说一声）
+- 日志归档、KITCFG2 配置格式、v10 迁移
+- 引擎音调、边缘计数、Drawing 库 ESP
