@@ -1,10 +1,16 @@
--- Selfblox v12 · 单文件 · 一次 loadstring · 一个面板 · 七个模块
+-- Selfblox v13 · 单文件 · 一次 loadstring · 一个面板 · 七个模块
 -- 用法:  loadstring(game:HttpGet("https://raw.githubusercontent.com/Sumicya/Selfblox/main/selfblox.lua"))()
--- 覆盖:  执行前 _G.SB = { spd = 50, flyspd = 80, only = {"moc", "sibs"} }   键名 = 各模块 opt("键", 默认) 的第一个参数
+-- 覆盖:  执行前 _G.SB = { spd = 50, flyspd = 80, only = {"moc", "sibs"} }
 -- 优先级: _G.SB > Selfblox.json(面板里改过的值) > 默认值
 -- 卸载:  _G.SB_UNLOAD()   重跑会自动先卸载
+-- 自检:  lua5.4 smoke.lua  (离线假引擎, 不跑也行)
+--
+-- v13 = 只保 Delta 最新版: 执行器能力探测(isfile/gethui/newcclosure/hookmetamethod/UIDragDetector)
+--       全部当它一定有, 不留兜底; 删掉没用的变量与重复样板; 配置自动进日志;
+--       刹车/灯/互动/ESP 全走引擎原生属性。
+--       保持 Lua 5.4 可解析子集(不用 +=/continue/字符串插值), 换 smoke.lua 能离线跑。ponytail: 可测试性 > 语法糖
 
-if rawget(_G, "SB_UNLOAD") then pcall(_G.SB_UNLOAD) end
+if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -16,26 +22,26 @@ local Teams = game:GetService("Teams")
 local RS = game:GetService("ReplicatedStorage")
 local VIM = game:GetService("VirtualInputManager")
 local me = Players.LocalPlayer
-local ROOT = (pcall(gethui) and gethui()) or game:GetService("CoreGui")
+local ROOT = gethui() or game:GetService("CoreGui") -- Delta 有 gethui; 没有就退回 CoreGui
 
 -- ───────── 配置: _G.SB 覆盖 > JSON > 默认 ─────────
 local O = type(rawget(_G, "SB")) == "table" and _G.SB or {}
 local FILE, saved = "Selfblox.json", {}
-if isfile and isfile(FILE) then pcall(function() saved = Http:JSONDecode(readfile(FILE)) end) end
+if isfile(FILE) then local okf, d = pcall(Http.JSONDecode, Http, readfile(FILE)); if okf and type(d) == "table" then saved = d end end -- 配置文件坏了不能连面板一起死
 local function opt(k, d) local v = O[k]; if v == nil then v = saved[k] end; if v == nil then v = d end; return v end
-local function save(k, v) saved[k] = v; if writefile then writefile(FILE, Http:JSONEncode(saved)) end end
+local function save(k, v) saved[k] = v; writefile(FILE, Http:JSONEncode(saved)) end
 
 -- ───────── 公共 ─────────
-local alive, conns, DBG, MODS, stops = true, {}, {}, {}, {}
+local alive, conns, INFO, MODS, stops = true, {}, {}, {}, {}
 local function on(sig, fn) local c = sig:Connect(fn); conns[#conns + 1] = c; return c end
 local function mk(cls, props, parent) local i = Instance.new(cls); for k, v in pairs(props) do i[k] = v end; i.Parent = parent; return i end
 local function tap(i) return i.UserInputType == Enum.UserInputType.Touch or i.UserInputType == Enum.UserInputType.MouseButton1 end
 local function hum() local c = me.Character; return c and c:FindFirstChildOfClass("Humanoid") end
 local function root() local c = me.Character; return c and (c:FindFirstChild("HumanoidRootPart") or c:FindFirstChild("Root")) end
-local function flat(v) v = Vector3.new(v.X, 0, v.Z); return v.Magnitude > 1e-3 and v.Unit or nil end
+local function flat(v) v = Vector3.new(v.X, 0, v.Z); if v.Magnitude > 1e-3 then return v.Unit end end
 
 -- ───────── UI: 一个 ScreenGui, 标题条(原生 UIDragDetector 拖) + 页签 + 每模块一页 ─────────
-local FONT, WHITE = Enum.Font.GothamBold, Color3.new(1, 1, 1)
+local FONT, WHITE, R = Enum.Font.GothamBold, Color3.new(1, 1, 1), 6
 local BG, ON, OFF = Color3.fromRGB(20, 22, 28), Color3.fromRGB(38, 125, 85), Color3.fromRGB(48, 50, 60)
 local W, ROW = 200, 26
 local gui = mk("ScreenGui", { Name = "Selfblox", ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = 99999 }, ROOT)
@@ -50,6 +56,7 @@ local function ui(cls, parent, w, props) -- w=nil 整行, w=0.5 半行
 	i.Size, i.LayoutOrder = w and UDim2.new(w, -1, 1, 0) or UDim2.new(1, 0, 0, ROW), ord()
 	for k, v in pairs(props or {}) do i[k] = v end
 	i.Parent = parent
+	mk("UICorner", { CornerRadius = UDim.new(0, R) }, i)
 	return i
 end
 local function row(parent, h)
@@ -70,30 +77,33 @@ local function toggle(parent, s, init, fn, w) -- 返回 set(v): 代码里也能�
 	on(b.Activated, function() set(not st) end)
 	return set
 end
-local function num(parent, s, get, set, w) -- 标签 + 数字框; s=nil 只有框
-	local f = ui("TextLabel", parent, w, { Text = s and " " .. s or "", TextXAlignment = Enum.TextXAlignment.Left })
-	local tb = mk("TextBox", { Size = UDim2.new(s and 0.5 or 1, 0, 1, 0), Position = UDim2.new(s and 0.5 or 0, 0, 0, 0), BackgroundTransparency = 1, Font = FONT, TextSize = 12, TextColor3 = Color3.fromRGB(255, 225, 140), Text = tostring(get()), ClearTextOnFocus = false }, f)
-	on(tb.FocusLost, function() local v = tonumber(tb.Text); if v then set(v) end; tb.Text = tostring(get()) end)
-end
 local function hold(parent, s, fn, w) -- 按住 fn(true) 松开 fn(false)
 	local b = ui("TextButton", parent, w, { Text = s, AutoButtonColor = false })
 	on(b.InputBegan, function(i) if tap(i) then b.BackgroundColor3 = ON; fn(true) end end)
 	on(b.InputEnded, function(i) if tap(i) then b.BackgroundColor3 = OFF; fn(false) end end)
 end
+local function num(parent, s, S, k, w, savek) -- 直接绑 S[k], 改完自动存盘; savek 缺省 = k
+	local f = ui("TextLabel", parent, w, { Text = s and " " .. s or "", TextXAlignment = Enum.TextXAlignment.Left })
+	local tb = mk("TextBox", { Size = UDim2.new(s and 0.5 or 1, 0, 1, 0), Position = UDim2.new(s and 0.5 or 0, 0, 0, 0), BackgroundTransparency = 1, Font = FONT, TextSize = 12, TextColor3 = Color3.fromRGB(255, 225, 140), Text = tostring(S[k]), ClearTextOnFocus = false }, f)
+	on(tb.FocusLost, function() local v = tonumber(tb.Text); if v then S[k] = v; save(savek or k, v) end; tb.Text = tostring(S[k]) end)
+end
 
 local vp = workspace.CurrentCamera.ViewportSize
 local pos = opt("pos", { vp.X / 2 - W / 2, vp.Y * 0.3 })
-local title = mk("TextLabel", { Size = UDim2.fromOffset(W, ROW), Position = UDim2.fromOffset(math.clamp(pos[1], 0, math.max(vp.X - W, 0)), math.clamp(pos[2], 0, math.max(vp.Y - ROW, 0))), BackgroundColor3 = BG, BackgroundTransparency = 0.15, BorderSizePixel = 0, Font = FONT, TextSize = 13, TextColor3 = WHITE, Text = "Selfblox" }, gui)
+local title = mk("TextLabel", { Size = UDim2.fromOffset(W, ROW), Position = UDim2.fromOffset(math.clamp(pos[1], 0, math.max(vp.X - W, 0)), math.clamp(pos[2], 0, math.max(vp.Y - ROW, 0))), BackgroundColor3 = BG, BackgroundTransparency = 0.15, BorderSizePixel = 0, Font = FONT, TextSize = 13, TextColor3 = WHITE, Text = "Selfblox v13" }, gui)
 local body = mk("Frame", { Size = UDim2.new(0, W, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Position = title.Position + UDim2.fromOffset(0, ROW), BackgroundColor3 = BG, BackgroundTransparency = 0.35, BorderSizePixel = 0 }, gui)
+mk("UICorner", { CornerRadius = UDim.new(0, R) }, title)
+mk("UICorner", { CornerRadius = UDim.new(0, R) }, body)
 mk("UIListLayout", { Padding = UDim.new(0, 1) }, body)
 on(title:GetPropertyChangedSignal("Position"), function() body.Position = title.Position + UDim2.fromOffset(0, ROW) end)
-local okDrag, drag = pcall(mk, "UIDragDetector", { BoundingUI = gui }, title) -- 老客户端没这个类就不能拖
-if okDrag then on(drag.DragEnd, function() save("pos", { title.AbsolutePosition.X, title.AbsolutePosition.Y }) end) end
+local drag = mk("UIDragDetector", { BoundingUI = gui }, title)
+on(drag.DragEnd, function() save("pos", { title.AbsolutePosition.X, title.AbsolutePosition.Y }) end)
 local fold = mk("TextButton", { Size = UDim2.fromOffset(ROW, ROW), Position = UDim2.new(1, -ROW, 0, 0), BackgroundTransparency = 1, Font = FONT, TextSize = 16, TextColor3 = WHITE, Text = "–" }, title)
 on(fold.Activated, function() body.Visible = not body.Visible; fold.Text = body.Visible and "–" or "+" end)
 local tabs = row(body)
 
 local toastL = mk("TextLabel", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 22), Size = UDim2.fromOffset(0, 24), AutomaticSize = Enum.AutomaticSize.X, BackgroundColor3 = BG, BackgroundTransparency = 0.2, BorderSizePixel = 0, Font = FONT, TextSize = 13, TextColor3 = WHITE, Visible = false }, gui)
+mk("UICorner", { CornerRadius = UDim.new(0, R) }, toastL)
 mk("UIPadding", { PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10) }, toastL)
 local toastN = 0
 local function toast(s) toastN = toastN + 1; local n = toastN; toastL.Text, toastL.Visible = s, true; task.delay(2, function() if toastN == n then toastL.Visible = false end end) end
@@ -190,18 +200,18 @@ MODS[#MODS + 1] = { name = "moc", tab = "动", fn = function(page)
 
 	local r1 = row(page)
 	toggle(r1, "速度", false, function(v) speedOn, moving = v, false; if not v then restore() end end, 0.5)
-	num(r1, nil, function() return S.spd end, function(v) S.spd = v; save("spd", v) end, 0.5)
+	num(r1, nil, S, "spd", 0.5)
 	local MODES = { root = "walk", walk = "cframe", cframe = "root" }
 	btn(page, "模式 " .. S.mode, function(b) restore(); moving = false; S.mode = MODES[S.mode] or "root"; save("spdmode", S.mode); b.Text = "模式 " .. S.mode end)
 	local r2 = row(page)
 	setFly = toggle(r2, "飞行", false, function(v) flyOn = v; if not v then stopFly() end end, 0.5)
-	num(r2, nil, function() return S.fly end, function(v) S.fly = v; save("flyspd", v) end, 0.5)
+	num(r2, nil, S, "fly", 0.5, "flyspd")
 	local r3 = row(page)
 	toggle(r3, "高跳", false, function(v) jumpOn = v; if not v then restore() end end, 0.5)
-	num(r3, nil, function() return S.jump end, function(v) S.jump = v; save("jump", v) end, 0.5)
+	num(r3, nil, S, "jump", 0.5)
 	local r4 = row(page)
 	toggle(r4, "旋转", false, function(v) spinOn = v; if not v then stopSpin() end end, 0.5)
-	num(r4, nil, function() return S.spin end, function(v) S.spin = v; save("spin", v) end, 0.5)
+	num(r4, nil, S, "spin", 0.5)
 	local r5 = row(page)
 	toggle(r5, "无限跳", false, function(v) infJump = v end, 0.5)
 	toggle(r5, "穿墙", false, function(v) clip = v; if not v then reclip() end end, 0.5)
@@ -212,20 +222,19 @@ MODS[#MODS + 1] = { name = "moc", tab = "动", fn = function(page)
 	local r7 = row(page, 36)
 	hold(r7, "▲ 上升", function(v) up = v end, 0.5)
 	hold(r7, "▼ 下降", function(v) down = v end, 0.5)
+	num(page, "秒互动距离", S, "dist", nil, "promptdist")
 
-	DBG.moc = function() return "speed=" .. tostring(speedOn) .. "/" .. S.mode .. "/" .. S.spd .. " fly=" .. tostring(flyOn) .. " jump=" .. tostring(jumpOn) .. " spin=" .. tostring(spinOn) .. " clip=" .. tostring(clip) .. " nv=" .. tostring(nv) .. " nocd=" .. nocd end
+	INFO.moc = function() return string.format("速度=%s/%s 飞行=%s 高跳=%s 旋转=%s 穿墙=%s 夜视=%s 秒互动=%s", tostring(speedOn), S.mode, tostring(flyOn), tostring(jumpOn), tostring(spinOn), tostring(clip), tostring(nv), nocd) end
 	return function() setFly(false); stopSpin(); reclip(); restore(); nvOff(); setNocd("off"); if att then att:Destroy() end end
 end }
 
 -- ═════════ sibs: 载具 (坐着 = 控制座位所在装配体; 没坐 = 准星"换车"锁定) ═════════
 MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
-	local S = { acc = opt("acc", 500), grip = opt("grip", 5), turn = opt("turn", 2.2), fly = opt("carfly", 60), horn = opt("hornkey", "H") }
-	local picked, pickSeat, curSeat, clipModel, att, vf, lv, status
-	local accel, decel, up, down, cruise, brake, flying, lampOn = false, false, false, false, false, false, false, false
-	local clip, target, statT, setBrake = opt("carclip", false), 0, 0, nil
-	local lamps, lampSaved = {}, setmetatable({}, { __mode = "k" })
-	local seatMax = setmetatable({}, { __mode = "k" })
-	local col = setmetatable({}, { __mode = "k" })
+	local S = { acc = opt("acc", 500), grip = opt("grip", 5), turn = opt("turn", 2.2), fly = opt("carfly", 60), horn = opt("hornkey", "H") } -- grip/turn/hornkey 没做控件, 想调就在 _G.SB 里给
+	local picked, pickSeat, curSeat, curMax, att, vf, lv, status, clipModel, setBrake
+	local accel, decel, up, down, cruise, brake, flying, lampOn, target, statT = false, false, false, false, false, false, false, false, 0, 0
+	local clip = opt("carclip", false)
+	local lamps, lampSaved, col = {}, setmetatable({}, { __mode = "k" }), setmetatable({}, { __mode = "k" })
 	local rp = RaycastParams.new()
 	rp.FilterType = Enum.RaycastFilterType.Exclude
 
@@ -277,7 +286,7 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 		end
 		for _, l in ipairs(lamps) do l.Enabled = v end
 	end
-	local function horn(v) pcall(function() VIM:SendKeyEvent(v, Enum.KeyCode[S.horn], false, game) end) end -- 执行器可能禁 VIM
+	local function horn(v) VIM:SendKeyEvent(v, Enum.KeyCode[S.horn], false, game) end
 	local function pick()
 		local cam = workspace.CurrentCamera
 		rp.FilterDescendantsInstances = { me.Character }
@@ -298,22 +307,23 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 		m:PivotTo(CFrame.new(pv.Position + Vector3.yAxis * 2) * CFrame.fromAxisAngle(p.CFrame.LookVector, math.pi) * pv.Rotation)
 		p.AssemblyAngularVelocity = Vector3.zero
 	end
+	local function brakeNow(p, v) p.AssemblyLinearVelocity = Vector3.yAxis * v.Y end -- 急刹: 水平速度直接归零, 比推力快且不吃质量
 
 	-- 方向盘: 屏幕底部滑条, 原生 UIDragDetector 单轴拖, 松手回中
 	local track = mk("Frame", { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -10), Size = UDim2.fromOffset(200, 36), BackgroundColor3 = BG, BackgroundTransparency = 0.4, BorderSizePixel = 0, Visible = false }, gui)
 	mk("UICorner", { CornerRadius = UDim.new(1, 0) }, track)
 	local knob = mk("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(36, 36), BackgroundColor3 = Color3.fromRGB(95, 65, 135), BorderSizePixel = 0 }, track)
 	mk("UICorner", { CornerRadius = UDim.new(1, 0) }, knob)
-	local okK, kd = pcall(mk, "UIDragDetector", { DragStyle = Enum.UIDragDetectorDragStyle.TranslateLine, DragAxis = Vector2.new(1, 0), BoundingUI = track }, knob)
-	if okK then on(kd.DragEnd, function() knob.Position = UDim2.fromScale(0.5, 0.5) end) end
+	local kd = mk("UIDragDetector", { DragStyle = Enum.UIDragDetectorDragStyle.TranslateLine, DragAxis = Vector2.new(1, 0), BoundingUI = track }, knob)
+	on(kd.DragEnd, function() knob.Position = UDim2.fromScale(0.5, 0.5) end)
 	local function steer() return (knob.AbsolutePosition.X - track.AbsolutePosition.X - 82) / 82 end -- 圆心 18..182 → -1..1
 
 	on(RunService.PreSimulation, function(dt)
 		local s = seat()
 		if s ~= curSeat then -- 换座: 还原旧座限速, 新座解限速, 灯重挂
-			if curSeat and seatMax[curSeat] then curSeat.MaxSpeed = seatMax[curSeat] end
-			curSeat = s
-			if s and s:IsA("VehicleSeat") then seatMax[s] = s.MaxSpeed; s.MaxSpeed = math.huge end
+			if curSeat and curMax then curSeat.MaxSpeed = curMax end
+			curSeat, curMax = s, s and s:IsA("VehicleSeat") and s.MaxSpeed or nil
+			if curMax then s.MaxSpeed = math.huge end
 			dropLamps()
 			if lampOn then setLamps(true) end
 		end
@@ -325,8 +335,8 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 		local v = p.AssemblyLinearVelocity
 		local hv = Vector3.new(v.X, 0, v.Z)
 		local spd, mass, fwd = hv.Magnitude, p.AssemblyMass, facing()
-		local thr, st = 0, steer()
-		if sp and sp:IsA("VehicleSeat") then thr, st = sp.Throttle, math.clamp(st + sp.Steer, -1, 1) end -- 游戏自带的手机油门/方向盘也吃
+		local gst, thr, st = 0, 0, steer()
+		if sp and sp:IsA("VehicleSeat") then gst, thr, st = sp.Steer, sp.Throttle, math.clamp(st + sp.Steer, -1, 1) end -- 游戏自带的手机油门/方向盘也吃
 		local acc, dec = accel or thr > 0, decel or thr < 0
 		if os.clock() - statT > 0.2 then statT = os.clock(); status.Text = (m and m.Name or p.Name) .. " · " .. math.floor(spd + 0.5) .. " sps" .. (s and "" or " · 准星锁定") end
 		if clip then noclip(p, m); if not flying then hover(p, m) end elseif clipModel then reclip() end
@@ -336,18 +346,17 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 			vf.Force = Vector3.zero
 			return
 		elseif lv then lv:Destroy(); lv = nil end
-		-- 转向: 角速度 ∝ 车速(静止不转); 抓地把速度方向拉回车头
-		if math.abs(st) > 0.02 and spd > 0.5 then
-			p.CFrame = CFrame.fromAxisAngle(Vector3.yAxis, -st * S.turn * math.min(spd / 25, 1) * dt) * p.CFrame.Rotation + p.Position
+		-- 转向: 游戏自己的 Steer 那部分让它自己转, 我们只转滑条多出来的部分, 不重复
+		local mine = st - gst
+		if math.abs(mine) > 0.02 and spd > 0.5 then
+			p.CFrame = CFrame.fromAxisAngle(Vector3.yAxis, -mine * S.turn * math.min(spd / 25, 1) * dt) * p.CFrame.Rotation + p.Position
 			local dir = hv:Dot(fwd) < 0 and -fwd or fwd
 			p.AssemblyLinearVelocity = hv.Unit:Lerp(dir, math.min(dt * S.grip, 1)).Unit * spd + Vector3.yAxis * v.Y
 		end
 		local f, F = mass * S.acc, Vector3.zero
 		if brake then -- 急刹: 刹到停, 再踩油门自动解除
-			if acc then setBrake(false)
-			elseif spd > 1 then F = -hv.Unit * (f * 2)
-			else p.AssemblyLinearVelocity = Vector3.yAxis * v.Y end
-		elseif acc and dec then if spd > 1 then F = -hv.Unit * (f * 2) end
+			if acc then setBrake(false) else brakeNow(p, v) end
+		elseif acc and dec then brakeNow(p, v)
 		elseif acc then F = fwd * f
 		elseif dec then F = -fwd * (f * (hv:Dot(fwd) > 3 and 2 or 1)) -- 前进中双倍刹, 停了就倒车
 		elseif cruise then F = fwd * math.clamp((target - hv:Dot(fwd)) * mass * 2, -f, f) end
@@ -356,36 +365,33 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 	end)
 
 	local r1 = row(page)
-	num(r1, "加速", function() return S.acc end, function(v) S.acc = v; save("acc", v) end, 0.5)
-	num(r1, "抓地", function() return S.grip end, function(v) S.grip = v; save("grip", v) end, 0.5)
+	num(r1, "加速", S, "acc", 0.5)
+	num(r1, "飞速", S, "fly", 0.5, "carfly")
 	local r2 = row(page)
-	num(r2, "转向", function() return S.turn end, function(v) S.turn = v; save("turn", v) end, 0.5)
-	num(r2, "飞速", function() return S.fly end, function(v) S.fly = v; save("carfly", v) end, 0.5)
+	btn(r2, "换车(准星)", pick, 0.5)
+	toggle(r2, "穿墙", clip, function(v) clip = v; save("carclip", v) end, 0.5)
 	local r3 = row(page)
-	btn(r3, "换车(准星)", pick, 0.5)
-	toggle(r3, "穿墙", clip, function(v) clip = v; save("carclip", v) end, 0.5)
+	toggle(r3, "定速", false, function(v) cruise = v end, 0.5)
+	toggle(r3, "飞车", false, function(v) flying = v end, 0.5)
 	local r4 = row(page)
-	toggle(r4, "定速", false, function(v) cruise = v end, 0.5)
-	toggle(r4, "飞车", false, function(v) flying = v end, 0.5)
+	btn(r4, "翻转 180°", flip, 0.5)
+	setBrake = toggle(r4, "急刹", false, function(v) brake = v end, 0.5)
 	local r5 = row(page)
-	btn(r5, "翻转 180°", flip, 0.5)
-	setBrake = toggle(r5, "急刹", false, function(v) brake = v end, 0.5)
+	toggle(r5, "常亮", false, function(v) lampOn = v; if v then setLamps(true) else dropLamps() end end, 0.5)
+	btn(r5, "闪 ×3", function() task.spawn(function() for _ = 1, 3 do setLamps(true); task.wait(0.12); setLamps(false); task.wait(0.12) end; if lampOn then setLamps(true) else dropLamps() end end) end, 0.5)
 	local r6 = row(page)
-	toggle(r6, "常亮", false, function(v) lampOn = v; if v then setLamps(true) else dropLamps() end end, 0.5)
-	btn(r6, "闪 ×3", function() task.spawn(function() for _ = 1, 3 do setLamps(true); task.wait(0.12); setLamps(false); task.wait(0.12) end; if lampOn then setLamps(true) else dropLamps() end end) end, 0.5)
-	local r7 = row(page)
-	toggle(r7, "常声(" .. S.horn .. ")", false, horn, 0.5)
-	hold(r7, "声", horn, 0.5)
+	toggle(r6, "常声(" .. S.horn .. ")", false, horn, 0.5)
+	hold(r6, "声", horn, 0.5)
+	local r7 = row(page, 36)
+	hold(r7, "▲ 加速", function(v) accel = v end, 0.5)
+	hold(r7, "▼ 减速", function(v) decel = v end, 0.5)
 	local r8 = row(page, 36)
-	hold(r8, "▲ 加速", function(v) accel = v end, 0.5)
-	hold(r8, "▼ 减速", function(v) decel = v end, 0.5)
-	local r9 = row(page, 36)
-	hold(r9, "飞 ↑", function(v) up = v end, 0.5)
-	hold(r9, "飞 ↓", function(v) down = v end, 0.5)
+	hold(r8, "飞 ↑", function(v) up = v end, 0.5)
+	hold(r8, "飞 ↓", function(v) down = v end, 0.5)
 	status = text(page, "上车即控; 没车就对准它按 换车")
 
-	DBG.sibs = function() local p = part(); return "part=" .. (p and p:GetFullName() or "-") .. " cruise=" .. tostring(cruise) .. "@" .. math.floor(target) .. " fly=" .. tostring(flying) .. " clip=" .. tostring(clip) .. " brake=" .. tostring(brake) end
-	return function() detach(); reclip(); dropLamps(); horn(false); if curSeat and seatMax[curSeat] then curSeat.MaxSpeed = seatMax[curSeat] end end
+	INFO.sibs = function() local p = part(); return "部件=" .. (p and p:GetFullName() or "-") .. " 定速=" .. tostring(cruise) .. "@" .. math.floor(target) .. " 飞车=" .. tostring(flying) .. " 穿墙=" .. tostring(clip) .. " 急刹=" .. tostring(brake) end
+	return function() detach(); reclip(); dropLamps(); horn(false); if curSeat and curMax then curSeat.MaxSpeed = curMax end end
 end }
 
 -- ═════════ drift: 人物推进 (MobilePedals 自动绑; 没有就用面板按钮) ═════════
@@ -433,8 +439,8 @@ MODS[#MODS + 1] = { name = "drift", tab = "漂", fn = function(page)
 	end)
 
 	local r1 = row(page)
-	num(r1, "加速", function() return S.acc end, function(v) S.acc = v; save("dacc", v) end, 0.5)
-	num(r1, "刹车", function() return S.brake end, function(v) S.brake = v; save("dbrake", v) end, 0.5)
+	num(r1, "加速", S, "acc", 0.5, "dacc")
+	num(r1, "刹车", S, "brake", 0.5, "dbrake")
 	local r2 = row(page)
 	toggle(r2, "推进", enabled, function(v) enabled = v; save("drift", v) end, 0.5)
 	btn(r2, "重绑踏板", bindPedals, 0.5)
@@ -448,7 +454,7 @@ MODS[#MODS + 1] = { name = "drift", tab = "漂", fn = function(page)
 		bindPedals()
 	end)
 
-	DBG.drift = function() return "on=" .. tostring(enabled) .. " w=" .. tostring(w) .. " s=" .. tostring(s) .. " pedals=" .. #pedalConns end
+	INFO.drift = function() return "推进=" .. tostring(enabled) .. " 油门=" .. tostring(w) .. " 刹车=" .. tostring(s) .. " 踏板连接=" .. #pedalConns end
 	return function() if att then att:Destroy() end; for _, c in ipairs(pedalConns) do c:Disconnect() end end
 end }
 
@@ -517,26 +523,25 @@ MODS[#MODS + 1] = { name = "hud", tab = "显", fn = function(page)
 	toggle(r1, "数据条", showBar, function(v) showBar = v; save("stats", v) end, 0.5)
 	toggle(r1, "速度箭头", showArrow, function(v) showArrow = v; save("arrow", v) end, 0.5)
 	toggle(page, "玩家 ESP", showEsp, function(v) showEsp = v; save("esp", v) end)
+	btn(page, "复制状态", function() setclipboard(Http:JSONEncode(saved)); toast("配置已复制") end)
 
-	DBG.hud = function() return string.format("fps=%.0f players=%d", fps, #Players:GetPlayers()) end
+	INFO.hud = function() return string.format("fps=%.0f 人数=%d", fps, #Players:GetPlayers()) end
 	return function() for pl in pairs(esp) do espDrop(pl) end end
 end }
 
--- ═════════ log: 各模块状态定时追加到 Selfblox_log.txt ═════════
+-- ═════════ log: 配置 + 各模块状态定时追加到 Selfblox_log.txt ═════════
 MODS[#MODS + 1] = { name = "log", tab = "志", fn = function(page)
 	local S = { int = opt("logint", 2), max = opt("logmax", 512) }
 	local F, run, n, written = "Selfblox_log.txt", false, 0, 0
-	if not (appendfile and writefile) then text(page, "执行器没有 appendfile/writefile"); return end
 	local status = text(page, "开 录制 后写 " .. F)
 	local function head() local h = "---- Selfblox " .. os.date("%Y-%m-%d %H:%M:%S") .. " ----\n"; writefile(F, h); written = #h end
 	task.spawn(function()
 		while alive do
 			task.wait(S.int)
-			if run and alive then
-				local L = {}
-				for name, fn in pairs(DBG) do local ok, s = pcall(fn); L[#L + 1] = name .. ": " .. tostring(s) end -- 别的模块 dump 炸了日志照写
-				table.sort(L)
-				local txt = "[" .. os.date("%H:%M:%S") .. "] #" .. n .. "\n" .. table.concat(L, "\n") .. "\n"
+			if run then
+				local L = { "[" .. os.date("%H:%M:%S") .. "] #" .. n, "配置 " .. Http:JSONEncode(saved) } -- 数值不用各模块自己拼, 这里全有
+				for _, m in ipairs(MODS) do if INFO[m.name] then L[#L + 1] = m.name .. " " .. INFO[m.name]() end end
+				local txt = table.concat(L, "\n") .. "\n"
 				if written == 0 or written + #txt > S.max * 1024 then head() end -- ponytail: 超限直接重写, 不归档; 要历史自己复制文件
 				appendfile(F, txt)
 				n, written = n + 1, written + #txt
@@ -545,8 +550,8 @@ MODS[#MODS + 1] = { name = "log", tab = "志", fn = function(page)
 		end
 	end)
 	local r1 = row(page)
-	num(r1, "间隔s", function() return S.int end, function(v) S.int = v; save("logint", v) end, 0.5)
-	num(r1, "上限KB", function() return S.max end, function(v) S.max = v; save("logmax", v) end, 0.5)
+	num(r1, "间隔s", S, "int", 0.5, "logint")
+	num(r1, "上限KB", S, "max", 0.5, "logmax")
 	toggle(page, "录制", false, function(v) run = v end)
 end }
 
@@ -635,9 +640,7 @@ MODS[#MODS + 1] = { name = "plane", tab = "机", fn = function(page)
 	end
 	local function setSpy(v)
 		if v and not oldNC then
-			if not (hookmetamethod and getnamecallmethod) then toast("执行器没有 hookmetamethod"); return false end
-			local wrap = newcclosure or function(f) return f end
-			oldNC = hookmetamethod(game, "__namecall", wrap(function(self, ...)
+			oldNC = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
 				local m = getnamecallmethod()
 				if spyOn and (m == "FireServer" or m == "InvokeServer") then
 					local a = table.pack(...)
@@ -686,8 +689,8 @@ MODS[#MODS + 1] = { name = "plane", tab = "机", fn = function(page)
 		L[#L + 1] = "-- 收 " .. #got
 		for _, s in ipairs(got) do L[#L + 1] = "  " .. s end
 		local txt = table.concat(L, "\n")
-		if writefile then writefile("plane_debug.txt", txt) end
-		if setclipboard then setclipboard(txt) end
+		writefile("plane_debug.txt", txt)
+		setclipboard(txt)
 		toast("报告 " .. #L .. " 行 → plane_debug.txt / 剪贴板")
 	end
 
@@ -695,8 +698,7 @@ MODS[#MODS + 1] = { name = "plane", tab = "机", fn = function(page)
 	btn(r1, "重扫", scan, 0.5)
 	btn(r1, "写报告", report, 0.5)
 	local r2 = row(page)
-	local spyT
-	spyT = toggle(r2, "发侦听", false, function(v) if not setSpy(v) then spyT(false) end end, 0.5)
+	toggle(r2, "发侦听", false, setSpy, 0.5)
 	toggle(r2, "收侦听", false, setWatch, 0.5)
 	local r3 = row(page)
 	toggle(r3, "高亮", false, function(v) hlOn = v; highlight() end, 0.5)
@@ -707,7 +709,7 @@ MODS[#MODS + 1] = { name = "plane", tab = "机", fn = function(page)
 	status = text(page, "上机 → 发侦听 → 开几枪 → 写报告")
 	task.spawn(function() while alive do task.wait(5); if autoOn and alive then scan(); report() end end end)
 
-	DBG.plane = function() return "planes=" .. #planes .. " remotes=" .. #remotes .. " sent=" .. #sent .. " got=" .. #got .. " spy=" .. tostring(spyOn) end
+	INFO.plane = function() return "飞机=" .. #planes .. " Remote=" .. #remotes .. " 发=" .. #sent .. " 收=" .. #got .. " 侦听=" .. tostring(spyOn) end
 	return function() setWatch(false); hlOn = false; highlight(); if oldNC then hookmetamethod(game, "__namecall", oldNC) end end
 end }
 
@@ -748,11 +750,13 @@ MODS[#MODS + 1] = { name = "brick", tab = "砖", fn = function(page)
 	end
 	setRun = toggle(page, "刷砖", false, function(v) run = v; if v then task.spawn(loop) end end)
 	local r1 = row(page)
-	num(r1, "批次", function() return S.batch end, function(v) S.batch = v; save("bbatch", v) end, 0.5)
-	num(r1, "间隔", function() return S.int end, function(v) S.int = v; save("bint", v) end, 0.5)
+	num(r1, "批次", S, "batch", 0.5, "bbatch")
+	num(r1, "间隔", S, "int", 0.5, "bint")
+	local r2 = row(page)
+	num(r2, "排空间隔", S, "drain", nil, "bdrain")
 	status = text(page, "BitFarmer 专用")
 
-	DBG.brick = function() return "run=" .. tostring(run) .. " cycles=" .. st.cycles .. " earned=" .. st.earned .. " rate=" .. string.format("%.1f", st.rate) end
+	INFO.brick = function() return string.format("刷=%s 周期=%d 已刷=%.0f 速率=%.1f/s", tostring(run), st.cycles, st.earned, st.rate) end
 	return function() run = false end
 end }
 
@@ -781,4 +785,4 @@ _G.SB_UNLOAD = function()
 	FX:Destroy()
 	_G.SB_UNLOAD = nil
 end
-print("[Selfblox] v12 · " .. #active .. " 模块 · _G.SB_UNLOAD() 卸载")
+print("[Selfblox] v13 · " .. #active .. " 模块 · _G.SB_UNLOAD() 卸载")
