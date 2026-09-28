@@ -24,7 +24,7 @@ table.unpack = table.unpack or unpack
 local INSTANCES, LIVE = {}, 0
 local methods = {}
 local SIGNALS = {}
-for _, n in ipairs({ "Activated", "InputBegan", "InputEnded", "FocusLost", "Focused", "DragBegin", "DragEnd", "ChildAdded", "ChildRemoved", "DescendantAdded", "DescendantRemoving", "PlayerAdded", "PlayerRemoving", "PreSimulation", "PreRender", "Heartbeat", "RenderStepped", "JumpRequest", "OnClientEvent", "Changed", "Destroying" }) do SIGNALS[n] = true end
+for _, n in ipairs({ "Activated", "InputBegan", "InputEnded", "FocusLost", "Focused", "DragBegin", "DragContinue", "DragEnd", "ChildAdded", "ChildRemoved", "DescendantAdded", "DescendantRemoving", "PlayerAdded", "PlayerRemoving", "PreSimulation", "PreRender", "Heartbeat", "RenderStepped", "JumpRequest", "OnClientEvent", "Changed", "Destroying" }) do SIGNALS[n] = true end
 local Signal = {}
 Signal.__index = Signal
 function Signal.new() return setmetatable({ hs = {} }, Signal) end
@@ -373,6 +373,9 @@ local names = {}
 for _, b in ipairs(buttons()) do if #b.Text <= 3 and b.Text ~= "" then names[b.Text] = true end end
 ok(names["动"] and names["车"] and names["漂"] and names["显"] and names["志"] and names["机"] and names["砖"], "七个页签都在")
 ok(#newInstancesFrom(SNAP) > 60, "控件建了 " .. #newInstancesFrom(SNAP) .. " 个实例")
+local errs = 0 -- 模块构造时 pcall 兜住了错误会写成一行"出错: ...", 这里要当成失败抓出来
+for _, d in ipairs(all()) do if d.ClassName == "TextLabel" and type(d.Text) == "string" and d.Text:sub(1, 6) == "出错: " then errs = errs + 1; print("       → " .. d.Text) end end
+ok(errs == 0, "没有模块构造失败")
 
 print("\n[2] 空转 30 帧 (没有任何开关)")
 step(1 / 60, 30)
@@ -441,10 +444,34 @@ step(1 / 60, 5)
 ok(seat:FindFirstChild("SB_SIBS"):FindFirstChildOfClass("LinearVelocity") ~= nil, "飞车换成原生 LinearVelocity")
 click(findBtn("飞车"))
 click(findBtn("急刹"))
+
+print("\n[6b] 方向盘: 整条能拖 / 松手回中 / 位置钉死")
+click(findBtn("急刹")) -- 先关急刹: 开着的话水平速度每帧被清零, 车转不动
+seat.props.Throttle, seat.props.Steer = 0, 0
+seat.props.AssemblyLinearVelocity = Vector3.new(0, 0, -30)
+local track
+for _, d in ipairs(all()) do if d.Name == "SB_Steer" then track = d end end
+ok(track ~= nil, "滑条建出来了")
+local knob, kd = track and track:FindFirstChild("SB_Knob"), nil
+for _, d in ipairs(track:GetDescendants()) do if d.ClassName == "UIDragDetector" then kd = d end end
+ok(knob ~= nil and kd ~= nil, "圆点 + 全宽拖拽手柄都在")
+local look0 = seat.props.CFrame.LookVector
+kd.DragContinue:Fire({ Position = { X = 999, Y = 0 } })
+step(1 / 60, 12)
+local turned = (seat.props.CFrame.LookVector - look0).Magnitude
+ok(turned > 0.05, "拖到最右 → 车真的转了 " .. string.format("%.2f", turned))
+ok(knob.Position.X.Offset > 10, "圆点跟着手指跑 (偏 " .. knob.Position.X.Offset .. "px)")
+kd.DragEnd:Fire()
+step(1 / 60, 2)
+ok(knob.Position.X.Offset == 0 and knob.Position.X.Scale == 0.5, "松手回中, 平时固定")
+ok(track.Position.Y.Scale == 1 and track.Position.Y.Offset == -10, "钉在屏幕底部 (不跟面板跑)")
+ok(track.ZIndex > 1 and knob.ZIndex > track.ZIndex, "ZIndex 压过面板, 面板开着也点得到")
+print("\n[6c] 急刹")
+click(findBtn("急刹")) -- 开
 seat.props.Throttle, seat.props.AssemblyLinearVelocity = 0, Vector3.new(30, 5, 0) -- 松开游戏油门, 免得急刹被"踩油门自动解除"顶掉
 step(1 / 60, 2)
 ok(seat.AssemblyLinearVelocity.Z == 0 and seat.AssemblyLinearVelocity.X == 0, "急刹把水平速度清了, 保留竖直 " .. tostring(seat.AssemblyLinearVelocity.Y))
-click(findBtn("急刹"))
+click(findBtn("急刹")) -- 关
 
 print("\n[7] 全部控件点一遍 (开), 30 帧, 再点一遍 (关)")
 local flipped, held = 0, 0

@@ -309,14 +309,22 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 	end
 	local function brakeNow(p, v) p.AssemblyLinearVelocity = Vector3.yAxis * v.Y end -- 急刹: 水平速度直接归零, 比推力快且不吃质量
 
-	-- 方向盘: 屏幕底部滑条, 原生 UIDragDetector 单轴拖, 松手回中
-	local track = mk("Frame", { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -10), Size = UDim2.fromOffset(200, 36), BackgroundColor3 = BG, BackgroundTransparency = 0.4, BorderSizePixel = 0, Visible = false }, gui)
+	-- 方向盘: 钉在屏幕底部不动; ZIndex 压过面板, 面板开着也点得到; 整条背景都能拖 (拖的是全宽透明手柄, 圆点跟着手指), 松手回中
+	local track = mk("Frame", { Name = "SB_Steer", AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -10), Size = UDim2.fromOffset(200, 36), BackgroundColor3 = BG, BackgroundTransparency = 0.4, BorderSizePixel = 0, Visible = false, ZIndex = 10 }, gui)
 	mk("UICorner", { CornerRadius = UDim.new(1, 0) }, track)
-	local knob = mk("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(36, 36), BackgroundColor3 = Color3.fromRGB(95, 65, 135), BorderSizePixel = 0 }, track)
+	local knob = mk("Frame", { Name = "SB_Knob", AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(36, 36), BackgroundColor3 = Color3.fromRGB(95, 65, 135), BorderSizePixel = 0, ZIndex = 11 }, track)
 	mk("UICorner", { CornerRadius = UDim.new(1, 0) }, knob)
-	local kd = mk("UIDragDetector", { DragStyle = Enum.UIDragDetectorDragStyle.TranslateLine, DragAxis = Vector2.new(1, 0), BoundingUI = track }, knob)
-	on(kd.DragEnd, function() knob.Position = UDim2.fromScale(0.5, 0.5) end)
-	local function steer() return (knob.AbsolutePosition.X - track.AbsolutePosition.X - 82) / 82 end -- 圆心 18..182 → -1..1
+	local handle = mk("Frame", { Name = "SB_Handle", Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Active = true, ZIndex = 12 }, track) -- 看不见的手柄盖在最上面, 整条都能按
+	local kd = mk("UIDragDetector", { DragStyle = Enum.UIDragDetectorDragStyle.TranslateLine, DragAxis = Vector2.new(1, 0), BoundingUI = track }, handle)
+	local dragX
+	on(kd.DragContinue, function(i) local x = i and i.Position and i.Position.X; dragX = (x and x ~= 0) and x or UIS:GetMouseLocation().X end)
+	on(kd.DragEnd, function() dragX = nil; handle.Position = UDim2.fromScale(0.5, 0.5) end)
+	local function steer() -- 轨道宽 200 / 圆点半径 18 → 圆心能走 ±82
+		local cx = track.AbsolutePosition.X + 100
+		local s = math.clamp((dragX or cx) - cx, -82, 82)
+		knob.Position = UDim2.new(0.5, s, 0.5, 0) -- 圆点是纯显示, 只跟手指
+		return s / 82
+	end
 
 	on(RunService.PreSimulation, function(dt)
 		local s = seat()
