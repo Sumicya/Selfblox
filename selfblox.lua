@@ -230,7 +230,7 @@ end }
 
 -- ═════════ sibs: 载具 (坐着 = 控制座位所在装配体; 没坐 = 准星"换车"锁定) ═════════
 MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
-	local S = { acc = opt("acc", 500), grip = opt("grip", 5), turn = opt("turn", 2.2), fly = opt("carfly", 60), horn = opt("hornkey", "H") } -- grip/turn/hornkey 没做控件, 想调就在 _G.SB 里给
+	local S = { acc = opt("acc", 500), grip = opt("grip", 5), turn = opt("turn", 2.2), cap = opt("turncap", 1), fly = opt("carfly", 60), horn = opt("hornkey", "H") }
 	local picked, pickSeat, curSeat, curMax, att, vf, lv, status, clipModel, setBrake
 	local accel, decel, up, down, cruise, brake, flying, lampOn, target, statT = false, false, false, false, false, false, false, false, 0, 0
 	local clip = opt("carclip", false)
@@ -349,7 +349,7 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 		-- 转向: 游戏自己的 Steer 那部分让它自己转, 我们只转滑条多出来的部分, 不重复
 		local mine = st - gst
 		if math.abs(mine) > 0.02 and spd > 0.5 then
-			p.CFrame = CFrame.fromAxisAngle(Vector3.yAxis, -mine * S.turn * math.min(spd / 25, 1) * dt) * p.CFrame.Rotation + p.Position
+			p.CFrame = CFrame.fromAxisAngle(Vector3.yAxis, -mine * S.turn * math.min(spd / 25, S.cap) * dt) * p.CFrame.Rotation + p.Position -- turncap>1 = 车越快转得越快(半径不随速度涨)
 			local dir = hv:Dot(fwd) < 0 and -fwd or fwd
 			p.AssemblyLinearVelocity = hv.Unit:Lerp(dir, math.min(dt * S.grip, 1)).Unit * spd + Vector3.yAxis * v.Y
 		end
@@ -367,6 +367,9 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 	local r1 = row(page)
 	num(r1, "加速", S, "acc", 0.5)
 	num(r1, "飞速", S, "fly", 0.5, "carfly")
+	local rg = row(page)
+	num(rg, "抓地", S, "grip", 0.5)
+	num(rg, "转向", S, "turn", 0.5)
 	local r2 = row(page)
 	btn(r2, "换车(准星)", pick, 0.5)
 	toggle(r2, "穿墙", clip, function(v) clip = v; save("carclip", v) end, 0.5)
@@ -390,7 +393,7 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 	hold(r8, "飞 ↓", function(v) down = v end, 0.5)
 	status = text(page, "上车即控; 没车就对准它按 换车")
 
-	INFO.sibs = function() local p = part(); return "部件=" .. (p and p:GetFullName() or "-") .. " 定速=" .. tostring(cruise) .. "@" .. math.floor(target) .. " 飞车=" .. tostring(flying) .. " 穿墙=" .. tostring(clip) .. " 急刹=" .. tostring(brake) end
+	INFO.sibs = function() local p = part(); return "抓地=" .. S.grip .. "/转向=" .. S.turn .. "/过弯上限=" .. S.cap .. " 部件=" .. (p and p:GetFullName() or "-") .. " 定速=" .. tostring(cruise) .. "@" .. math.floor(target) .. " 飞车=" .. tostring(flying) .. " 穿墙=" .. tostring(clip) .. " 急刹=" .. tostring(brake) end
 	return function() detach(); reclip(); dropLamps(); horn(false); if curSeat and curMax then curSeat.MaxSpeed = curMax end end
 end }
 
