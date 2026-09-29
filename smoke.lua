@@ -88,6 +88,7 @@ function methods.GetPropertyChangedSignal(self, p) local s = self.props["__pcs_"
 function methods.GetPivot(self) return self.props.__pivot or CFrame.new(Vector3.zero) end
 function methods.PivotTo(self, cf) self.props.__pivot = cf end
 function methods.Raycast() return nil end
+function methods.Clone(self) return inst(self.ClassName, self.props) end
 function methods.WorldToViewportPoint(self, v) return Vector3.new(100, 200, 10), true end
 function methods.ChangeState() end
 function methods.SendKeyEvent(self, ...) self.props.keys = (self.props.keys or 0) + 1 end
@@ -542,6 +543,21 @@ step(1 / 60, 2)
 ok(knob.Position.X.Offset == 0 and knob.Position.X.Scale == 0.5, "松手回中, 平时固定")
 ok(track.Position.Y.Scale == 1 and track.Position.Y.Offset == -10, "钉在屏幕底部 (不跟面板跑)")
 ok(track.ZIndex > 1 and knob.ZIndex > track.ZIndex, "ZIndex 压过面板, 面板开着也点得到")
+print("\n[6e] 锚定的车也要立刻绑上 (不再等游戏解锁)")
+seat.props.Anchored = true
+step(1 / 60, 5)
+ok(seat:FindFirstChild("SB_SIBS") ~= nil, "锚定状态下 SB_SIBS 照样挂上")
+local stTxt
+for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" and d.Text:find("锚定", 1, true) then stTxt = d.Text end end
+ok(stTxt ~= nil, "状态行直接标出锚定 (" .. tostring(stTxt) .. ")")
+local lookA = seat.props.CFrame.LookVector
+kd.DragContinue:Fire({ Position = { X = 999, Y = 0 } })
+step(1 / 60, 10)
+ok((seat.props.CFrame.LookVector - lookA).Magnitude > 0.02, "锚定车的转向照样有效 (走 CFrame)")
+kd.DragEnd:Fire()
+seat.props.Anchored = false
+step(1 / 60, 3)
+
 print("\n[6d] 飞车: 摇杆前推 = 车头方向")
 click(findBtn("飞车"))
 _G.__SVC.UserInputService.props.GetMoveVector = function() return Vector3.new(0, 0, -1) end -- 前推 = Z -1 (引擎约定)

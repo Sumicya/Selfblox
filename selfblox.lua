@@ -366,8 +366,9 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 		end
 		local p, sp = part()
 		track.Visible = p ~= nil
-		if not p or p.Anchored then detach(); if clipModel then reclip() end; return end
-		attach(p)
+		if not p then detach(); if clipModel then reclip() end; return end
+		attach(p) -- 锚定的车照样绑: 之前 v13 直接 return, 所以"要动一会(等游戏解锁)才能绑上"
+		local anch = p.Anchored -- 锚定 = 引擎不让推, 只能等游戏自己解锁; 滑条转向走 CFrame 照样有效
 		local m = model()
 		local v = p.AssemblyLinearVelocity
 		local hv = Vector3.new(v.X, 0, v.Z)
@@ -375,14 +376,14 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 		local gst, thr, st = 0, 0, steer()
 		if sp and sp:IsA("VehicleSeat") then gst, thr, st = sp.Steer, sp.Throttle, math.clamp(st + sp.Steer, -1, 1) end -- 游戏自带的手机油门/方向盘也吃
 		local acc, dec = accel or thr > 0, decel or thr < 0
-		if os.clock() - statT > 0.2 then statT = os.clock(); status.Text = (m and m.Name or p.Name) .. " · " .. math.floor(spd + 0.5) .. " sps" .. (s and "" or " · 准星锁定") end
+		if os.clock() - statT > 0.2 then statT = os.clock(); status.Text = (m and m.Name or p.Name) .. " · " .. math.floor(spd + 0.5) .. " sps" .. (s and "" or " · 准星锁定") .. (anch and " · 锚定(等游戏解锁)" or "") end
 		if clip then noclip(p, m); if not flying then hover(p, m) end elseif clipModel then reclip() end
 		if flying then -- 飞车: 摇杆(前后左右) + 面板按钮都吃; 松手悬停
 			if not lv then lv = mk("LinearVelocity", { Attachment0 = att, MaxForce = math.huge, VectorVelocity = Vector3.zero, RelativeTo = Enum.ActuatorRelativeTo.World }, att) end
 			local mv = UIS:GetMoveVector() -- 摇杆: 前推 Z=-1, 右推 X=1 (引擎原生, 坐姿也能读)
 			local dir = fwd * math.clamp(-mv.Z + (acc and 1 or 0) - (dec and 1 or 0), -1, 1) + (flat(p.CFrame.RightVector) or Vector3.xAxis) * math.clamp(mv.X, -1, 1)
 			if dir.Magnitude > 1 then dir = dir.Unit end
-			lv.VectorVelocity = dir * S.fly + Vector3.yAxis * (S.fly * ((up and 1 or 0) - (down and 1 or 0)))
+			lv.VectorVelocity = anch and Vector3.zero or (dir * S.fly + Vector3.yAxis * (S.fly * ((up and 1 or 0) - (down and 1 or 0))))
 			vf.Force = Vector3.zero
 			return
 		elseif lv then lv:Destroy(); lv = nil end
@@ -403,8 +404,34 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 		elseif dec then F = -fwd * (f * (hv:Dot(fwd) > 3 and 2 or 1)) -- 前进中双倍刹, 停了就倒车
 		elseif cruise then F = fwd * math.clamp((target - hv:Dot(fwd)) * mass * 2, -f, f) end
 		if not cruise then target = hv:Dot(fwd) end -- 定速一开就锁当前车速
-		vf.Force = F
+		if anch then vf.Force = Vector3.zero else vf.Force = F end -- 锚定: 力无效, 清零等着
 	end)
+
+	local function scanCar()
+		local p, s = part()
+		if not p then toast("没有载具"); return end
+		local m = model()
+		local L = { "==== CAR " .. os.date("%Y-%m-%d ") .. clock(true) .. " place=" .. game.PlaceId .. " ====",
+			"座位: " .. (s and s:GetFullName() or "-") .. "   根部件: " .. p:GetFullName() .. "   Model: " .. (m and m:GetFullName() or "-"),
+			string.format("根部件 质量=%.0f 锚定=%s 速度=%.1f 尺寸=(%.0f,%.0f,%.0f)", p.AssemblyMass, tostring(p.Anchored), p.AssemblyLinearVelocity.Magnitude, p.Size.X, p.Size.Y, p.Size.Z) }
+		if s and s:IsA("VehicleSeat") then
+			L[#L + 1] = string.format("座位: MaxSpeed=%s Torque=%.0f Throttle=%.2f Steer=%.2f 乘员=%s", tostring(s.MaxSpeed), s.Torque, s.Throttle, s.Steer, s.Occupant and (s.Occupant.Parent and s.Occupant.Parent.Name or "?") or "无")
+		end
+		L[#L + 1] = "-- 装配体部件 (含游戏自己的约束/灯/脚本钩子)"
+		for _, d in ipairs(p:GetConnectedParts(true)) do
+			if d ~= me.Character and not d:IsDescendantOf(me.Character) then
+				L[#L + 1] = string.format("  %-26s %-14s 锚=%-5s 质量=%.0f 尺寸=(%.0f,%.0f,%.0f)", d.Name, d.ClassName, tostring(d.Anchored), d.AssemblyMass, d.Size.X, d.Size.Y, d.Size.Z)
+				for _, c in ipairs(d:GetChildren()) do
+					if c:IsA("Light") then L[#L + 1] = "        灯 " .. c.ClassName .. " " .. c.Name .. " Enabled=" .. tostring(c.Enabled)
+					elseif c:IsA("Constraint") or c:IsA("BodyMover") or c:IsA("Attachment") then L[#L + 1] = "        " .. c.ClassName .. " " .. c.Name end
+				end
+			end
+		end
+		local txt = table.concat(L, "\n")
+		writefile("selfblox_car.txt", txt)
+		setclipboard(txt)
+		toast("车结构 " .. #L .. " 行 → selfblox_car.txt / 剪贴板")
+	end
 
 	local r1 = row(page)
 	num(r1, "加速", S, "acc", 0.5)
@@ -427,6 +454,7 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 	local r6 = row(page)
 	toggle(r6, "常声(" .. S.horn .. ")", false, horn, 0.5)
 	hold(r6, "声", horn, 0.5)
+	btn(page, "扫车 (结构进日志/剪贴板)", scanCar)
 	local r7 = row(page, 36)
 	hold(r7, "▲ 加速", function(v) accel = v end, 0.5)
 	hold(r7, "▼ 减速", function(v) decel = v end, 0.5)
