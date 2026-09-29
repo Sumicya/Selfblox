@@ -154,6 +154,7 @@ Vector3 = { new = function(x, y, z) return setmetatable({ X = x or 0, Y = y or 0
 Vector3.zero, Vector3.one = Vector3.new(0, 0, 0), Vector3.new(1, 1, 1)
 Vector3.xAxis, Vector3.yAxis, Vector3.zAxis = Vector3.new(1, 0, 0), Vector3.new(0, 1, 0), Vector3.new(0, 0, 1)
 Vector2 = { new = function(x, y) return setmetatable({ X = x or 0, Y = y or 0 }, { __index = { Magnitude = 0 } }) end }
+Vector2.zero = Vector2.new(0, 0)
 
 Color3 = {
 	new = function(r, g, b) return { R = r or 0, G = g or 0, B = b or 0 } end,
@@ -424,6 +425,23 @@ local pads = 0
 for _, d in ipairs(all()) do if d.ClassName == "UIListLayout" then pads = pads + d.Padding.Offset + d.Padding.Scale end end
 ok(pads == 0, "所有 UIListLayout 间距 = 0")
 
+pedals:Destroy() -- 模拟游戏重建踏板 UI: 老代码要手动点重绑, 现在应该自己每秒重试
+step(1 / 60, 130) -- 2 秒多, 够循环跑两轮
+local dead = 0
+for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" and d.Text:find("无 MobilePedals", 1, true) then dead = dead + 1 end end
+ok(dead == 1, "踏板没了 → 状态说自己没了, 不假装绑着")
+local pedals2 = inst("ScreenGui", { Name = "MobilePedals" })
+local box2 = inst("Frame", { Name = "Pedals" })
+local b1 = inst("ImageButton", { Name = "Brake" })
+local b2 = inst("ImageButton", { Name = "Gas" })
+box2.Parent, b1.Parent, b2.Parent = pedals2, box2, box2
+pedals2.Parent = pgui
+step(1 / 60, 130)
+local rebound
+for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" and d.Text:find("踏板已绑定", 1, true) then rebound = d.Text end end
+ok(rebound ~= nil, "踏板重建后自动重绑 (" .. tostring(rebound) .. ")")
+pedals2:Destroy() -- 这套假踏板是测试自己造的, 用完自己收, 不然算漏实例
+
 print("\n[3b] 点标题条 = 折叠 (+/- 也还能用)")
 local tl, bd = tabs():FindFirstChild("SB_Title"), tabs():FindFirstChild("SB_Body")
 ok(tl ~= nil and bd ~= nil and bd.Visible, "标题条 + 面板体都在")
@@ -592,6 +610,21 @@ for _, b in ipairs(buttons()) do if ends(b.Text, " 开") then click(b); flipped 
 step(1 / 60, 10)
 ok(true, "按住/松开 " .. held .. " 个按钮 + 全开全关走完没炸")
 ok(_G.__SVC.VirtualInputManager.props.keys ~= nil, "喇叭真的发了按键事件")
+
+print("\n[7b] 诊断打包")
+local dumpBtn
+for _, d in ipairs(all()) do if d:IsA("TextButton") and type(d.Text) == "string" and d.Text:find("诊断打包", 1, true) then dumpBtn = d end end
+ok(dumpBtn ~= nil, "「志」页有诊断打包按钮")
+if dumpBtn then dumpBtn.Activated:Fire() end
+step(1 / 60, 3)
+local dm = VFS["selfblox_dump.txt"]
+ok(dm ~= nil, "写了 selfblox_dump.txt")
+ok(dm and dm:find("执行器 isfile=", 1, true) ~= nil, "快照里有执行器能力")
+ok(dm and dm:find("MobilePedals", 1, true) ~= nil, "快照里有踏板树")
+ok(dm and dm:find("sibs ", 1, true) ~= nil, "快照里有各模块状态")
+ok(dm and dm:find("CAr", 1, true) == nil and dm:find("=== CAR", 1, true) ~= nil, "快照里有车结构")
+ok(CLIP ~= nil and CLIP:find("SELFblox 诊断", 1, true) ~= nil, "快照同时进了剪贴板")
+ok(type(_G.SB_DUMP) == "function", "也可以用 _G.SB_DUMP() 手动打")
 
 print("\n[8] 写盘 / 剪贴板")
 ok(VFS["Selfblox.json"] ~= nil, "改过的值写进了 Selfblox.json")

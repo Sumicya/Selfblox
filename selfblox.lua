@@ -34,13 +34,14 @@ local CLOCK12 = opt("clock", "12") ~= "24" -- 12 小时制默认; _G.SB = { cloc
 local function clock(sec) return os.date((CLOCK12 and "%I" or "%H") .. (sec and ":%M:%S" or ":%M")) end
 
 -- ───────── 公共 ─────────
-local alive, conns, INFO, MODS, stops = true, {}, {}, {}, {}
+local alive, conns, INFO, MODS, stops, DUMP = true, {}, {}, {}, {}, {}
 local function on(sig, fn) local c = sig:Connect(fn); conns[#conns + 1] = c; return c end
 local function mk(cls, props, parent) local i = Instance.new(cls); for k, v in pairs(props) do i[k] = v end; i.Parent = parent; return i end
 local function tap(i) return i.UserInputType == Enum.UserInputType.Touch or i.UserInputType == Enum.UserInputType.MouseButton1 end
 local function hum() local c = me.Character; return c and c:FindFirstChildOfClass("Humanoid") end
 local function root() local c = me.Character; return c and (c:FindFirstChild("HumanoidRootPart") or c:FindFirstChild("Root")) end
 local function flat(v) v = Vector3.new(v.X, 0, v.Z); if v.Magnitude > 1e-3 then return v.Unit end end
+local function nn(v) return tonumber(v) or 0 end -- 诊断/日志里的引擎数字: 拿不到就 0, 不能因为一个属性缺失把整份 dump 弄炸
 
 -- ───────── UI: 一个 ScreenGui, 标题条(原生 UIDragDetector 拖) + 页签 + 每模块一页 ─────────
 local FONT, WHITE = Enum.Font.GothamBold, Color3.new(1, 1, 1)
@@ -115,6 +116,7 @@ local toastL = mk("TextLabel", { AnchorPoint = Vector2.new(0.5, 0), Position = U
 mk("UIPadding", { PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10) }, toastL)
 local toastN = 0
 local function toast(s) toastN = toastN + 1; local n = toastN; toastL.Text, toastL.Visible = s, true; task.delay(2, function() if toastN == n then toastL.Visible = false end end) end
+local dumpNow -- 启动完再赋值; 模块里的按钮闭包先引用这个局部变量
 
 -- ═════════ moc: 角色 ═════════
 MODS[#MODS + 1] = { name = "moc", tab = "动", fn = function(page)
@@ -407,15 +409,15 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 		if anch then vf.Force = Vector3.zero else vf.Force = F end -- 锚定: 力无效, 清零等着
 	end)
 
-	local function scanCar()
+	local function carLines()
 		local p, s = part()
-		if not p then toast("没有载具"); return end
+		if not p then return { "没有载具" } end
 		local m = model()
 		local L = { "==== CAR " .. os.date("%Y-%m-%d ") .. clock(true) .. " place=" .. game.PlaceId .. " ====",
 			"座位: " .. (s and s:GetFullName() or "-") .. "   根部件: " .. p:GetFullName() .. "   Model: " .. (m and m:GetFullName() or "-"),
 			string.format("根部件 质量=%.0f 锚定=%s 速度=%.1f 尺寸=(%.0f,%.0f,%.0f)", p.AssemblyMass, tostring(p.Anchored), p.AssemblyLinearVelocity.Magnitude, p.Size.X, p.Size.Y, p.Size.Z) }
 		if s and s:IsA("VehicleSeat") then
-			L[#L + 1] = string.format("座位: MaxSpeed=%s Torque=%.0f Throttle=%.2f Steer=%.2f 乘员=%s", tostring(s.MaxSpeed), s.Torque, s.Throttle, s.Steer, s.Occupant and (s.Occupant.Parent and s.Occupant.Parent.Name or "?") or "无")
+			L[#L + 1] = string.format("座位: MaxSpeed=%s Torque=%.0f Throttle=%.2f Steer=%.2f 乘员=%s", tostring(s.MaxSpeed), nn(s.Torque), nn(s.Throttle), nn(s.Steer), s.Occupant and (s.Occupant.Parent and s.Occupant.Parent.Name or "?") or "无")
 		end
 		L[#L + 1] = "-- 装配体部件 (含游戏自己的约束/灯/脚本钩子)"
 		for _, d in ipairs(p:GetConnectedParts(true)) do
@@ -427,6 +429,12 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 				end
 			end
 		end
+		return L
+	end
+	DUMP.car = carLines
+	local function scanCar()
+		local L = carLines()
+		if #L == 1 and L[1] == "没有载具" then toast("没有载具"); return end
 		local txt = table.concat(L, "\n")
 		writefile("selfblox_car.txt", txt)
 		setclipboard(txt)
@@ -465,7 +473,7 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 
 	local function seatInfo(s)
 		if not s then return " 没坐"
-		elseif s:IsA("VehicleSeat") then return string.format(" 座=%s 油门=%.2f 方向=%.2f", s.Name, s.Throttle, s.Steer)
+		elseif s:IsA("VehicleSeat") then return string.format(" 座=%s 油门=%.2f 方向=%.2f", s.Name, nn(s.Throttle), nn(s.Steer))
 		else return " 座=" .. s.Name .. "(普通座, 无油门/方向)" end
 	end
 	INFO.sibs = function() local p, s = part(); return "抓地=" .. S.grip .. "/转向=" .. S.turn .. "/过弯上限=" .. S.cap .. " 部件=" .. (p and p:GetFullName() or "-") .. seatInfo(s) .. (p and p.Anchored and " 锚定(引擎不让推)" or "") .. " 定速=" .. tostring(cruise) .. "@" .. math.floor(target) .. " 飞车=" .. tostring(flying) .. " 穿墙=" .. tostring(clip) .. " 急刹=" .. tostring(brake) end
@@ -476,10 +484,23 @@ end }
 MODS[#MODS + 1] = { name = "drift", tab = "漂", fn = function(page)
 	local S = { acc = opt("dacc", 5), brake = opt("dbrake", 10) }
 	local enabled, w, s, att, vf, status = opt("drift", true), false, false, nil, nil, nil
-	local pedalConns = {}
+	local pedalConns, pedalRoot = {}, nil
+	local function pedalLines() -- 踏板的真实结构, 绑不上时能直接看出它长啥样
+		local pg = me:FindFirstChild("PlayerGui")
+		local f = pg and pg:FindFirstChild("MobilePedals")
+		if not f then return { "无 MobilePedals; PlayerGui 顶层: " .. table.concat((function(o) for _, c in ipairs(pg and pg:GetChildren() or {}) do o[#o + 1] = c.Name .. "(" .. c.ClassName .. ")" end; return o end)(), ", ") } end
+		local L = { "MobilePedals: " .. f:GetFullName() }
+		for _, d in ipairs(f:GetDescendants()) do
+			local ap, sz = d.AbsolutePosition or Vector2.zero, d.AbsoluteSize or Vector2.zero
+			L[#L + 1] = string.format("  %-28s %-12s 可见=%-5s 可点=%-5s 位置=(%.0f,%.0f) 尺寸=(%.0f,%.0f)", d.Name, d.ClassName, tostring(d.Visible), tostring(d.Active), nn(ap.X), nn(ap.Y), nn(sz.X), nn(sz.Y))
+		end
+		return L
+	end
+	DUMP.pedals = pedalLines
 	local function bindPedals()
 		for _, c in ipairs(pedalConns) do c:Disconnect() end
 		table.clear(pedalConns)
+		pedalRoot = nil
 		local pg = me:FindFirstChild("PlayerGui")
 		local f = pg and pg:FindFirstChild("MobilePedals")
 		if not f then status.Text = "无 MobilePedals, 用下面按钮"; return end
@@ -493,6 +514,7 @@ MODS[#MODS + 1] = { name = "drift", tab = "漂", fn = function(page)
 		end
 		bind(b[1], function(v) s = v end)
 		bind(b[2], function(v) w = v end)
+		pedalRoot = f
 		pedalConns[#pedalConns + 1] = f.ChildAdded:Connect(function() task.delay(0.2, bindPedals) end)
 		status.Text = "踏板已绑定 (" .. #b .. " 个)"
 	end
@@ -529,6 +551,10 @@ MODS[#MODS + 1] = { name = "drift", tab = "漂", fn = function(page)
 		local pg = me:WaitForChild("PlayerGui")
 		on(pg.ChildAdded, function(c) if c.Name == "MobilePedals" then task.delay(0.2, bindPedals) end end)
 		bindPedals()
+		while alive do -- 绑不上就每秒自己再试: 不用手动点「重绑踏板」, 也不用等游戏把 UI 生成完
+			task.wait(1)
+			if enabled and (not pedalRoot or not pedalRoot.Parent) then bindPedals() end
+		end
 	end)
 
 	INFO.drift = function() return "推进=" .. tostring(enabled) .. " 油门=" .. tostring(w) .. " 刹车=" .. tostring(s) .. " 踏板连接=" .. #pedalConns .. " 状态=" .. tostring(status and status.Text) end
@@ -626,6 +652,7 @@ MODS[#MODS + 1] = { name = "log", tab = "志", fn = function(page)
 			end
 		end
 	end)
+	btn(page, "诊断打包 (整机快照 → 剪贴板)", function() if dumpNow then dumpNow() end end)
 	local r1 = row(page)
 	num(r1, "间隔s", S, "int", 0.5, "logint")
 	num(r1, "上限KB", S, "max", 0.5, "logmax")
@@ -853,6 +880,28 @@ for _, m in ipairs(active) do
 	if ok then stops[#stops + 1] = stop else warn("[Selfblox] " .. m.name .. ": " .. tostring(stop)); text(page, "出错: " .. tostring(stop)) end
 end
 if #active > 0 then show(pages[opt("tab", "moc")] and opt("tab", "moc") or active[1].name) end
+
+local function dumpLines()
+	local L = { "==== SELFblox 诊断 " .. os.date("%Y-%m-%d ") .. clock(true) .. " ====",
+		"脚本=v13 页签=" .. tostring(saved.tab) .. " place=" .. game.PlaceId .. " 地图=" .. tostring(game.Name),
+		"配置 " .. Http:JSONEncode(saved),
+		"执行器 isfile=" .. tostring(isfile ~= nil) .. " writefile=" .. tostring(writefile ~= nil) .. " appendfile=" .. tostring(appendfile ~= nil) .. " setclipboard=" .. tostring(setclipboard ~= nil) .. " gethui=" .. tostring(gethui ~= nil) .. " hookmetamethod=" .. tostring(hookmetamethod ~= nil) .. " newcclosure=" .. tostring(newcclosure ~= nil) .. " getnamecallmethod=" .. tostring(getnamecallmethod ~= nil),
+		"角色 " .. tostring(me.Name) .. " 队=" .. tostring(me.Team and me.Team.Name) .. " 坐=" .. tostring(hum() and hum().SeatPart and (hum().SeatPart:GetFullName())) .. " 根=" .. tostring(root() and root().Anchored) }
+	local r = root()
+	if r then L[#L + 1] = string.format("角色 位置=(%.0f,%.0f,%.0f) 速度=%.0f 血=%s", r.Position.X, r.Position.Y, r.Position.Z, r.AssemblyLinearVelocity.Magnitude, tostring(hum() and hum().Health)) end
+	L[#L + 1] = "-- 模块状态"
+	for _, m in ipairs(MODS) do if INFO[m.name] then local o, v = pcall(INFO[m.name]); L[#L + 1] = "  " .. m.name .. " " .. (o and tostring(v) or ("INFO 报错: " .. tostring(v))) end end
+	for k, f in pairs(DUMP) do local o, lines = pcall(f); L[#L + 1] = "-- " .. k .. " dump"; if o then for _, x in ipairs(lines) do L[#L + 1] = "  " .. tostring(x) end else L[#L + 1] = "  dump 报错: " .. tostring(lines) end end
+	if isfile("Selfblox_log.txt") then local t = readfile("Selfblox_log.txt") or ""; L[#L + 1] = "-- 日志尾部"; L[#L + 1] = t:sub(-1500) end
+	return L
+end
+dumpNow = function()
+	local txt = table.concat(dumpLines(), "\n")
+	writefile("selfblox_dump.txt", txt)
+	setclipboard(txt)
+	toast("诊断 " .. #txt .. " 字节 → selfblox_dump.txt / 剪贴板")
+end
+_G.SB_DUMP = dumpNow
 
 _G.SB_UNLOAD = function()
 	alive = false
