@@ -41,7 +41,7 @@ function Signal:Fire(...) for _, c in ipairs(self.hs) do if c.on then c.fn(...) 
 local ISA = {
 	Part = { "BasePart" }, MeshPart = { "BasePart" }, VehicleSeat = { "Seat", "BasePart" }, Seat = { "BasePart" },
 	SpotLight = { "Light" }, PointLight = { "Light" }, SurfaceLight = { "Light" },
-	TextButton = { "GuiButton", "GuiObject" }, TextLabel = { "GuiObject" }, TextBox = { "GuiObject" }, Frame = { "GuiObject" },
+	TextButton = { "GuiButton", "GuiObject" }, ImageButton = { "GuiButton", "GuiObject" }, TextLabel = { "GuiObject" }, TextBox = { "GuiObject" }, Frame = { "GuiObject" },
 	ScreenGui = { "LayerCollector" }, BillboardGui = { "LayerCollector" },
 	IntValue = { "ValueBase" }, StringValue = { "ValueBase" }, NumberValue = { "ValueBase" }, BoolValue = { "ValueBase" },
 	RemoteEvent = {}, RemoteFunction = {}, UnreliableRemoteEvent = {}, ProximityPrompt = {}, Humanoid = {},
@@ -98,7 +98,7 @@ function methods.GetConnectedParts(self) -- 假装配体: 同 Model 里的所有
 	if not seen[self] then o[#o + 1] = self end
 	return o
 end
-function methods.SetNetworkOwner() end
+function methods.SetNetworkOwner() error("SetNetworkOwner 客户端不让调 (上一版就是这一句把车搞成完全绑不上)") end
 
 local mt = {
 	__index = function(t, k)
@@ -254,6 +254,14 @@ svc("CoreGui", inst("CoreGui", sig()))
 player.props.GetNetworkPing = function() return 0.05 end
 _G.CoreGui = _G.__SVC.CoreGui
 
+-- 漂移游戏的踏板 UI: 故意嵌两层 + ImageButton, 老代码只认 MobilePedals.Frame 的直接子节点
+local pedals = inst("ScreenGui", { Name = "MobilePedals" })
+local pedalBox = inst("Frame", { Name = "Pedals" })
+local brakeBtn = inst("ImageButton", { Name = "Brake" })
+local gasBtn = inst("ImageButton", { Name = "Gas" })
+pedalBox.Parent, brakeBtn.Parent, gasBtn.Parent = pedals, pedalBox, pedalBox
+pedals.Parent = pgui
+
 -- 一辆假车 (座位 + 车身), 用来跑 sibs
 local car = inst("Model", { Name = "Car" })
 local seat = inst("VehicleSeat", { Name = "Seat", CanCollide = true, Anchored = false, Size = Vector3.new(2, 1, 2), CFrame = CFrame.new(Vector3.new(10, 5, 0)), Position = Vector3.new(10, 5, 0), AssemblyLinearVelocity = Vector3.zero, AssemblyAngularVelocity = Vector3.zero, AssemblyMass = 20, MaxSpeed = 30, Steer = 0, Throttle = 0, Occupant = humanoid })
@@ -406,6 +414,14 @@ for _, t in ipairs({ "动", "车", "漂", "显", "志", "机", "砖" }) do
 	for _, x in ipairs(buttons()) do if x.Text == t and x.BackgroundColor3.G > 0.4 then on = on + 1 end end
 	ok(on == 1, "点「" .. t .. "」后只有它高亮")
 end
+
+print("\n[3a] 漂移踏板: 嵌套的 MobilePedals 也要绑上 + 间距=0")
+local bound
+for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" and d.Text:find("踏板已绑定", 1, true) then bound = d.Text end end
+ok(bound ~= nil, "嵌套 ImageButton 也绑上了 (" .. tostring(bound) .. ")")
+local pads = 0
+for _, d in ipairs(all()) do if d.ClassName == "UIListLayout" then pads = pads + d.Padding.Offset + d.Padding.Scale end end
+ok(pads == 0, "所有 UIListLayout 间距 = 0")
 
 print("\n[3b] 点标题条 = 折叠 (+/- 也还能用)")
 local tl, bd = tabs():FindFirstChild("SB_Title"), tabs():FindFirstChild("SB_Body")

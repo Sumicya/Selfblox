@@ -55,14 +55,14 @@ local function ord() ORD = ORD + 1; return ORD end -- UIListLayout 按创建顺�
 local function ui(cls, parent, w, props) -- w=nil 整行, w=0.5 半行
 	local i = Instance.new(cls)
 	for k, v in pairs(BASE) do i[k] = v end
-	i.Size, i.LayoutOrder = w and UDim2.new(w, -1, 1, 0) or UDim2.new(1, 0, 0, ROW), ord()
+	i.Size, i.LayoutOrder = w and UDim2.new(w, 0, 1, 0) or UDim2.new(1, 0, 0, ROW), ord()
 	for k, v in pairs(props or {}) do i[k] = v end
 	i.Parent = parent
 	return i
 end
 local function row(parent, h)
 	local f = mk("Frame", { Size = UDim2.new(1, 0, 0, h or ROW), BackgroundTransparency = 1, LayoutOrder = ord() }, parent)
-	mk("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 1) }, f)
+	mk("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 0) }, f)
 	return f
 end
 local function text(parent, s, w) return ui("TextLabel", parent, w, { Text = s, BackgroundTransparency = 1, TextWrapped = true }) end
@@ -85,7 +85,7 @@ local function hold(parent, s, fn, w) -- 按住 fn(true) 松开 fn(false)
 end
 local function num(parent, s, S, k, w, savek) -- 直接绑 S[k], 改完自动存盘; savek 缺省 = k
 	local f = ui("TextLabel", parent, w, { Text = s and " " .. s or "", TextXAlignment = Enum.TextXAlignment.Left })
-	local tb = mk("TextBox", { Size = UDim2.new(s and 0.5 or 1, 0, 1, 0), Position = UDim2.new(s and 0.5 or 0, 0, 0, 0), BackgroundTransparency = 1, Font = FONT, TextSize = 12, TextColor3 = Color3.fromRGB(255, 225, 140), Text = tostring(S[k]), ClearTextOnFocus = false }, f)
+	local tb = mk("TextBox", { Size = UDim2.new(s and 0.5 or 1, 0, 1, 0), Position = UDim2.new(s and 0.5 or 0, 0, 0, 0), BackgroundTransparency = 1, Font = FONT, TextSize = 12, TextColor3 = Color3.fromRGB(255, 225, 140), Text = tostring(S[k]), TextXAlignment = Enum.TextXAlignment.Center, ClearTextOnFocus = false }, f)
 	on(tb.FocusLost, function() local v = tonumber(tb.Text); if v then S[k] = v; save(savek or k, v) end; tb.Text = tostring(S[k]) end)
 end
 
@@ -93,7 +93,7 @@ local vp = workspace.CurrentCamera.ViewportSize
 local pos = opt("pos", { vp.X / 2 - W / 2, vp.Y * 0.3 })
 local title = mk("TextLabel", { Name = "SB_Title", Size = UDim2.fromOffset(W, ROW), Position = UDim2.fromOffset(math.clamp(pos[1], 0, math.max(vp.X - W, 0)), math.clamp(pos[2], 0, math.max(vp.Y - ROW, 0))), BackgroundColor3 = BG, BackgroundTransparency = 0.15, BorderSizePixel = 0, Font = FONT, TextSize = 13, TextColor3 = WHITE, Text = "Selfblox v13" }, gui)
 local body = mk("Frame", { Name = "SB_Body", Size = UDim2.new(0, W, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Position = title.Position + UDim2.fromOffset(0, ROW), BackgroundColor3 = BG, BackgroundTransparency = 0.35, BorderSizePixel = 0 }, gui)
-mk("UIListLayout", { Padding = UDim.new(0, 1) }, body)
+mk("UIListLayout", { Padding = UDim.new(0, 0) }, body)
 on(title:GetPropertyChangedSignal("Position"), function() body.Position = title.Position + UDim2.fromOffset(0, ROW) end)
 local drag = mk("UIDragDetector", { BoundingUI = gui }, title)
 on(drag.DragEnd, function() save("pos", { title.AbsolutePosition.X, title.AbsolutePosition.Y }) end)
@@ -262,7 +262,6 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 	local function attach(p)
 		if att and att.Parent == p then return end
 		if att then att:Destroy() end
-		p:SetNetworkOwner(me) -- 不抢网络所有权, 客户端推不动别人的车(这就是"要动一会才能控制"的原因)
 		att = mk("Attachment", { Name = "SB_SIBS" }, p)
 		vf = mk("VectorForce", { Attachment0 = att, Force = Vector3.zero, RelativeTo = Enum.ActuatorRelativeTo.World, ApplyAtCenterOfMass = true }, att)
 		lv = nil
@@ -436,7 +435,12 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 	hold(r8, "飞 ↓", function(v) down = v end, 0.5)
 	status = text(page, "上车即控; 没车就对准它按 换车")
 
-	INFO.sibs = function() local p = part(); return "抓地=" .. S.grip .. "/转向=" .. S.turn .. "/过弯上限=" .. S.cap .. " 部件=" .. (p and p:GetFullName() or "-") .. " 定速=" .. tostring(cruise) .. "@" .. math.floor(target) .. " 飞车=" .. tostring(flying) .. " 穿墙=" .. tostring(clip) .. " 急刹=" .. tostring(brake) end
+	local function seatInfo(s)
+		if not s then return " 没坐"
+		elseif s:IsA("VehicleSeat") then return string.format(" 座=%s 油门=%.2f 方向=%.2f", s.Name, s.Throttle, s.Steer)
+		else return " 座=" .. s.Name .. "(普通座, 无油门/方向)" end
+	end
+	INFO.sibs = function() local p, s = part(); return "抓地=" .. S.grip .. "/转向=" .. S.turn .. "/过弯上限=" .. S.cap .. " 部件=" .. (p and p:GetFullName() or "-") .. seatInfo(s) .. (p and p.Anchored and " 锚定(引擎不让推)" or "") .. " 定速=" .. tostring(cruise) .. "@" .. math.floor(target) .. " 飞车=" .. tostring(flying) .. " 穿墙=" .. tostring(clip) .. " 急刹=" .. tostring(brake) end
 	return function() detach(); reclip(); dropLamps(); horn(false); if curSeat and curMax then curSeat.MaxSpeed = curMax end end
 end }
 
@@ -450,12 +454,11 @@ MODS[#MODS + 1] = { name = "drift", tab = "漂", fn = function(page)
 		table.clear(pedalConns)
 		local pg = me:FindFirstChild("PlayerGui")
 		local f = pg and pg:FindFirstChild("MobilePedals")
-		f = f and f:FindFirstChild("Frame")
 		if not f then status.Text = "无 MobilePedals, 用下面按钮"; return end
 		local b = {}
-		for _, c in ipairs(f:GetChildren()) do if c:IsA("GuiButton") then b[#b + 1] = c end end
+		for _, c in ipairs(f:GetDescendants()) do if c:IsA("GuiButton") then b[#b + 1] = c end end -- 踏板的框名/嵌套深度每个游戏不一样, 整个子树找按钮, 不死磕 .Frame
 		table.sort(b, function(x, y) return x.AbsolutePosition.X < y.AbsolutePosition.X end)
-		if #b < 2 then status.Text = "踏板不足 2 个"; return end
+		if #b < 2 then status.Text = "MobilePedals 里只找到 " .. #b .. " 个按钮"; return end
 		local function bind(g, set) -- 最左 = 刹车, 次左 = 油门
 			pedalConns[#pedalConns + 1] = g.InputBegan:Connect(function(i) if tap(i) then set(true) end end)
 			pedalConns[#pedalConns + 1] = g.InputEnded:Connect(function(i) if tap(i) then set(false) end end)
@@ -500,7 +503,7 @@ MODS[#MODS + 1] = { name = "drift", tab = "漂", fn = function(page)
 		bindPedals()
 	end)
 
-	INFO.drift = function() return "推进=" .. tostring(enabled) .. " 油门=" .. tostring(w) .. " 刹车=" .. tostring(s) .. " 踏板连接=" .. #pedalConns end
+	INFO.drift = function() return "推进=" .. tostring(enabled) .. " 油门=" .. tostring(w) .. " 刹车=" .. tostring(s) .. " 踏板连接=" .. #pedalConns .. " 状态=" .. tostring(status and status.Text) end
 	return function() if att then att:Destroy() end; for _, c in ipairs(pedalConns) do c:Disconnect() end end
 end }
 
@@ -815,7 +818,7 @@ local function show(name)
 end
 for _, m in ipairs(active) do
 	local page = mk("Frame", { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1, Visible = false, LayoutOrder = ord() }, body)
-	mk("UIListLayout", { Padding = UDim.new(0, 1) }, page)
+	mk("UIListLayout", { Padding = UDim.new(0, 0) }, page)
 	pages[m.name] = page
 	tabBtns[m.name] = btn(tabs, m.tab, function() show(m.name) end, 1 / #active)
 	local ok, stop = pcall(m.fn, page) -- 一个模块炸了不拖死其他模块
