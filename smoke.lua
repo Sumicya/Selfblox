@@ -100,13 +100,17 @@ function methods.GetConnectedParts(self) -- 假装配体: 同 Model 里的所有
 	return o
 end
 function methods.SetNetworkOwner() error("SetNetworkOwner 客户端不让调 (上一版就是这一句把车搞成完全绑不上)") end
+function methods.GetGuiObjectsAtPosition() return _G.__guiHit or {} end
 
 local mt = {
 	__index = function(t, k)
 		if k == "Parent" then return rawget(t, "parent") end
 		local m = methods[k]
 		if m then return m end
-		if k == "AbsolutePosition" then return { X = 0, Y = 0 } end -- 假布局: 屏幕坐标一律 0
+		if k == "AbsolutePosition" then -- 假布局: 默认 0, 但允许测试自己给坐标 (踏板排序要看它)
+			local pp = rawget(t, "props")
+			return (pp and pp.AbsolutePosition) or { X = 0, Y = 0 }
+		end
 		local props = rawget(t, "props")
 		local v = props[k]
 		if v == nil and SIGNALS[k] then v = Signal.new(); props[k] = v end -- 信号字段按需生成
@@ -259,8 +263,8 @@ _G.CoreGui = _G.__SVC.CoreGui
 -- 漂移游戏的踏板 UI: 故意嵌两层 + ImageButton, 老代码只认 MobilePedals.Frame 的直接子节点
 local pedals = inst("ScreenGui", { Name = "MobilePedals" })
 local pedalBox = inst("Frame", { Name = "Pedals" })
-local brakeBtn = inst("ImageButton", { Name = "Brake" })
-local gasBtn = inst("ImageButton", { Name = "Gas" })
+local brakeBtn = inst("ImageButton", { Name = "Brake", AbsolutePosition = Vector2.new(20, 2100) }) -- 刹车在左
+local gasBtn = inst("ImageButton", { Name = "Gas", AbsolutePosition = Vector2.new(900, 2100) }) -- 油门在右
 pedalBox.Parent, brakeBtn.Parent, gasBtn.Parent = pedals, pedalBox, pedalBox
 pedals.Parent = pgui
 
@@ -419,8 +423,8 @@ end
 
 print("\n[3a] 漂移踏板: 嵌套的 MobilePedals 也要绑上 + 间距=0")
 local bound
-for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" and d.Text:find("踏板已绑定", 1, true) then bound = d.Text end end
-ok(bound ~= nil, "嵌套 ImageButton 也绑上了 (" .. tostring(bound) .. ")")
+for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" and d.Text:find("刹=Brake", 1, true) then bound = d.Text end end
+ok(bound ~= nil, "嵌套 ImageButton 也自动绑上了 (" .. tostring(bound) .. ")")
 local pads = 0
 for _, d in ipairs(all()) do if d.ClassName == "UIListLayout" then pads = pads + d.Padding.Offset + d.Padding.Scale end end
 ok(pads == 0, "所有 UIListLayout 间距 = 0")
@@ -432,15 +436,36 @@ for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" 
 ok(dead == 1, "踏板没了 → 状态说自己没了, 不假装绑着")
 local pedals2 = inst("ScreenGui", { Name = "MobilePedals" })
 local box2 = inst("Frame", { Name = "Pedals" })
-local b1 = inst("ImageButton", { Name = "Brake" })
-local b2 = inst("ImageButton", { Name = "Gas" })
+local b1 = inst("ImageButton", { Name = "Brake", AbsolutePosition = Vector2.new(20, 2100) })
+local b2 = inst("ImageButton", { Name = "Gas", AbsolutePosition = Vector2.new(900, 2100) })
 box2.Parent, b1.Parent, b2.Parent = pedals2, box2, box2
 pedals2.Parent = pgui
 step(1 / 60, 130)
 local rebound
-for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" and d.Text:find("踏板已绑定", 1, true) then rebound = d.Text end end
+for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" and d.Text:find("刹=Brake", 1, true) then rebound = d.Text end end
 ok(rebound ~= nil, "踏板重建后自动重绑 (" .. tostring(rebound) .. ")")
 pedals2:Destroy() -- 这套假踏板是测试自己造的, 用完自己收, 不然算漏实例
+
+local fakePedal = inst("ImageButton", { Name = "某游戏的油门键" })
+fakePedal.Parent = pgui
+_G.__guiHit = { fakePedal }
+click(findBtn("选油门"))
+local hintTxt
+for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" and d.Text:find("点游戏里的", 1, true) then hintTxt = d.Text end end
+ok(hintTxt ~= nil, "点「选油门」会告诉你点哪儿 (" .. tostring(hintTxt) .. ")")
+_G.__SVC.UserInputService.InputBegan:Fire({ UserInputType = Enum.UserInputType.Touch, Position = Vector3.new(500, 900, 0) })
+local pickedTxt
+for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" and d.Text:find("油门 = ", 1, true) then pickedTxt = d.Text end end
+ok(pickedTxt ~= nil, "点一下游戏按钮就绑上油门 (" .. tostring(pickedTxt) .. ")")
+fakePedal.InputBegan:Fire(input("Touch"))
+step(1 / 60, 3)
+if _G.SB_DUMP then _G.SB_DUMP() end
+local dumpP = VFS["selfblox_dump.txt"]
+ok(dumpP and dumpP:find("油门=true", 1, true) ~= nil, "按住这个键 → 油门状态真的变真")
+fakePedal.InputEnded:Fire(input("Touch"))
+step(1 / 60, 3)
+fakePedal:Destroy()
+_G.__guiHit = nil
 
 print("\n[3b] 点标题条 = 折叠 (+/- 也还能用)")
 local tl, bd = tabs():FindFirstChild("SB_Title"), tabs():FindFirstChild("SB_Body")
@@ -545,7 +570,16 @@ ok(track ~= nil, "滑条建出来了")
 local knob, kd = track and track:FindFirstChild("SB_Knob"), nil
 for _, d in ipairs(track:GetDescendants()) do if d.ClassName == "UIDragDetector" then kd = d end end
 ok(knob ~= nil and kd ~= nil, "圆点 + 全宽拖拽手柄都在")
+local handle
+for _, d in ipairs(track:GetDescendants()) do if d.Name == "SB_Handle" then handle = d end end
+ok(handle and handle.Visible == false, "面板开着 → 滑条固定, 不接管触摸")
 local look0 = seat.props.CFrame.LookVector
+kd.DragContinue:Fire({ Position = { X = 999, Y = 0 } })
+step(1 / 60, 12)
+ok((seat.props.CFrame.LookVector - look0).Magnitude < 0.01, "面板开着时拖它 → 车不动")
+kd.DragEnd:Fire()
+tapTitle() -- 折起来 → 滑条才可拖
+ok(handle.Visible == true, "面板折起来 → 滑条可拖")
 kd.DragContinue:Fire({ Position = { X = 999, Y = 0 } })
 step(1 / 60, 12)
 local turned = (seat.props.CFrame.LookVector - look0).Magnitude
@@ -560,7 +594,12 @@ kd.DragEnd:Fire()
 step(1 / 60, 2)
 ok(knob.Position.X.Offset == 0 and knob.Position.X.Scale == 0.5, "松手回中, 平时固定")
 ok(track.Position.Y.Scale == 1 and track.Position.Y.Offset == -10, "钉在屏幕底部 (不跟面板跑)")
-ok(track.ZIndex > 1 and knob.ZIndex > track.ZIndex, "ZIndex 压过面板, 面板开着也点得到")
+tapTitle() -- 折回去, 后面还要用面板
+ok(handle.Visible == false, "展开 → 滑条又固定")
+ok(track.ZIndex == 1 and handle.Visible == false, "面板开着时滑条降到最底层、触摸穿透")
+tapTitle()
+ok(track.ZIndex == 10 and handle.Visible == true, "折起来后滑条升到最上层")
+tapTitle()
 print("\n[6e] 锚定的车也要立刻绑上 (不再等游戏解锁)")
 seat.props.Anchored = true
 step(1 / 60, 5)
@@ -568,11 +607,13 @@ ok(seat:FindFirstChild("SB_SIBS") ~= nil, "锚定状态下 SB_SIBS 照样挂上"
 local stTxt
 for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" and d.Text:find("锚定", 1, true) then stTxt = d.Text end end
 ok(stTxt ~= nil, "状态行直接标出锚定 (" .. tostring(stTxt) .. ")")
+tapTitle() -- 折起来才能拖滑条
 local lookA = seat.props.CFrame.LookVector
 kd.DragContinue:Fire({ Position = { X = 999, Y = 0 } })
 step(1 / 60, 10)
 ok((seat.props.CFrame.LookVector - lookA).Magnitude > 0.02, "锚定车的转向照样有效 (走 CFrame)")
 kd.DragEnd:Fire()
+tapTitle()
 seat.props.Anchored = false
 step(1 / 60, 3)
 
@@ -612,6 +653,8 @@ ok(true, "按住/松开 " .. held .. " 个按钮 + 全开全关走完没炸")
 ok(_G.__SVC.VirtualInputManager.props.keys ~= nil, "喇叭真的发了按键事件")
 
 print("\n[7b] 诊断打包")
+humanoid.props.SeatPart = nil -- 下车了: 车结构要靠缓存带出去
+step(1 / 60, 5)
 local dumpBtn
 for _, d in ipairs(all()) do if d:IsA("TextButton") and type(d.Text) == "string" and d.Text:find("诊断打包", 1, true) then dumpBtn = d end end
 ok(dumpBtn ~= nil, "「志」页有诊断打包按钮")

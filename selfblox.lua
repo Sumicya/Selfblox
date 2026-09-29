@@ -99,7 +99,8 @@ on(title:GetPropertyChangedSignal("Position"), function() body.Position = title.
 local drag = mk("UIDragDetector", { BoundingUI = gui }, title)
 on(drag.DragEnd, function() save("pos", { title.AbsolutePosition.X, title.AbsolutePosition.Y }) end)
 local fold = mk("TextButton", { Size = UDim2.fromOffset(ROW, ROW), Position = UDim2.new(1, -ROW, 0, 0), BackgroundTransparency = 1, Font = FONT, TextSize = 16, TextColor3 = WHITE, Text = "–" }, title)
-local function setFold(v) body.Visible = v; fold.Text = v and "–" or "+" end
+local foldHooks = {} -- 想知道"面板是折着还是开着"的模块挂这里
+local function setFold(v) body.Visible = v; fold.Text = v and "–" or "+"; for _, f in ipairs(foldHooks) do f(v) end end
 on(fold.Activated, function() setFold(not body.Visible) end)
 local pressPos -- 标题条整条都能点: 手指没挪动 = 点击折叠, 挪了 = 拖面板
 on(title.InputBegan, function(i) if tap(i) then pressPos = title.AbsolutePosition end end)
@@ -241,7 +242,7 @@ end }
 -- ═════════ sibs: 载具 (坐着 = 控制座位所在装配体; 没坐 = 准星"换车"锁定) ═════════
 MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 	local S = { acc = opt("acc", 500), grip = opt("grip", 5), turn = opt("turn", 2.2), cap = opt("turncap", 1), fly = opt("carfly", 60), horn = opt("hornkey", "H") }
-	local picked, pickSeat, curSeat, curMax, att, vf, lv, status, clipModel, setBrake
+	local picked, pickSeat, curSeat, curMax, att, vf, lv, status, clipModel, setBrake, lastCar
 	local accel, decel, up, down, cruise, brake, flying, lampOn, target, statT = false, false, false, false, false, false, false, false, 0, 0
 	local clip = opt("carclip", false)
 	local lamps, lampSaved, col = {}, setmetatable({}, { __mode = "k" }), setmetatable({}, { __mode = "k" })
@@ -350,7 +351,18 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 	local dragX
 	on(kd.DragContinue, function(i) local x = i and i.Position and i.Position.X; dragX = (x and x ~= 0) and x or UIS:GetMouseLocation().X end)
 	on(kd.DragEnd, function() dragX = nil; handle.Position = UDim2.fromScale(0.5, 0.5) end)
+	local live = false -- 只有面板折起来才接管触摸: 面板开着时滑条固定, 免得调参数时手一滑把车带跑
+	local function setLive(v)
+		live = v
+		handle.Visible = v
+		track.ZIndex, knob.ZIndex = v and 10 or 1, v and 11 or 2
+		track.BackgroundTransparency, knob.BackgroundTransparency = v and 0.4 or 0.75, v and 0 or 0.55
+		if not v then dragX = nil; knob.Position = UDim2.fromScale(0.5, 0.5) end
+	end
+	foldHooks[#foldHooks + 1] = function(open) setLive(not open) end -- 钩子收到的是"面板开着吗", 滑条要的是"能不能拖"
+	setLive(not body.Visible)
 	local function steer() -- 轨道宽 200 / 圆点半径 18 → 圆心能走 ±82
+		if not live then return 0 end
 		local cx = track.AbsolutePosition.X + 100
 		local s = math.clamp((dragX or cx) - cx, -82, 82)
 		knob.Position = UDim2.new(0.5, s, 0.5, 0) -- 圆点是纯显示, 只跟手指
@@ -372,6 +384,7 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 		attach(p) -- 锚定的车照样绑: 之前 v13 直接 return, 所以"要动一会(等游戏解锁)才能绑上"
 		local anch = p.Anchored -- 锚定 = 引擎不让推, 只能等游戏自己解锁; 滑条转向走 CFrame 照样有效
 		local m = model()
+		if lastCar then lastCar.p, lastCar.s, lastCar.m = p, s, m else lastCar = { p = p, s = s, m = m } end -- 诊断打包用: 哪怕打包时已经下车
 		local v = p.AssemblyLinearVelocity
 		local hv = Vector3.new(v.X, 0, v.Z)
 		local spd, mass, fwd = hv.Magnitude, p.AssemblyMass, facing()
@@ -410,10 +423,11 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 	end)
 
 	local function carLines()
-		local p, s = part()
-		if not p then return { "没有载具" } end
-		local m = model()
-		local L = { "==== CAR " .. os.date("%Y-%m-%d ") .. clock(true) .. " place=" .. game.PlaceId .. " ====",
+		local p, s, cached = part()
+		if not p and lastCar then p, s, cached = lastCar.p, lastCar.s, true end -- 打包时没车也能带出最近一辆的结构
+		if not p then return { "没有载具 (先用 换车 锁定或坐上去, 再点诊断打包)" } end
+		local m = cached and lastCar.m or model()
+		local L = { "==== CAR " .. os.date("%Y-%m-%d ") .. clock(true) .. " place=" .. game.PlaceId .. (cached and " (缓存的最近一辆)" or "") .. " ====",
 			"座位: " .. (s and s:GetFullName() or "-") .. "   根部件: " .. p:GetFullName() .. "   Model: " .. (m and m:GetFullName() or "-"),
 			string.format("根部件 质量=%.0f 锚定=%s 速度=%.1f 尺寸=(%.0f,%.0f,%.0f)", p.AssemblyMass, tostring(p.Anchored), p.AssemblyLinearVelocity.Magnitude, p.Size.X, p.Size.Y, p.Size.Z) }
 		if s and s:IsA("VehicleSeat") then
@@ -472,23 +486,36 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 	status = text(page, "上车即控; 没车就对准它按 换车")
 
 	local function seatInfo(s)
-		if not s then return " 没坐"
+		if not s then return " 没坐(准星锁定)"
 		elseif s:IsA("VehicleSeat") then return string.format(" 座=%s 油门=%.2f 方向=%.2f", s.Name, nn(s.Throttle), nn(s.Steer))
 		else return " 座=" .. s.Name .. "(普通座, 无油门/方向)" end
 	end
-	INFO.sibs = function() local p, s = part(); return "抓地=" .. S.grip .. "/转向=" .. S.turn .. "/过弯上限=" .. S.cap .. " 部件=" .. (p and p:GetFullName() or "-") .. seatInfo(s) .. (p and p.Anchored and " 锚定(引擎不让推)" or "") .. " 定速=" .. tostring(cruise) .. "@" .. math.floor(target) .. " 飞车=" .. tostring(flying) .. " 穿墙=" .. tostring(clip) .. " 急刹=" .. tostring(brake) end
+	local function holdInfo() return (accel and " 按加速" or "") .. (decel and " 按减速" or "") .. (up and " 按升" or "") .. (down and " 按降" or "") end
+	INFO.sibs = function()
+		local p, s = part()
+		if p and vf then
+			return string.format("抓地=%s/转向=%s/过弯上限=%s 部件=%s%s 推力=%.0f(%.1f/kg) 质量=%.0f 速度=%.0f%s 定速=%s@%.0f 飞车=%s 穿墙=%s 急刹=%s%s",
+				S.grip, S.turn, S.cap, p:GetFullName(), seatInfo(s), vf.Force.Magnitude, vf.Force.Magnitude / math.max(p.AssemblyMass, 1), p.AssemblyMass,
+				p.AssemblyLinearVelocity.Magnitude, p.Anchored and " 锚定(引擎不让推)" or "", tostring(cruise), target, tostring(flying), tostring(clip), tostring(brake), holdInfo())
+		end
+		return "抓地=" .. S.grip .. "/转向=" .. S.turn .. "/过弯上限=" .. S.cap .. " 部件=-" .. seatInfo(nil) .. " 定速=" .. tostring(cruise) .. "@" .. math.floor(target) .. " 飞车=" .. tostring(flying) .. " 穿墙=" .. tostring(clip) .. " 急刹=" .. tostring(brake) .. holdInfo()
+	end
 	return function() detach(); reclip(); dropLamps(); horn(false); if curSeat and curMax then curSeat.MaxSpeed = curMax end end
 end }
 
--- ═════════ drift: 人物推进 (MobilePedals 自动绑; 没有就用面板按钮) ═════════
+-- ═════════ drift: 人物推进 (自动找踏板; 找不到就自己点选; 都没有就用面板按钮) ═════════
 MODS[#MODS + 1] = { name = "drift", tab = "漂", fn = function(page)
 	local S = { acc = opt("dacc", 5), brake = opt("dbrake", 10) }
 	local enabled, w, s, att, vf, status = opt("drift", true), false, false, nil, nil, nil
-	local pedalConns, pedalRoot = {}, nil
-	local function pedalLines() -- 踏板的真实结构, 绑不上时能直接看出它长啥样
+	local slots, manual, pedalRoot, picking = {}, {}, nil, nil -- slots[1]=刹车 slots[2]=油门; manual[n]=这是我自己点选的, 自动找别覆盖
+	local function pedalLines() -- 踏板的真实结构: 绑不上时能直接看出它长啥样
 		local pg = me:FindFirstChild("PlayerGui")
 		local f = pg and pg:FindFirstChild("MobilePedals")
-		if not f then return { "无 MobilePedals; PlayerGui 顶层: " .. table.concat((function(o) for _, c in ipairs(pg and pg:GetChildren() or {}) do o[#o + 1] = c.Name .. "(" .. c.ClassName .. ")" end; return o end)(), ", ") } end
+		if not f then
+			local tops = {}
+			if pg then for _, c in ipairs(pg:GetChildren()) do tops[#tops + 1] = c.Name .. "(" .. c.ClassName .. ")" end end
+			return { "无 MobilePedals; PlayerGui 顶层: " .. (#tops > 0 and table.concat(tops, ", ") or "(空)") }
+		end
 		local L = { "MobilePedals: " .. f:GetFullName() }
 		for _, d in ipairs(f:GetDescendants()) do
 			local ap, sz = d.AbsolutePosition or Vector2.zero, d.AbsoluteSize or Vector2.zero
@@ -497,27 +524,57 @@ MODS[#MODS + 1] = { name = "drift", tab = "漂", fn = function(page)
 		return L
 	end
 	DUMP.pedals = pedalLines
-	local function bindPedals()
-		for _, c in ipairs(pedalConns) do c:Disconnect() end
-		table.clear(pedalConns)
+	local function slotName(n) return slots[n] and (slots[n].btn.Name .. (manual[n] and "(点选)" or "")) or "未绑" end
+	local function setSlot(n, v) if n == 1 then s = v else w = v end end
+	local function clearSlot(n) local sl = slots[n]; if sl then for _, c in ipairs(sl.conns) do c:Disconnect() end end; slots[n] = nil; w, s = w or false, s or false end
+	local function bindSlot(n, g, mine) -- 按住 g 就当踩着第 n 个踏板
+		clearSlot(n)
+		local conns = {}
+		conns[#conns + 1] = g.InputBegan:Connect(function(i) if tap(i) then setSlot(n, true) end end)
+		conns[#conns + 1] = g.InputEnded:Connect(function(i) if tap(i) then setSlot(n, false) end end)
+		slots[n] = { btn = g, conns = conns }
+		if mine then manual[n] = true end
+	end
+	local function slotsText() return "踏板 刹=" .. slotName(1) .. " 油=" .. slotName(2) end
+	local function slotLive(n) local sl = slots[n]; return (sl and sl.btn and sl.btn.Parent) and true or false end
+	local function prune() -- 游戏重建 UI 时旧按钮会消失, 留着就是按不动的死连接
+		for n = 1, 2 do if slots[n] and not slots[n].btn.Parent then clearSlot(n); manual[n] = nil end end
+	end
+	local function autoBind(force) -- force = 手动点了「自动找踏板」(清掉手动点选重来); 平时(重试循环)只补没手动绑的那几个
+		if force then clearSlot(1); clearSlot(2); manual[1], manual[2] = nil, nil end
 		pedalRoot = nil
 		local pg = me:FindFirstChild("PlayerGui")
 		local f = pg and pg:FindFirstChild("MobilePedals")
-		if not f then status.Text = "无 MobilePedals, 用下面按钮"; return end
-		local b = {}
-		for _, c in ipairs(f:GetDescendants()) do if c:IsA("GuiButton") then b[#b + 1] = c end end -- 踏板的框名/嵌套深度每个游戏不一样, 整个子树找按钮, 不死磕 .Frame
-		table.sort(b, function(x, y) return x.AbsolutePosition.X < y.AbsolutePosition.X end)
-		if #b < 2 then status.Text = "MobilePedals 里只找到 " .. #b .. " 个按钮"; return end
-		local function bind(g, set) -- 最左 = 刹车, 次左 = 油门
-			pedalConns[#pedalConns + 1] = g.InputBegan:Connect(function(i) if tap(i) then set(true) end end)
-			pedalConns[#pedalConns + 1] = g.InputEnded:Connect(function(i) if tap(i) then set(false) end end)
+		if not f then
+			if not slotLive(1) and not slotLive(2) then status.Text = "无 MobilePedals → 用「选刹车/选油门」自己点游戏里的踏板" end
+			return
 		end
-		bind(b[1], function(v) s = v end)
-		bind(b[2], function(v) w = v end)
+		local b = {}
+		for _, c in ipairs(f:GetDescendants()) do if c:IsA("GuiButton") then b[#b + 1] = c end end -- 框名/嵌套深度每个游戏不一样, 整个子树找按钮
+		table.sort(b, function(x, y) return (x.AbsolutePosition or Vector2.zero).X < (y.AbsolutePosition or Vector2.zero).X end)
+		if #b < 2 then if force then status.Text = "MobilePedals 里只找到 " .. #b .. " 个按钮 → 用「选刹车/选油门」" end; return end
+		if not manual[1] then bindSlot(1, b[1]) else bindSlot(1, slots[1].btn) end
+		if not manual[2] then bindSlot(2, b[2]) else bindSlot(2, slots[2].btn) end
 		pedalRoot = f
-		pedalConns[#pedalConns + 1] = f.ChildAdded:Connect(function() task.delay(0.2, bindPedals) end)
-		status.Text = "踏板已绑定 (" .. #b .. " 个)"
+		status.Text = "自动找踏板: " .. slotsText()
 	end
+	local function pick(n) -- 点一下我们自己就选中的游戏按钮: 不猜名字, 不猜层级
+		picking = n
+		status.Text = (n == 1 and "点游戏里的【刹车】键" or "点游戏里的【油门】键") .. " (再点一下取消)"
+	end
+	on(UIS.InputBegan, function(i)
+		if not picking or not tap(i) then return end
+		local n, pos = picking, i.Position
+		local pg = me:FindFirstChild("PlayerGui")
+		local hit
+		if pg and pos then
+			for _, o in ipairs(pg:GetGuiObjectsAtPosition(pos.X, pos.Y)) do if o:IsA("GuiButton") then hit = o; break end end
+		end
+		if not hit then status.Text = "那一下没点到按钮, 再来一次"; return end
+		picking = nil
+		bindSlot(n, hit, true)
+		status.Text = (n == 1 and "刹车" or "油门") .. " = " .. hit:GetFullName() .. " · " .. slotsText()
+	end)
 
 	on(RunService.PreSimulation, function()
 		local c = me.Character
@@ -542,24 +599,29 @@ MODS[#MODS + 1] = { name = "drift", tab = "漂", fn = function(page)
 	num(r1, "刹车", S, "brake", 0.5, "dbrake")
 	local r2 = row(page)
 	toggle(r2, "推进", enabled, function(v) enabled = v; save("drift", v) end, 0.5)
-	btn(r2, "重绑踏板", bindPedals, 0.5)
-	local r3 = row(page, 36)
-	hold(r3, "▲ 油门", function(v) w = v end, 0.5)
-	hold(r3, "▼ 刹车", function(v) s = v end, 0.5)
+	btn(r2, "自动找踏板", function() autoBind(true) end, 0.5)
+	local r3 = row(page)
+	btn(r3, "选刹车", function() pick(1) end, 0.5)
+	btn(r3, "选油门", function() pick(2) end, 0.5)
+	local r4 = row(page, 36)
+	hold(r4, "▲ 油门", function(v) w = v end, 0.5)
+	hold(r4, "▼ 刹车", function(v) s = v end, 0.5)
 	status = text(page, "…")
 	task.spawn(function()
 		local pg = me:WaitForChild("PlayerGui")
-		on(pg.ChildAdded, function(c) if c.Name == "MobilePedals" then task.delay(0.2, bindPedals) end end)
-		bindPedals()
-		while alive do -- 绑不上就每秒自己再试: 不用手动点「重绑踏板」, 也不用等游戏把 UI 生成完
+		on(pg.ChildAdded, function(c) if c.Name == "MobilePedals" then task.delay(0.2, autoBind) end end)
+		autoBind()
+		while alive do -- 没绑上就每秒自己再试: 不用手动点, 也不怕游戏晚点才生成 UI
 			task.wait(1)
-			if enabled and (not pedalRoot or not pedalRoot.Parent) then bindPedals() end
+			prune()
+			if enabled and (not pedalRoot or not pedalRoot.Parent or not slotLive(1) or not slotLive(2)) then autoBind() end
 		end
 	end)
 
-	INFO.drift = function() return "推进=" .. tostring(enabled) .. " 油门=" .. tostring(w) .. " 刹车=" .. tostring(s) .. " 踏板连接=" .. #pedalConns .. " 状态=" .. tostring(status and status.Text) end
-	return function() if att then att:Destroy() end; for _, c in ipairs(pedalConns) do c:Disconnect() end end
+	INFO.drift = function() return "推进=" .. tostring(enabled) .. " 油门=" .. tostring(w) .. " 刹车=" .. tostring(s) .. " " .. slotsText() .. " 状态=" .. tostring(status and status.Text) end
+	return function() if att then att:Destroy() end; for _, sl in pairs(slots) do for _, c in ipairs(sl.conns) do c:Disconnect() end end end
 end }
+
 
 -- ═════════ hud: 数据条 / 速度箭头 / 玩家 ESP (原生 Highlight + BillboardGui) ═════════
 MODS[#MODS + 1] = { name = "hud", tab = "显", fn = function(page)
