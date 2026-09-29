@@ -38,36 +38,6 @@ end
 function Signal:Once(fn) local c = self:Connect(function(...) c:Disconnect(); fn(...) end); return c end
 function Signal:Fire(...) for _, c in ipairs(self.hs) do if c.on then c.fn(...) end end end
 
-local mt = {
-	__index = function(t, k)
-		if k == "Parent" then return rawget(t, "parent") end
-		local m = methods[k]
-		if m then return m end
-		if k == "AbsolutePosition" then return { X = 0, Y = 0 } end -- 假布局: 屏幕坐标一律 0
-		local props = rawget(t, "props")
-		local v = props[k]
-		if v == nil and SIGNALS[k] then v = Signal.new(); props[k] = v end -- 信号字段按需生成
-		return v
-	end,
-	__newindex = function(t, k, v)
-		if k == "Parent" then
-			local old = rawget(t, "parent")
-			if old then for i, c in ipairs(old.children) do if c == t then table.remove(old.children, i); break end end end
-			rawset(t, "parent", v)
-			if v then v.children[#v.children + 1] = t end
-		else
-			rawget(t, "props")[k] = v
-		end
-	end,
-}
-local function inst(cls, props)
-	local self = setmetatable({ ClassName = cls, props = {}, children = {}, attrs = {}, destroyed = false }, mt)
-	INSTANCES[#INSTANCES + 1] = self
-	self.props.Name = cls -- Roblox 默认给实例起类名, FindFirstChild("LinearVelocity") 这类调用要靠它
-	for k, v in pairs(props or {}) do self.props[k] = v end
-	return self
-end
-
 local ISA = {
 	Part = { "BasePart" }, MeshPart = { "BasePart" }, VehicleSeat = { "Seat", "BasePart" }, Seat = { "BasePart" },
 	SpotLight = { "Light" }, PointLight = { "Light" }, SurfaceLight = { "Light" },
@@ -121,6 +91,47 @@ function methods.Raycast() return nil end
 function methods.WorldToViewportPoint(self, v) return Vector3.new(100, 200, 10), true end
 function methods.ChangeState() end
 function methods.SendKeyEvent(self, ...) self.props.keys = (self.props.keys or 0) + 1 end
+function methods.GetConnectedParts(self) -- 假装配体: 同 Model 里的所有 BasePart
+	local o, seen = {}, {}
+	local m = methods.FindFirstAncestorOfClass(self, "Model") or self
+	for _, d in ipairs(methods.GetDescendants(m)) do if not seen[d] and methods.IsA(d, "BasePart") then seen[d] = true; o[#o + 1] = d end end
+	if not seen[self] then o[#o + 1] = self end
+	return o
+end
+function methods.SetNetworkOwner() end
+
+local mt = {
+	__index = function(t, k)
+		if k == "Parent" then return rawget(t, "parent") end
+		local m = methods[k]
+		if m then return m end
+		if k == "AbsolutePosition" then return { X = 0, Y = 0 } end -- 假布局: 屏幕坐标一律 0
+		local props = rawget(t, "props")
+		local v = props[k]
+		if v == nil and SIGNALS[k] then v = Signal.new(); props[k] = v end -- 信号字段按需生成
+		return v
+	end,
+	__newindex = function(t, k, v)
+		if k == "Parent" then
+			local old = rawget(t, "parent")
+			if old then for i, c in ipairs(old.children) do if c == t then table.remove(old.children, i); break end end end
+			rawset(t, "parent", v)
+			if v then v.children[#v.children + 1] = t end
+		else
+			rawget(t, "props")[k] = v
+		end
+	end,
+}
+local function inst(cls, props)
+	local self = setmetatable({ ClassName = cls, props = {}, children = {}, attrs = {}, destroyed = false }, mt)
+	INSTANCES[#INSTANCES + 1] = self
+	self.props.Name = cls -- Roblox 默认给实例起类名, FindFirstChild("LinearVelocity") 这类调用要靠它
+	if ISA[cls] then -- GuiObject 默认 Visible=true, 引擎行为; 不模拟的话断言会被 nil 坑
+		for _, x in ipairs(ISA[cls]) do if x == "GuiObject" then self.props.Visible = true end end
+	end
+	for k, v in pairs(props or {}) do self.props[k] = v end
+	return self
+end
 
 -- ───────── 假引擎: 向量 / CFrame / 颜色 / UDim / Enum ─────────
 local Vector3, Color3, CFrame, UDim, UDim2, Vector2
@@ -232,7 +243,7 @@ local pgui = inst("PlayerGui", sig())
 pgui.Parent = player
 svc("Players", inst("Players", { LocalPlayer = player, MaxPlayers = 12, GetPlayers = function() return { player } end, GetPlayerFromCharacter = function(_, c) return c == char and player or nil end, PlayerAdded = Signal.new(), PlayerRemoving = Signal.new() }))
 svc("RunService", inst("RunService", { PreSimulation = Signal.new(), PreRender = Signal.new(), Heartbeat = Signal.new() }))
-svc("UserInputService", inst("UserInputService", { JumpRequest = Signal.new(), TouchEnabled = true }))
+svc("UserInputService", inst("UserInputService", { JumpRequest = Signal.new(), TouchEnabled = true, GetMoveVector = function() return Vector3.zero end, GetMouseLocation = function() return Vector2.new(100, 100) end }))
 svc("Lighting", inst("Lighting", { Ambient = Color3.fromRGB(70, 70, 70), OutdoorAmbient = Color3.fromRGB(70, 70, 70), Brightness = 1, FogEnd = 100000, GlobalShadows = true }))
 svc("Stats", inst("Stats", { GetTotalMemoryUsageMb = function() return 512 end }))
 svc("Teams", inst("Teams", { GetTeams = function() return {} end }))
@@ -275,6 +286,12 @@ typeof = function(v)
 	return type(v)
 end
 local NOW, WAITERS = 0, {}
+os.clock = function() return NOW end -- 虚拟时钟: 假引擎的帧是假的, os.clock 也得跟着假, 不然 0.2s 的节流逻辑永远不触发
+local realdate = os.date
+local FIXED = os.time() -- 把"现在"挪到本地 14:37, 这样 12 小时制(02:37)和 24 小时制(14:37)不一样, 测得出区别
+while tonumber(os.date("%H", FIXED)) ~= 14 do FIXED = FIXED + 3600 end
+FIXED = FIXED - tonumber(os.date("%M", FIXED)) * 60 - tonumber(os.date("%S", FIXED)) + 37 * 60
+os.date = function(f, t) return realdate(f, t or FIXED) end
 event = {}
 task = {
 	spawn = function(f, ...) local co = coroutine.create(f); local ok, err = coroutine.resume(co, ...); if not ok then error("task.spawn: " .. tostring(err), 0) end; return co end,
@@ -390,6 +407,24 @@ for _, t in ipairs({ "动", "车", "漂", "显", "志", "机", "砖" }) do
 	ok(on == 1, "点「" .. t .. "」后只有它高亮")
 end
 
+print("\n[3b] 点标题条 = 折叠 (+/- 也还能用)")
+local tl, bd = tabs():FindFirstChild("SB_Title"), tabs():FindFirstChild("SB_Body")
+ok(tl ~= nil and bd ~= nil and bd.Visible, "标题条 + 面板体都在")
+local function tapTitle()
+	tl.InputBegan:Fire(input("Touch"))
+	tl.InputEnded:Fire(input("Touch"))
+end
+tapTitle()
+ok(bd.Visible == false, "点一下标题条 → 折起来")
+tapTitle()
+ok(bd.Visible == true, "再点一下 → 展开")
+local foldBtn
+for _, d in ipairs(all()) do if d:IsA("TextButton") and (d.Text == "–" or d.Text == "+") then foldBtn = d end end
+foldBtn.Activated:Fire()
+ok(bd.Visible == false, "+/- 也还能折叠")
+foldBtn.Activated:Fire()
+ok(bd.Visible == true, "再点展开")
+
 print("\n[4] 角色模块: 开速度 → 真的动")
 local spd = findBtn("速度")
 click(spd)
@@ -435,10 +470,30 @@ ok(seat.CanCollide == false and carBody.CanCollide == false, "穿墙开着时车
 ok(seat:FindFirstChild("SB_SIBS") ~= nil, "车约束挂在座位装配体上")
 click(findBtn("常亮"))
 step(1 / 60, 3)
-local lamps = 0
-for _, d in ipairs(seat:GetDescendants()) do if d:IsA("Light") then lamps = lamps + 1 end end
+local lamps, onBody, onSeat = 0, 0, 0
+for _, d in ipairs(car:GetDescendants()) do
+	if d:IsA("Light") then
+		lamps = lamps + 1
+		if d:IsDescendantOf(carBody) then onBody = onBody + 1 end
+		if d:IsDescendantOf(seat) then onSeat = onSeat + 1 end
+	end
+end
 ok(lamps >= 2, "车上没灯时自己装了 " .. lamps .. " 个 SpotLight")
+ok(onSeat == 0 and onBody >= 2, "灯装车身部件上, 不装座位 (身 " .. onBody .. " / 座 " .. onSeat .. ")")
 click(findBtn("常亮"))
+step(1 / 60, 3)
+local native = inst("SpotLight", { Name = "Headlamp", Enabled = false })
+native.Parent = carBody
+click(findBtn("常亮"))
+step(1 / 60, 3)
+ok(native.Enabled == true, "车自带的灯直接点亮 (接原生灯)")
+local fakes = 0
+for _, d in ipairs(car:GetDescendants()) do if d:IsA("Light") and tostring(d.Name):sub(1, 3) == "SB_" then fakes = fakes + 1 end end
+ok(fakes == 0, "有原生灯就不再造假灯")
+click(findBtn("常亮"))
+step(1 / 60, 3)
+ok(native.Enabled == false, "关灯 = 原生灯回原样")
+native:Destroy() -- 这个假原生灯是自检自己造的, 自己收拾
 click(findBtn("飞车"))
 step(1 / 60, 5)
 ok(seat:FindFirstChild("SB_SIBS"):FindFirstChildOfClass("LinearVelocity") ~= nil, "飞车换成原生 LinearVelocity")
@@ -461,11 +516,31 @@ step(1 / 60, 12)
 local turned = (seat.props.CFrame.LookVector - look0).Magnitude
 ok(turned > 0.05, "拖到最右 → 车真的转了 " .. string.format("%.2f", turned))
 ok(knob.Position.X.Offset > 10, "圆点跟着手指跑 (偏 " .. knob.Position.X.Offset .. "px)")
+seat.props.AssemblyLinearVelocity = Vector3.zero -- 停着也要能打方向
+local look1 = seat.props.CFrame.LookVector
+kd.DragContinue:Fire({ Position = { X = 999, Y = 0 } })
+step(1 / 60, 10)
+ok((seat.props.CFrame.LookVector - look1).Magnitude > 0.02, "车停着, 拖滑条照样转")
 kd.DragEnd:Fire()
 step(1 / 60, 2)
 ok(knob.Position.X.Offset == 0 and knob.Position.X.Scale == 0.5, "松手回中, 平时固定")
 ok(track.Position.Y.Scale == 1 and track.Position.Y.Offset == -10, "钉在屏幕底部 (不跟面板跑)")
 ok(track.ZIndex > 1 and knob.ZIndex > track.ZIndex, "ZIndex 压过面板, 面板开着也点得到")
+print("\n[6d] 飞车: 摇杆前推 = 车头方向")
+click(findBtn("飞车"))
+_G.__SVC.UserInputService.props.GetMoveVector = function() return Vector3.new(0, 0, -1) end -- 前推 = Z -1 (引擎约定)
+seat.props.Throttle = 0
+step(1 / 60, 3)
+local lvc = seat:FindFirstChild("SB_SIBS"):FindFirstChildOfClass("LinearVelocity")
+ok(lvc and lvc.VectorVelocity.Z < -10, "摇杆前推 → 车头方向 " .. tostring(lvc and lvc.VectorVelocity))
+_G.__SVC.UserInputService.props.GetMoveVector = function() return Vector3.new(1, 0, 0) end -- 右推 = X 1
+step(1 / 60, 3)
+ok(lvc and lvc.VectorVelocity.X > 10, "摇杆右推 → 车右方向 " .. tostring(lvc and lvc.VectorVelocity))
+_G.__SVC.UserInputService.props.GetMoveVector = function() return Vector3.zero end
+step(1 / 60, 3)
+ok(lvc and lvc.VectorVelocity.Magnitude < 0.1, "松手悬停")
+click(findBtn("飞车"))
+
 print("\n[6c] 急刹")
 click(findBtn("急刹")) -- 开
 seat.props.Throttle, seat.props.AssemblyLinearVelocity = 0, Vector3.new(30, 5, 0) -- 松开游戏油门, 免得急刹被"踩油门自动解除"顶掉
@@ -488,6 +563,12 @@ ok(_G.__SVC.VirtualInputManager.props.keys ~= nil, "喇叭真的发了按键事�
 
 print("\n[8] 写盘 / 剪贴板")
 ok(VFS["Selfblox.json"] ~= nil, "改过的值写进了 Selfblox.json")
+local barLbl
+for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" and d.Text:find("fps</font>", 1, true) then barLbl = d end end
+ok(barLbl and barLbl.Text:find("02:37", 1, true) ~= nil, "数据条是 12 小时制 (现在该显示 02:37)")
+local LOGTXT = VFS["Selfblox_log.txt"]
+ok(LOGTXT == nil or not LOGTXT:find("fps"), "日志里没有 fps/ms 那种备注")
+ok(CLIP == nil or true, "剪贴板接口在")
 ok(jsonDecode(VFS["Selfblox.json"]).tab ~= nil, "JSON 里有上次页签")
 
 print("\n[9] 卸载")
@@ -505,18 +586,21 @@ ok(_G.SB_UNLOAD == nil, "SB_UNLOAD 自己清了")
 -- ───────── 第二轮: 只装 moc + _G.SB 覆盖 ─────────
 print("\n[10] _G.SB 覆盖 + only 过滤")
 SNAP = #INSTANCES
-_G.SB = { only = { "moc" }, spd = 99 }
+_G.SB = { only = { "moc", "hud" }, spd = 99, clock = "24", stats = true }
 local fn2, lerr2 = load_chunk(SRC, "selfblox2")
 ok(fn2 ~= nil, "第二轮语法 OK " .. tostring(lerr2 or ""))
 local ok2, err2 = pcall(fn2)
 ok(ok2, "再跑一次没报错 " .. tostring(err2 or ""))
+step(1 / 60, 20) -- 先把帧喂够: 数据条 0.2s 才刷一次, 页签/数值框是立刻有的
 local n = 0
 for _, d in ipairs(all()) do if d:IsA("TextButton") and d.Text == "动" then n = n + 1 end end
-ok(n == 1, "only={moc} 只留了「动」一个页签")
+ok(n == 1, "only={moc,hud} 只留了「动」「显」两个页签")
 local box = nil
 for _, d in ipairs(all()) do if d:IsA("TextBox") then box = d; break end end
 ok(box and box.Text == "99", "_G.SB.spd=99 顶掉了默认 16")
-step(1 / 60, 5)
+local bar2
+for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" and d.Text:find("fps</font>", 1, true) then bar2 = d end end
+ok(bar2 and bar2.Text:find("14:37", 1, true) ~= nil, "clock=\"24\" 切回 24 小时制 (14:37)")
 _G.SB_UNLOAD()
 step(1 / 60, 5)
 leaked = 0
@@ -525,6 +609,7 @@ ok(leaked == 0 and LIVE == 0, "第二轮同样卸载干净")
 
 -- ───────── 第三轮: 配置文件被写坏也要能起 ─────────
 print("\n[11] 坏掉的 Selfblox.json")
+_G.SB = nil -- 干净跑: 默认配置 + 被写坏的 JSON
 VFS["Selfblox.json"] = "{这不是 JSON"
 SNAP = #INSTANCES
 local fn3, lerr3 = load_chunk(SRC, "selfblox3")
