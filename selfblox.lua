@@ -1,10 +1,16 @@
--- Selfblox v12 · 单文件 · 一次 loadstring · 一个面板 · 七个模块
+-- Selfblox v13 · 单文件 · 一次 loadstring · 一个面板 · 七个模块
 -- 用法:  loadstring(game:HttpGet("https://raw.githubusercontent.com/Sumicya/Selfblox/main/selfblox.lua"))()
--- 覆盖:  执行前 _G.SB = { spd = 50, flyspd = 80, only = {"moc", "sibs"} }   键名 = 各模块 opt("键", 默认) 的第一个参数
+-- 覆盖:  执行前 _G.SB = { spd = 50, flyspd = 80, only = {"moc", "sibs"} }
 -- 优先级: _G.SB > Selfblox.json(面板里改过的值) > 默认值
 -- 卸载:  _G.SB_UNLOAD()   重跑会自动先卸载
+-- 自检:  lua5.4 smoke.lua  (离线假引擎, 不跑也行)
+--
+-- v13 = 只保 Delta 最新版: 执行器能力探测(isfile/gethui/newcclosure/hookmetamethod/UIDragDetector)
+--       全部当它一定有, 不留兜底; 删掉没用的变量与重复样板; 配置自动进日志;
+--       刹车/灯/互动/ESP 全走引擎原生属性。
+--       保持 Lua 5.4 可解析子集(不用 +=/continue/字符串插值), 换 smoke.lua 能离线跑。ponytail: 可测试性 > 语法糖
 
-if rawget(_G, "SB_UNLOAD") then pcall(_G.SB_UNLOAD) end
+if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -16,23 +22,26 @@ local Teams = game:GetService("Teams")
 local RS = game:GetService("ReplicatedStorage")
 local VIM = game:GetService("VirtualInputManager")
 local me = Players.LocalPlayer
-local ROOT = (pcall(gethui) and gethui()) or game:GetService("CoreGui")
+local ROOT = gethui() or game:GetService("CoreGui") -- Delta 有 gethui; 没有就退回 CoreGui
 
 -- ───────── 配置: _G.SB 覆盖 > JSON > 默认 ─────────
 local O = type(rawget(_G, "SB")) == "table" and _G.SB or {}
 local FILE, saved = "Selfblox.json", {}
-if isfile and isfile(FILE) then pcall(function() saved = Http:JSONDecode(readfile(FILE)) end) end
+if isfile(FILE) then local okf, d = pcall(Http.JSONDecode, Http, readfile(FILE)); if okf and type(d) == "table" then saved = d end end -- 配置文件坏了不能连面板一起死
 local function opt(k, d) local v = O[k]; if v == nil then v = saved[k] end; if v == nil then v = d end; return v end
-local function save(k, v) saved[k] = v; if writefile then writefile(FILE, Http:JSONEncode(saved)) end end
+local function save(k, v) saved[k] = v; writefile(FILE, Http:JSONEncode(saved)) end
+local CLOCK12 = opt("clock", "12") ~= "24" -- 12 小时制默认; _G.SB = { clock = "24" } 切 24
+local function clock(sec) return os.date((CLOCK12 and "%I" or "%H") .. (sec and ":%M:%S" or ":%M")) end
 
 -- ───────── 公共 ─────────
-local alive, conns, DBG, MODS, stops = true, {}, {}, {}, {}
+local alive, conns, INFO, MODS, stops, DUMP = true, {}, {}, {}, {}, {}
 local function on(sig, fn) local c = sig:Connect(fn); conns[#conns + 1] = c; return c end
 local function mk(cls, props, parent) local i = Instance.new(cls); for k, v in pairs(props) do i[k] = v end; i.Parent = parent; return i end
 local function tap(i) return i.UserInputType == Enum.UserInputType.Touch or i.UserInputType == Enum.UserInputType.MouseButton1 end
 local function hum() local c = me.Character; return c and c:FindFirstChildOfClass("Humanoid") end
 local function root() local c = me.Character; return c and (c:FindFirstChild("HumanoidRootPart") or c:FindFirstChild("Root")) end
-local function flat(v) v = Vector3.new(v.X, 0, v.Z); return v.Magnitude > 1e-3 and v.Unit or nil end
+local function flat(v) v = Vector3.new(v.X, 0, v.Z); if v.Magnitude > 1e-3 then return v.Unit end end
+local function nn(v) return tonumber(v) or 0 end -- 诊断/日志里的引擎数字: 拿不到就 0, 不能因为一个属性缺失把整份 dump 弄炸
 
 -- ───────── UI: 一个 ScreenGui, 标题条(原生 UIDragDetector 拖) + 页签 + 每模块一页 ─────────
 local FONT, WHITE = Enum.Font.GothamBold, Color3.new(1, 1, 1)
@@ -47,14 +56,14 @@ local function ord() ORD = ORD + 1; return ORD end -- UIListLayout 按创建顺�
 local function ui(cls, parent, w, props) -- w=nil 整行, w=0.5 半行
 	local i = Instance.new(cls)
 	for k, v in pairs(BASE) do i[k] = v end
-	i.Size, i.LayoutOrder = w and UDim2.new(w, -1, 1, 0) or UDim2.new(1, 0, 0, ROW), ord()
+	i.Size, i.LayoutOrder = w and UDim2.new(w, 0, 1, 0) or UDim2.new(1, 0, 0, ROW), ord()
 	for k, v in pairs(props or {}) do i[k] = v end
 	i.Parent = parent
 	return i
 end
 local function row(parent, h)
 	local f = mk("Frame", { Size = UDim2.new(1, 0, 0, h or ROW), BackgroundTransparency = 1, LayoutOrder = ord() }, parent)
-	mk("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 1) }, f)
+	mk("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 0) }, f)
 	return f
 end
 local function text(parent, s, w) return ui("TextLabel", parent, w, { Text = s, BackgroundTransparency = 1, TextWrapped = true }) end
@@ -70,33 +79,45 @@ local function toggle(parent, s, init, fn, w) -- 返回 set(v): 代码里也能�
 	on(b.Activated, function() set(not st) end)
 	return set
 end
-local function num(parent, s, get, set, w) -- 标签 + 数字框; s=nil 只有框
-	local f = ui("TextLabel", parent, w, { Text = s and " " .. s or "", TextXAlignment = Enum.TextXAlignment.Left })
-	local tb = mk("TextBox", { Size = UDim2.new(s and 0.5 or 1, 0, 1, 0), Position = UDim2.new(s and 0.5 or 0, 0, 0, 0), BackgroundTransparency = 1, Font = FONT, TextSize = 12, TextColor3 = Color3.fromRGB(255, 225, 140), Text = tostring(get()), ClearTextOnFocus = false }, f)
-	on(tb.FocusLost, function() local v = tonumber(tb.Text); if v then set(v) end; tb.Text = tostring(get()) end)
-end
 local function hold(parent, s, fn, w) -- 按住 fn(true) 松开 fn(false)
 	local b = ui("TextButton", parent, w, { Text = s, AutoButtonColor = false })
 	on(b.InputBegan, function(i) if tap(i) then b.BackgroundColor3 = ON; fn(true) end end)
 	on(b.InputEnded, function(i) if tap(i) then b.BackgroundColor3 = OFF; fn(false) end end)
 end
+local function num(parent, s, S, k, w, savek) -- 直接绑 S[k], 改完自动存盘; savek 缺省 = k
+	local f = ui("TextLabel", parent, w, { Text = s and " " .. s or "", TextXAlignment = Enum.TextXAlignment.Left })
+	local tb = mk("TextBox", { Size = UDim2.new(s and 0.5 or 1, 0, 1, 0), Position = UDim2.new(s and 0.5 or 0, 0, 0, 0), BackgroundTransparency = 1, Font = FONT, TextSize = 12, TextColor3 = Color3.fromRGB(255, 225, 140), Text = tostring(S[k]), TextXAlignment = Enum.TextXAlignment.Center, ClearTextOnFocus = false }, f)
+	on(tb.FocusLost, function() local v = tonumber(tb.Text); if v then S[k] = v; save(savek or k, v) end; tb.Text = tostring(S[k]) end)
+end
 
 local vp = workspace.CurrentCamera.ViewportSize
 local pos = opt("pos", { vp.X / 2 - W / 2, vp.Y * 0.3 })
-local title = mk("TextLabel", { Size = UDim2.fromOffset(W, ROW), Position = UDim2.fromOffset(math.clamp(pos[1], 0, math.max(vp.X - W, 0)), math.clamp(pos[2], 0, math.max(vp.Y - ROW, 0))), BackgroundColor3 = BG, BackgroundTransparency = 0.15, BorderSizePixel = 0, Font = FONT, TextSize = 13, TextColor3 = WHITE, Text = "Selfblox" }, gui)
-local body = mk("Frame", { Size = UDim2.new(0, W, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Position = title.Position + UDim2.fromOffset(0, ROW), BackgroundColor3 = BG, BackgroundTransparency = 0.35, BorderSizePixel = 0 }, gui)
-mk("UIListLayout", { Padding = UDim.new(0, 1) }, body)
+local title = mk("TextLabel", { Name = "SB_Title", Size = UDim2.fromOffset(W, ROW), Position = UDim2.fromOffset(math.clamp(pos[1], 0, math.max(vp.X - W, 0)), math.clamp(pos[2], 0, math.max(vp.Y - ROW, 0))), BackgroundColor3 = BG, BackgroundTransparency = 0.15, BorderSizePixel = 0, Font = FONT, TextSize = 13, TextColor3 = WHITE, Text = "Selfblox v13" }, gui)
+local body = mk("Frame", { Name = "SB_Body", Size = UDim2.new(0, W, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Position = title.Position + UDim2.fromOffset(0, ROW), BackgroundColor3 = BG, BackgroundTransparency = 0.35, BorderSizePixel = 0 }, gui)
+mk("UIListLayout", { Padding = UDim.new(0, 0) }, body)
 on(title:GetPropertyChangedSignal("Position"), function() body.Position = title.Position + UDim2.fromOffset(0, ROW) end)
-local okDrag, drag = pcall(mk, "UIDragDetector", { BoundingUI = gui }, title) -- 老客户端没这个类就不能拖
-if okDrag then on(drag.DragEnd, function() save("pos", { title.AbsolutePosition.X, title.AbsolutePosition.Y }) end) end
+local drag = mk("UIDragDetector", { BoundingUI = gui }, title)
+on(drag.DragEnd, function() save("pos", { title.AbsolutePosition.X, title.AbsolutePosition.Y }) end)
 local fold = mk("TextButton", { Size = UDim2.fromOffset(ROW, ROW), Position = UDim2.new(1, -ROW, 0, 0), BackgroundTransparency = 1, Font = FONT, TextSize = 16, TextColor3 = WHITE, Text = "–" }, title)
-on(fold.Activated, function() body.Visible = not body.Visible; fold.Text = body.Visible and "–" or "+" end)
+local foldHooks = {} -- 想知道"面板是折着还是开着"的模块挂这里
+local function setFold(v) body.Visible = v; fold.Text = v and "–" or "+"; for _, f in ipairs(foldHooks) do f(v) end end
+on(fold.Activated, function() setFold(not body.Visible) end)
+local pressPos -- 标题条整条都能点: 手指没挪动 = 点击折叠, 挪了 = 拖面板
+on(title.InputBegan, function(i) if tap(i) then pressPos = title.AbsolutePosition end end)
+on(title.InputEnded, function(i)
+	if pressPos and tap(i) then
+		local p = title.AbsolutePosition
+		if math.abs(p.X - pressPos.X) + math.abs(p.Y - pressPos.Y) < 8 then setFold(not body.Visible) end
+	end
+	pressPos = nil
+end)
 local tabs = row(body)
 
-local toastL = mk("TextLabel", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 22), Size = UDim2.fromOffset(0, 24), AutomaticSize = Enum.AutomaticSize.X, BackgroundColor3 = BG, BackgroundTransparency = 0.2, BorderSizePixel = 0, Font = FONT, TextSize = 13, TextColor3 = WHITE, Visible = false }, gui)
+local toastL = mk("TextLabel", { Name = "SB_Toast", AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 22), Size = UDim2.fromOffset(0, 24), AutomaticSize = Enum.AutomaticSize.X, BackgroundColor3 = BG, BackgroundTransparency = 0.2, BorderSizePixel = 0, Font = FONT, TextSize = 13, TextColor3 = WHITE, Visible = false }, gui)
 mk("UIPadding", { PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10) }, toastL)
 local toastN = 0
 local function toast(s) toastN = toastN + 1; local n = toastN; toastL.Text, toastL.Visible = s, true; task.delay(2, function() if toastN == n then toastL.Visible = false end end) end
+local dumpNow -- 启动完再赋值; 模块里的按钮闭包先引用这个局部变量
 
 -- ═════════ moc: 角色 ═════════
 MODS[#MODS + 1] = { name = "moc", tab = "动", fn = function(page)
@@ -190,18 +211,18 @@ MODS[#MODS + 1] = { name = "moc", tab = "动", fn = function(page)
 
 	local r1 = row(page)
 	toggle(r1, "速度", false, function(v) speedOn, moving = v, false; if not v then restore() end end, 0.5)
-	num(r1, nil, function() return S.spd end, function(v) S.spd = v; save("spd", v) end, 0.5)
+	num(r1, nil, S, "spd", 0.5)
 	local MODES = { root = "walk", walk = "cframe", cframe = "root" }
 	btn(page, "模式 " .. S.mode, function(b) restore(); moving = false; S.mode = MODES[S.mode] or "root"; save("spdmode", S.mode); b.Text = "模式 " .. S.mode end)
 	local r2 = row(page)
 	setFly = toggle(r2, "飞行", false, function(v) flyOn = v; if not v then stopFly() end end, 0.5)
-	num(r2, nil, function() return S.fly end, function(v) S.fly = v; save("flyspd", v) end, 0.5)
+	num(r2, nil, S, "fly", 0.5, "flyspd")
 	local r3 = row(page)
 	toggle(r3, "高跳", false, function(v) jumpOn = v; if not v then restore() end end, 0.5)
-	num(r3, nil, function() return S.jump end, function(v) S.jump = v; save("jump", v) end, 0.5)
+	num(r3, nil, S, "jump", 0.5)
 	local r4 = row(page)
 	toggle(r4, "旋转", false, function(v) spinOn = v; if not v then stopSpin() end end, 0.5)
-	num(r4, nil, function() return S.spin end, function(v) S.spin = v; save("spin", v) end, 0.5)
+	num(r4, nil, S, "spin", 0.5)
 	local r5 = row(page)
 	toggle(r5, "无限跳", false, function(v) infJump = v end, 0.5)
 	toggle(r5, "穿墙", false, function(v) clip = v; if not v then reclip() end end, 0.5)
@@ -212,20 +233,19 @@ MODS[#MODS + 1] = { name = "moc", tab = "动", fn = function(page)
 	local r7 = row(page, 36)
 	hold(r7, "▲ 上升", function(v) up = v end, 0.5)
 	hold(r7, "▼ 下降", function(v) down = v end, 0.5)
+	num(page, "秒互动距离", S, "dist", nil, "promptdist")
 
-	DBG.moc = function() return "speed=" .. tostring(speedOn) .. "/" .. S.mode .. "/" .. S.spd .. " fly=" .. tostring(flyOn) .. " jump=" .. tostring(jumpOn) .. " spin=" .. tostring(spinOn) .. " clip=" .. tostring(clip) .. " nv=" .. tostring(nv) .. " nocd=" .. nocd end
+	INFO.moc = function() return string.format("速度=%s/%s 飞行=%s 高跳=%s 旋转=%s 穿墙=%s 夜视=%s 秒互动=%s", tostring(speedOn), S.mode, tostring(flyOn), tostring(jumpOn), tostring(spinOn), tostring(clip), tostring(nv), nocd) end
 	return function() setFly(false); stopSpin(); reclip(); restore(); nvOff(); setNocd("off"); if att then att:Destroy() end end
 end }
 
 -- ═════════ sibs: 载具 (坐着 = 控制座位所在装配体; 没坐 = 准星"换车"锁定) ═════════
 MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
-	local S = { acc = opt("acc", 500), grip = opt("grip", 5), turn = opt("turn", 2.2), fly = opt("carfly", 60), horn = opt("hornkey", "H") }
-	local picked, pickSeat, curSeat, clipModel, att, vf, lv, status
-	local accel, decel, up, down, cruise, brake, flying, lampOn = false, false, false, false, false, false, false, false
-	local clip, target, statT, setBrake = opt("carclip", false), 0, 0, nil
-	local lamps, lampSaved = {}, setmetatable({}, { __mode = "k" })
-	local seatMax = setmetatable({}, { __mode = "k" })
-	local col = setmetatable({}, { __mode = "k" })
+	local S = { acc = opt("acc", 500), grip = opt("grip", 5), turn = opt("turn", 2.2), cap = opt("turncap", 1), fly = opt("carfly", 60), horn = opt("hornkey", "H"), maxstuds = opt("carmaxstuds", 150) } -- maxstuds: 多大的 Model 还算"一辆车"(超过就不当成载具容器)
+	local picked, pickSeat, curSeat, curMax, att, vf, lv, status, clipModel, setBrake, lastCar
+	local accel, decel, up, down, cruise, brake, flying, lampOn, target, statT = false, false, false, false, false, false, false, false, 0, 0
+	local clip = opt("carclip", false)
+	local lamps, lampSaved, col = {}, setmetatable({}, { __mode = "k" }), setmetatable({}, { __mode = "k" })
 	local rp = RaycastParams.new()
 	rp.FilterType = Enum.RaycastFilterType.Exclude
 
@@ -235,11 +255,24 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 		if s then return s.AssemblyRootPart, s end
 		if picked and picked:IsDescendantOf(workspace) then return picked, pickSeat end
 	end
-	local function model() -- 载具模型: 座位/锁定件往上到最外层 Model
-		local p, s = part()
-		local m = (s or p) and (s or p):FindFirstAncestorOfClass("Model")
-		while m and m.Parent and m.Parent:IsA("Model") do m = m.Parent end -- ponytail: 游戏把所有车套在一个大 Model 里会拿到整个容器
-		return m
+	local function scopeOf(p) -- 载具范围: 往上第一个"带座位"的 Model; 没有就取最近一个"尺寸像载具"的 Model; 绝不爬到整个街区
+		if not p then return nil end
+		local best, node = nil, p:FindFirstAncestorOfClass("Model")
+		while node do
+			if node:FindFirstChildWhichIsA("Seat", true) then return node end
+			if not best then
+				local sz = node:GetExtentsSize()
+				if math.max(sz.X, sz.Y, sz.Z) <= S.maxstuds then best = node end
+			end
+			node = node:FindFirstAncestorOfClass("Model")
+		end
+		return best
+	end
+	local cacheP, cacheM
+	local function model() -- 缓存: 只有换部件时才重算, 不然每帧扫祖先太贵
+		local p = part()
+		if p ~= cacheP then cacheP, cacheM = p, scopeOf(p) end
+		return cacheM
 	end
 	local function facing() local p, s = part(); return p and (flat((s or p).CFrame.LookVector) or Vector3.zAxis) end
 	local function attach(p)
@@ -265,154 +298,330 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 		elseif d < 3 and v.Y < 0 then p.AssemblyLinearVelocity = Vector3.new(v.X, 0, v.Z) end
 	end
 	local function dropLamps() for _, l in ipairs(lamps) do if lampSaved[l] ~= nil then l.Enabled = lampSaved[l] else l:Destroy() end end; table.clear(lamps) end
+	local function asm(p) return p:GetConnectedParts(true) end -- 本车装配体的所有部件 (不是整个 Model 容器, 免得动到别人的车)
 	local function setLamps(v)
-		local p, s = part()
-		local m = model()
-		if v and #lamps == 0 and m then
-			for _, d in ipairs(m:GetDescendants()) do if d:IsA("Light") then lampSaved[d] = d.Enabled; lamps[#lamps + 1] = d end end
-			if #lamps == 0 then -- 车上没灯: 前白后红各一只
-				lamps[1] = mk("SpotLight", { Brightness = 14, Range = 160, Angle = 85, Face = Enum.NormalId.Front }, s or p)
-				lamps[2] = mk("SpotLight", { Brightness = 8, Range = 80, Angle = 75, Face = Enum.NormalId.Back, Color = Color3.fromRGB(255, 40, 40) }, s or p)
+		local p = part()
+		if not p then return end
+		local fwd = facing()
+		if v and #lamps == 0 then
+			for _, d in ipairs(asm(p)) do -- 先接车自己带的灯 (SpotLight/PointLight/SurfaceLight)
+				if d ~= me.Character and not d:IsDescendantOf(me.Character) then
+					for _, c in ipairs(d:GetChildren()) do if c:IsA("Light") then lampSaved[c] = c.Enabled; lamps[#lamps + 1] = c end end
+				end
+			end
+			if #lamps == 0 then -- 车上本来没灯: 装到车头/车尾部件上, 不装座位; 车头朝向和车相反就照背面
+				local head, tail, big, vol = nil, nil, nil, 0
+				for _, d in ipairs(asm(p)) do
+					if not d:IsDescendantOf(me.Character) then
+						local n = d.Name:lower()
+						if not head and (n:find("head") or n:find("front") or n:find("lamp")) then head = d
+						elseif not tail and (n:find("tail") or n:find("rear") or n:find("brake") or n:find("back")) then tail = d end
+						local dvol = d.Size.X * d.Size.Y * d.Size.Z
+						if dvol > vol then big, vol = d, dvol end
+					end
+				end
+				head, tail = head or big, tail or big
+				local hf = Enum.NormalId.Front
+				if head and flat(head.CFrame.LookVector) and flat(head.CFrame.LookVector):Dot(fwd) < 0 then hf = Enum.NormalId.Back end
+				lamps[1] = mk("SpotLight", { Name = "SB_Head", Brightness = 14, Range = 160, Angle = 85, Face = hf }, head)
+				lamps[2] = mk("SpotLight", { Name = "SB_Tail", Brightness = 8, Range = 80, Angle = 75, Face = hf == Enum.NormalId.Front and Enum.NormalId.Back or Enum.NormalId.Front, Color = Color3.fromRGB(255, 40, 40) }, tail)
 			end
 		end
 		for _, l in ipairs(lamps) do l.Enabled = v end
 	end
-	local function horn(v) pcall(function() VIM:SendKeyEvent(v, Enum.KeyCode[S.horn], false, game) end) end -- 执行器可能禁 VIM
+	local function horn(v) VIM:SendKeyEvent(v, Enum.KeyCode[S.horn], false, game) end
 	local function pick()
 		local cam = workspace.CurrentCamera
 		rp.FilterDescendantsInstances = { me.Character }
 		local hit = workspace:Raycast(cam.CFrame.Position, cam.CFrame.LookVector * 5000, rp)
-		local m = hit and hit.Instance:FindFirstAncestorOfClass("Model")
-		while m and m.Parent and m.Parent:IsA("Model") do m = m.Parent end
-		local s = m and (m:FindFirstChildWhichIsA("VehicleSeat", true) or m:FindFirstChildWhichIsA("Seat", true))
-		local r = hit and (s or hit.Instance).AssemblyRootPart
-		if not r or r.Anchored or (m and m:FindFirstChildOfClass("Humanoid")) then toast("准星没对准载具"); return end
+		if not hit then toast("准星前面没东西"); return end
+		local inst = hit.Instance
+		if inst:FindFirstAncestorOfClass("Model") == nil and not inst:IsA("BasePart") then toast("打中的不是部件"); return end
+		local node, seatM = inst:FindFirstAncestorOfClass("Model"), nil
+		while node do -- 往上找最近一个"里面真的有座位"的 Model: 那才是载具
+			if node:FindFirstChildWhichIsA("Seat", true) then seatM = node; break end
+			node = node:FindFirstAncestorOfClass("Model")
+		end
+		local s = seatM and (seatM:FindFirstChildWhichIsA("VehicleSeat", true) or seatM:FindFirstChildWhichIsA("Seat", true))
+		local r = (s or inst).AssemblyRootPart
+		if inst:FindFirstAncestorOfClass("Model") and inst:FindFirstAncestorOfClass("Model"):FindFirstChildOfClass("Humanoid") then toast("打中的是人, 不是车"); return end
+		if r.Anchored then toast("这个还锁着(锚定), 等游戏解锁"); return end
 		picked, pickSeat = r, s
 		dropLamps()
-		toast("锁定 " .. (m and m.Name or hit.Instance.Name))
+		if s then toast("锁定 " .. seatM.Name .. " · 座位 " .. s.Name)
+		else toast("锁定 " .. inst.Name .. " · 没座位(只能推/飞/翻转, 没油门)") end
 	end
 	local function flip()
 		local p, m = part(), model()
-		if not (p and m) then toast("没有载具"); return end
-		local pv = m:GetPivot()
-		m:PivotTo(CFrame.new(pv.Position + Vector3.yAxis * 2) * CFrame.fromAxisAngle(p.CFrame.LookVector, math.pi) * pv.Rotation)
+		if not p then toast("没有载具"); return end
+		local cf = CFrame.new(p.Position + Vector3.yAxis * 2) * CFrame.fromAxisAngle(p.CFrame.LookVector, math.pi)
+		if m then m:PivotTo(cf * m:GetPivot().Rotation) else p.CFrame = cf * p.CFrame.Rotation end -- 没有 Model 也能翻
 		p.AssemblyAngularVelocity = Vector3.zero
 	end
+	local function brakeNow(p, v) p.AssemblyLinearVelocity = Vector3.yAxis * v.Y end -- 急刹: 水平速度直接归零, 比推力快且不吃质量
 
-	-- 方向盘: 屏幕底部滑条, 原生 UIDragDetector 单轴拖, 松手回中
-	local track = mk("Frame", { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -10), Size = UDim2.fromOffset(200, 36), BackgroundColor3 = BG, BackgroundTransparency = 0.4, BorderSizePixel = 0, Visible = false }, gui)
+	-- 方向盘: 钉在屏幕底部不动; ZIndex 压过面板, 面板开着也点得到; 整条背景都能拖 (拖的是全宽透明手柄, 圆点跟着手指), 松手回中
+	local track = mk("Frame", { Name = "SB_Steer", AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -10), Size = UDim2.fromOffset(200, 36), BackgroundColor3 = BG, BackgroundTransparency = 0.4, BorderSizePixel = 0, Visible = false, ZIndex = 10 }, gui)
 	mk("UICorner", { CornerRadius = UDim.new(1, 0) }, track)
-	local knob = mk("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(36, 36), BackgroundColor3 = Color3.fromRGB(95, 65, 135), BorderSizePixel = 0 }, track)
+	local knob = mk("Frame", { Name = "SB_Knob", AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(36, 36), BackgroundColor3 = Color3.fromRGB(95, 65, 135), BorderSizePixel = 0, ZIndex = 11 }, track)
 	mk("UICorner", { CornerRadius = UDim.new(1, 0) }, knob)
-	local okK, kd = pcall(mk, "UIDragDetector", { DragStyle = Enum.UIDragDetectorDragStyle.TranslateLine, DragAxis = Vector2.new(1, 0), BoundingUI = track }, knob)
-	if okK then on(kd.DragEnd, function() knob.Position = UDim2.fromScale(0.5, 0.5) end) end
-	local function steer() return (knob.AbsolutePosition.X - track.AbsolutePosition.X - 82) / 82 end -- 圆心 18..182 → -1..1
+	local handle = mk("Frame", { Name = "SB_Handle", Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Active = true, ZIndex = 12 }, track) -- 看不见的手柄盖在最上面, 整条都能按
+	local kd = mk("UIDragDetector", { DragStyle = Enum.UIDragDetectorDragStyle.TranslateLine, DragAxis = Vector2.new(1, 0), BoundingUI = track }, handle)
+	local dragX
+	on(kd.DragContinue, function(i) local x = i and i.Position and i.Position.X; dragX = (x and x ~= 0) and x or UIS:GetMouseLocation().X end)
+	on(kd.DragEnd, function() dragX = nil; handle.Position = UDim2.fromScale(0.5, 0.5) end)
+	local live = false -- 只有面板折起来才接管触摸: 面板开着时滑条固定, 免得调参数时手一滑把车带跑
+	local function setLive(v)
+		live = v
+		handle.Visible = v
+		track.ZIndex, knob.ZIndex = v and 10 or 1, v and 11 or 2
+		track.BackgroundTransparency, knob.BackgroundTransparency = v and 0.4 or 0.75, v and 0 or 0.55
+		if not v then dragX = nil; knob.Position = UDim2.fromScale(0.5, 0.5) end
+	end
+	foldHooks[#foldHooks + 1] = function(open) setLive(not open) end -- 钩子收到的是"面板开着吗", 滑条要的是"能不能拖"
+	setLive(not body.Visible)
+	local function steer() -- 轨道宽 200 / 圆点半径 18 → 圆心能走 ±82
+		if not live then return 0 end
+		local cx = track.AbsolutePosition.X + 100
+		local s = math.clamp((dragX or cx) - cx, -82, 82)
+		knob.Position = UDim2.new(0.5, s, 0.5, 0) -- 圆点是纯显示, 只跟手指
+		return s / 82
+	end
 
 	on(RunService.PreSimulation, function(dt)
 		local s = seat()
 		if s ~= curSeat then -- 换座: 还原旧座限速, 新座解限速, 灯重挂
-			if curSeat and seatMax[curSeat] then curSeat.MaxSpeed = seatMax[curSeat] end
-			curSeat = s
-			if s and s:IsA("VehicleSeat") then seatMax[s] = s.MaxSpeed; s.MaxSpeed = math.huge end
+			if curSeat and curMax then curSeat.MaxSpeed = curMax end
+			curSeat, curMax = s, s and s:IsA("VehicleSeat") and s.MaxSpeed or nil
+			if curMax then s.MaxSpeed = math.huge end
 			dropLamps()
 			if lampOn then setLamps(true) end
 		end
 		local p, sp = part()
 		track.Visible = p ~= nil
-		if not p or p.Anchored then detach(); if clipModel then reclip() end; return end
-		attach(p)
+		if not p then detach(); if clipModel then reclip() end; return end
+		attach(p) -- 锚定的车照样绑: 之前 v13 直接 return, 所以"要动一会(等游戏解锁)才能绑上"
+		local anch = p.Anchored -- 锚定 = 引擎不让推, 只能等游戏自己解锁; 滑条转向走 CFrame 照样有效
 		local m = model()
+		if lastCar then lastCar.p, lastCar.s, lastCar.m, lastCar.path = p, s, m, p:GetFullName() else lastCar = { p = p, s = s, m = m, path = p:GetFullName() } end -- 诊断打包用: 哪怕打包时已经下车
 		local v = p.AssemblyLinearVelocity
 		local hv = Vector3.new(v.X, 0, v.Z)
 		local spd, mass, fwd = hv.Magnitude, p.AssemblyMass, facing()
-		local thr, st = 0, steer()
-		if sp and sp:IsA("VehicleSeat") then thr, st = sp.Throttle, math.clamp(st + sp.Steer, -1, 1) end -- 游戏自带的手机油门/方向盘也吃
+		local gst, thr, st = 0, 0, steer()
+		if sp and sp:IsA("VehicleSeat") then gst, thr, st = sp.Steer, sp.Throttle, math.clamp(st + sp.Steer, -1, 1) end -- 游戏自带的手机油门/方向盘也吃
 		local acc, dec = accel or thr > 0, decel or thr < 0
-		if os.clock() - statT > 0.2 then statT = os.clock(); status.Text = (m and m.Name or p.Name) .. " · " .. math.floor(spd + 0.5) .. " sps" .. (s and "" or " · 准星锁定") end
+		if os.clock() - statT > 0.2 then statT = os.clock(); status.Text = (m and m.Name or p.Name) .. " · " .. math.floor(spd + 0.5) .. " sps" .. (s and "" or " · 准星锁定") .. (anch and " · 锚定(等游戏解锁)" or "") end
 		if clip then noclip(p, m); if not flying then hover(p, m) end elseif clipModel then reclip() end
-		if flying then -- 飞车: 直接给速度, 没输入就悬停
+		if flying then -- 飞车: 摇杆(前后左右) + 面板按钮都吃; 松手悬停
 			if not lv then lv = mk("LinearVelocity", { Attachment0 = att, MaxForce = math.huge, VectorVelocity = Vector3.zero, RelativeTo = Enum.ActuatorRelativeTo.World }, att) end
-			lv.VectorVelocity = fwd * (S.fly * ((acc and 1 or 0) - (dec and 1 or 0))) + Vector3.yAxis * (S.fly * ((up and 1 or 0) - (down and 1 or 0)))
+			local mv = UIS:GetMoveVector() -- 摇杆: 前推 Z=-1, 右推 X=1 (引擎原生, 坐姿也能读)
+			local dir = fwd * math.clamp(-mv.Z + (acc and 1 or 0) - (dec and 1 or 0), -1, 1) + (flat(p.CFrame.RightVector) or Vector3.xAxis) * math.clamp(mv.X, -1, 1)
+			if dir.Magnitude > 1 then dir = dir.Unit end
+			lv.VectorVelocity = anch and Vector3.zero or (dir * S.fly + Vector3.yAxis * (S.fly * ((up and 1 or 0) - (down and 1 or 0))))
 			vf.Force = Vector3.zero
 			return
 		elseif lv then lv:Destroy(); lv = nil end
-		-- 转向: 角速度 ∝ 车速(静止不转); 抓地把速度方向拉回车头
-		if math.abs(st) > 0.02 and spd > 0.5 then
-			p.CFrame = CFrame.fromAxisAngle(Vector3.yAxis, -st * S.turn * math.min(spd / 25, 1) * dt) * p.CFrame.Rotation + p.Position
-			local dir = hv:Dot(fwd) < 0 and -fwd or fwd
-			p.AssemblyLinearVelocity = hv.Unit:Lerp(dir, math.min(dt * S.grip, 1)).Unit * spd + Vector3.yAxis * v.Y
+		-- 转向: 游戏自己的 Steer 那部分让它自己转, 我们只转滑条多出来的部分, 不重复
+		local mine = st - gst
+		if math.abs(mine) > 0.02 then -- 停着也能转(原地打方向), 不再等车动起来
+			p.CFrame = CFrame.fromAxisAngle(Vector3.yAxis, -mine * S.turn * math.clamp(spd / 25, 0.2, S.cap) * dt) * p.CFrame.Rotation + p.Position -- turncap = 转向速率随速度放大的上限
+			if spd > 1 then
+				local dir = hv:Dot(fwd) < 0 and -fwd or fwd
+				p.AssemblyLinearVelocity = hv.Unit:Lerp(dir, math.min(dt * S.grip, 1)).Unit * spd + Vector3.yAxis * v.Y
+			end
 		end
 		local f, F = mass * S.acc, Vector3.zero
 		if brake then -- 急刹: 刹到停, 再踩油门自动解除
-			if acc then setBrake(false)
-			elseif spd > 1 then F = -hv.Unit * (f * 2)
-			else p.AssemblyLinearVelocity = Vector3.yAxis * v.Y end
-		elseif acc and dec then if spd > 1 then F = -hv.Unit * (f * 2) end
+			if acc then setBrake(false) else brakeNow(p, v) end
+		elseif acc and dec then brakeNow(p, v)
 		elseif acc then F = fwd * f
 		elseif dec then F = -fwd * (f * (hv:Dot(fwd) > 3 and 2 or 1)) -- 前进中双倍刹, 停了就倒车
 		elseif cruise then F = fwd * math.clamp((target - hv:Dot(fwd)) * mass * 2, -f, f) end
 		if not cruise then target = hv:Dot(fwd) end -- 定速一开就锁当前车速
-		vf.Force = F
+		if anch then vf.Force = Vector3.zero else vf.Force = F end -- 锚定: 力无效, 清零等着
 	end)
 
+	local function carLines()
+		local p, s, cached = part()
+		if not p and lastCar then p, s, cached = lastCar.p, lastCar.s, true end -- 打包时没车也能带出最近一辆的结构
+		if not p then return { "没有载具 (先用 换车 锁定或坐上去, 再点诊断打包)" } end
+		if cached and not (p:IsDescendantOf(workspace)) then
+			return { "最近一辆: " .. tostring(lastCar.path), "  已经不在 workspace 里了(被游戏销毁/回收) → 结构拿不到, 只能在车还在的时候点诊断打包" }
+		end
+		local m = cached and lastCar.m or model()
+		local L = { "==== CAR " .. os.date("%Y-%m-%d ") .. clock(true) .. " place=" .. game.PlaceId .. (cached and " (缓存的最近一辆)" or "") .. " ====",
+			"座位: " .. (s and s:GetFullName() or "-") .. "   根部件: " .. p:GetFullName() .. "   Model: " .. (m and m:GetFullName() or "-"),
+			string.format("根部件 质量=%.0f 锚定=%s 速度=%.1f 尺寸=(%.0f,%.0f,%.0f)", p.AssemblyMass, tostring(p.Anchored), p.AssemblyLinearVelocity.Magnitude, p.Size.X, p.Size.Y, p.Size.Z) }
+		if s and s:IsA("VehicleSeat") then
+			L[#L + 1] = string.format("座位: MaxSpeed=%s Torque=%.0f Throttle=%.2f Steer=%.2f 乘员=%s", tostring(s.MaxSpeed), nn(s.Torque), nn(s.Throttle), nn(s.Steer), s.Occupant and (s.Occupant.Parent and s.Occupant.Parent.Name or "?") or "无")
+		end
+		L[#L + 1] = "-- 装配体部件 (含游戏自己的约束/灯/脚本钩子)"
+		for _, d in ipairs(p:GetConnectedParts(true)) do
+			if d ~= me.Character and not d:IsDescendantOf(me.Character) then
+				L[#L + 1] = string.format("  %-26s %-14s 锚=%-5s 质量=%.0f 尺寸=(%.0f,%.0f,%.0f)", d.Name, d.ClassName, tostring(d.Anchored), d.AssemblyMass, d.Size.X, d.Size.Y, d.Size.Z)
+				for _, c in ipairs(d:GetChildren()) do
+					if c:IsA("Light") then L[#L + 1] = "        灯 " .. c.ClassName .. " " .. c.Name .. " Enabled=" .. tostring(c.Enabled)
+					elseif c:IsA("Constraint") or c:IsA("BodyMover") or c:IsA("Attachment") then L[#L + 1] = "        " .. c.ClassName .. " " .. c.Name end
+				end
+			end
+		end
+		-- 准星现在打到什么: 车不听话时这一条最有用
+		local cam = workspace.CurrentCamera
+		rp.FilterDescendantsInstances = { me.Character }
+		local hit = workspace:Raycast(cam.CFrame.Position, cam.CFrame.LookVector * 5000, rp)
+		L[#L + 1] = "-- 准星射线: " .. (hit and (hit.Instance.ClassName .. " " .. hit.Instance:GetFullName()) or "没打到东西")
+		if hit then
+			local chain, x = {}, hit.Instance
+			while x and x ~= workspace do chain[#chain + 1] = x.Name .. "(" .. x.ClassName .. ")"; x = x.Parent end
+			L[#L + 1] = "    祖先: " .. table.concat(chain, " ← ")
+		end
+		L[#L + 1] = "-- 场景里的座位 (最近 8 个)"
+		local seats, seen2 = {}, 0
+		for _, d in ipairs(workspace:GetDescendants()) do
+			seen2 = seen2 + 1
+			if seen2 > 30000 then L[#L + 1] = "    (场景实例超过 3 万, 只扫了前 3 万)" break end
+			if d:IsA("Seat") then local r = d.AssemblyRootPart; seats[#seats + 1] = { d, r and (r.Position - cam.CFrame.Position).Magnitude or 1e9 } end
+		end
+		table.sort(seats, function(a, b) return a[2] < b[2] end)
+		if #seats == 0 then L[#L + 1] = "    一个座位都没有 → 这游戏的车没有座, 客户端推不动它"
+		else
+			for i = 1, math.min(#seats, 8) do
+				local d = seats[i][1]
+				L[#L + 1] = string.format("    %-32s %-12s 距离=%.0f 乘员=%s", d:GetFullName(), d.ClassName, seats[i][2], d.Occupant and (d.Occupant.Parent and d.Occupant.Parent.Name or "?") or "空")
+			end
+		end
+		return L
+	end
+	DUMP.car = carLines
+	local function scanCar()
+		local L = carLines()
+		if #L == 1 and L[1] == "没有载具" then toast("没有载具"); return end
+		local txt = table.concat(L, "\n")
+		writefile("selfblox_car.txt", txt)
+		setclipboard(txt)
+		toast("车结构 " .. #L .. " 行 → selfblox_car.txt / 剪贴板")
+	end
+
 	local r1 = row(page)
-	num(r1, "加速", function() return S.acc end, function(v) S.acc = v; save("acc", v) end, 0.5)
-	num(r1, "抓地", function() return S.grip end, function(v) S.grip = v; save("grip", v) end, 0.5)
+	num(r1, "加速", S, "acc", 0.5)
+	num(r1, "飞速", S, "fly", 0.5, "carfly")
+	local rg = row(page)
+	num(rg, "抓地", S, "grip", 0.5)
+	num(rg, "转向", S, "turn", 0.5)
 	local r2 = row(page)
-	num(r2, "转向", function() return S.turn end, function(v) S.turn = v; save("turn", v) end, 0.5)
-	num(r2, "飞速", function() return S.fly end, function(v) S.fly = v; save("carfly", v) end, 0.5)
+	btn(r2, "换车(准星)", pick, 0.5)
+	toggle(r2, "穿墙", clip, function(v) clip = v; save("carclip", v) end, 0.5)
 	local r3 = row(page)
-	btn(r3, "换车(准星)", pick, 0.5)
-	toggle(r3, "穿墙", clip, function(v) clip = v; save("carclip", v) end, 0.5)
+	toggle(r3, "定速", false, function(v) cruise = v end, 0.5)
+	toggle(r3, "飞车", false, function(v) flying = v end, 0.5)
 	local r4 = row(page)
-	toggle(r4, "定速", false, function(v) cruise = v end, 0.5)
-	toggle(r4, "飞车", false, function(v) flying = v end, 0.5)
+	btn(r4, "翻转 180°", flip, 0.5)
+	setBrake = toggle(r4, "急刹", false, function(v) brake = v end, 0.5)
 	local r5 = row(page)
-	btn(r5, "翻转 180°", flip, 0.5)
-	setBrake = toggle(r5, "急刹", false, function(v) brake = v end, 0.5)
+	toggle(r5, "常亮", false, function(v) lampOn = v; if v then setLamps(true) else dropLamps() end end, 0.5)
+	btn(r5, "闪 ×3", function() task.spawn(function() for _ = 1, 3 do setLamps(true); task.wait(0.12); setLamps(false); task.wait(0.12) end; if lampOn then setLamps(true) else dropLamps() end end) end, 0.5)
 	local r6 = row(page)
-	toggle(r6, "常亮", false, function(v) lampOn = v; if v then setLamps(true) else dropLamps() end end, 0.5)
-	btn(r6, "闪 ×3", function() task.spawn(function() for _ = 1, 3 do setLamps(true); task.wait(0.12); setLamps(false); task.wait(0.12) end; if lampOn then setLamps(true) else dropLamps() end end) end, 0.5)
-	local r7 = row(page)
-	toggle(r7, "常声(" .. S.horn .. ")", false, horn, 0.5)
-	hold(r7, "声", horn, 0.5)
+	toggle(r6, "常声(" .. S.horn .. ")", false, horn, 0.5)
+	hold(r6, "声", horn, 0.5)
+	btn(page, "扫车 (结构进日志/剪贴板)", scanCar)
+	local r7 = row(page, 36)
+	hold(r7, "▲ 加速", function(v) accel = v end, 0.5)
+	hold(r7, "▼ 减速", function(v) decel = v end, 0.5)
 	local r8 = row(page, 36)
-	hold(r8, "▲ 加速", function(v) accel = v end, 0.5)
-	hold(r8, "▼ 减速", function(v) decel = v end, 0.5)
-	local r9 = row(page, 36)
-	hold(r9, "飞 ↑", function(v) up = v end, 0.5)
-	hold(r9, "飞 ↓", function(v) down = v end, 0.5)
+	hold(r8, "飞 ↑", function(v) up = v end, 0.5)
+	hold(r8, "飞 ↓", function(v) down = v end, 0.5)
 	status = text(page, "上车即控; 没车就对准它按 换车")
 
-	DBG.sibs = function() local p = part(); return "part=" .. (p and p:GetFullName() or "-") .. " cruise=" .. tostring(cruise) .. "@" .. math.floor(target) .. " fly=" .. tostring(flying) .. " clip=" .. tostring(clip) .. " brake=" .. tostring(brake) end
-	return function() detach(); reclip(); dropLamps(); horn(false); if curSeat and seatMax[curSeat] then curSeat.MaxSpeed = seatMax[curSeat] end end
+	local function seatInfo(s)
+		if not s then return " 没坐(准星锁定)"
+		elseif s:IsA("VehicleSeat") then return string.format(" 座=%s 油门=%.2f 方向=%.2f", s.Name, nn(s.Throttle), nn(s.Steer))
+		else return " 座=" .. s.Name .. "(普通座, 无油门/方向)" end
+	end
+	local function holdInfo() return (accel and " 按加速" or "") .. (decel and " 按减速" or "") .. (up and " 按升" or "") .. (down and " 按降" or "") end
+	INFO.sibs = function()
+		local p, s = part()
+		if p and vf then
+			return string.format("抓地=%s/转向=%s/过弯上限=%s 部件=%s%s 推力=%.0f(%.1f/kg) 质量=%.0f 速度=%.0f%s 定速=%s@%.0f 飞车=%s 穿墙=%s 急刹=%s%s",
+				S.grip, S.turn, S.cap, p:GetFullName(), seatInfo(s), vf.Force.Magnitude, vf.Force.Magnitude / math.max(p.AssemblyMass, 1), p.AssemblyMass,
+				p.AssemblyLinearVelocity.Magnitude, p.Anchored and " 锚定(引擎不让推)" or "", tostring(cruise), target, tostring(flying), tostring(clip), tostring(brake), holdInfo())
+		end
+		return "抓地=" .. S.grip .. "/转向=" .. S.turn .. "/过弯上限=" .. S.cap .. " 部件=-" .. seatInfo(nil) .. " 定速=" .. tostring(cruise) .. "@" .. math.floor(target) .. " 飞车=" .. tostring(flying) .. " 穿墙=" .. tostring(clip) .. " 急刹=" .. tostring(brake) .. holdInfo()
+	end
+	return function() detach(); reclip(); dropLamps(); horn(false); if curSeat and curMax then curSeat.MaxSpeed = curMax end end
 end }
 
--- ═════════ drift: 人物推进 (MobilePedals 自动绑; 没有就用面板按钮) ═════════
+-- ═════════ drift: 人物推进 (自动找踏板; 找不到就自己点选; 都没有就用面板按钮) ═════════
 MODS[#MODS + 1] = { name = "drift", tab = "漂", fn = function(page)
 	local S = { acc = opt("dacc", 5), brake = opt("dbrake", 10) }
 	local enabled, w, s, att, vf, status = opt("drift", true), false, false, nil, nil, nil
-	local pedalConns = {}
-	local function bindPedals()
-		for _, c in ipairs(pedalConns) do c:Disconnect() end
-		table.clear(pedalConns)
+	local slots, manual, pedalRoot, picking = {}, {}, nil, nil -- slots[1]=刹车 slots[2]=油门; manual[n]=这是我自己点选的, 自动找别覆盖
+	local function pedalLines() -- 踏板的真实结构: 绑不上时能直接看出它长啥样
 		local pg = me:FindFirstChild("PlayerGui")
 		local f = pg and pg:FindFirstChild("MobilePedals")
-		f = f and f:FindFirstChild("Frame")
-		if not f then status.Text = "无 MobilePedals, 用下面按钮"; return end
-		local b = {}
-		for _, c in ipairs(f:GetChildren()) do if c:IsA("GuiButton") then b[#b + 1] = c end end
-		table.sort(b, function(x, y) return x.AbsolutePosition.X < y.AbsolutePosition.X end)
-		if #b < 2 then status.Text = "踏板不足 2 个"; return end
-		local function bind(g, set) -- 最左 = 刹车, 次左 = 油门
-			pedalConns[#pedalConns + 1] = g.InputBegan:Connect(function(i) if tap(i) then set(true) end end)
-			pedalConns[#pedalConns + 1] = g.InputEnded:Connect(function(i) if tap(i) then set(false) end end)
+		if not f then
+			local tops = {}
+			if pg then for _, c in ipairs(pg:GetChildren()) do tops[#tops + 1] = c.Name .. "(" .. c.ClassName .. ")" end end
+			return { "无 MobilePedals; PlayerGui 顶层: " .. (#tops > 0 and table.concat(tops, ", ") or "(空)") }
 		end
-		bind(b[1], function(v) s = v end)
-		bind(b[2], function(v) w = v end)
-		pedalConns[#pedalConns + 1] = f.ChildAdded:Connect(function() task.delay(0.2, bindPedals) end)
-		status.Text = "踏板已绑定 (" .. #b .. " 个)"
+		local L = { "MobilePedals: " .. f:GetFullName() }
+		for _, d in ipairs(f:GetDescendants()) do
+			local ap, sz = d.AbsolutePosition or Vector2.zero, d.AbsoluteSize or Vector2.zero
+			L[#L + 1] = string.format("  %-28s %-12s 可见=%-5s 可点=%-5s 位置=(%.0f,%.0f) 尺寸=(%.0f,%.0f)", d.Name, d.ClassName, tostring(d.Visible), tostring(d.Active), nn(ap.X), nn(ap.Y), nn(sz.X), nn(sz.Y))
+		end
+		return L
 	end
+	DUMP.pedals = pedalLines
+	local function slotName(n) return slots[n] and (slots[n].btn.Name .. (manual[n] and "(点选)" or "")) or "未绑" end
+	local function setSlot(n, v) if n == 1 then s = v else w = v end end
+	local function clearSlot(n) local sl = slots[n]; if sl then for _, c in ipairs(sl.conns) do c:Disconnect() end end; slots[n] = nil; w, s = w or false, s or false end
+	local function bindSlot(n, g, mine) -- 按住 g 就当踩着第 n 个踏板
+		clearSlot(n)
+		local conns = {}
+		conns[#conns + 1] = g.InputBegan:Connect(function(i) if tap(i) then setSlot(n, true) end end)
+		conns[#conns + 1] = g.InputEnded:Connect(function(i) if tap(i) then setSlot(n, false) end end)
+		slots[n] = { btn = g, conns = conns }
+		if mine then manual[n] = true end
+	end
+	local function slotsText() return "踏板 刹=" .. slotName(1) .. " 油=" .. slotName(2) end
+	local function slotLive(n) local sl = slots[n]; return (sl and sl.btn and sl.btn.Parent) and true or false end
+	local function prune() -- 游戏重建 UI 时旧按钮会消失, 留着就是按不动的死连接
+		for n = 1, 2 do if slots[n] and not slots[n].btn.Parent then clearSlot(n); manual[n] = nil end end
+	end
+	local function autoBind(force) -- force = 手动点了「自动找踏板」(清掉手动点选重来); 平时(重试循环)只补没手动绑的那几个
+		if force then clearSlot(1); clearSlot(2); manual[1], manual[2] = nil, nil end
+		pedalRoot = nil
+		local pg = me:FindFirstChild("PlayerGui")
+		local f = pg and pg:FindFirstChild("MobilePedals")
+		if not f then
+			if not slotLive(1) and not slotLive(2) then status.Text = "无 MobilePedals → 用「选刹车/选油门」自己点游戏里的踏板" end
+			return
+		end
+		local b = {}
+		for _, c in ipairs(f:GetDescendants()) do if c:IsA("GuiButton") then b[#b + 1] = c end end -- 框名/嵌套深度每个游戏不一样, 整个子树找按钮
+		table.sort(b, function(x, y) return (x.AbsolutePosition or Vector2.zero).X < (y.AbsolutePosition or Vector2.zero).X end)
+		if #b < 2 then if force then status.Text = "MobilePedals 里只找到 " .. #b .. " 个按钮 → 用「选刹车/选油门」" end; return end
+		if not manual[1] then bindSlot(1, b[1]) else bindSlot(1, slots[1].btn) end
+		if not manual[2] then bindSlot(2, b[2]) else bindSlot(2, slots[2].btn) end
+		pedalRoot = f
+		status.Text = "自动找踏板: " .. slotsText()
+	end
+	local function pick(n) -- 点一下我们自己就选中的游戏按钮: 不猜名字, 不猜层级
+		picking = n
+		status.Text = (n == 1 and "点游戏里的【刹车】键" or "点游戏里的【油门】键") .. " (再点一下取消)"
+	end
+	on(UIS.InputBegan, function(i)
+		if not picking or not tap(i) then return end
+		local n, pos = picking, i.Position
+		local pg = me:FindFirstChild("PlayerGui")
+		local hit
+		if pg and pos then
+			for _, o in ipairs(pg:GetGuiObjectsAtPosition(pos.X, pos.Y)) do if o:IsA("GuiButton") then hit = o; break end end
+		end
+		if not hit then status.Text = "那一下没点到按钮, 再来一次"; return end
+		picking = nil
+		bindSlot(n, hit, true)
+		status.Text = (n == 1 and "刹车" or "油门") .. " = " .. hit:GetFullName() .. " · " .. slotsText()
+	end)
 
 	on(RunService.PreSimulation, function()
 		local c = me.Character
@@ -433,24 +642,33 @@ MODS[#MODS + 1] = { name = "drift", tab = "漂", fn = function(page)
 	end)
 
 	local r1 = row(page)
-	num(r1, "加速", function() return S.acc end, function(v) S.acc = v; save("dacc", v) end, 0.5)
-	num(r1, "刹车", function() return S.brake end, function(v) S.brake = v; save("dbrake", v) end, 0.5)
+	num(r1, "加速", S, "acc", 0.5, "dacc")
+	num(r1, "刹车", S, "brake", 0.5, "dbrake")
 	local r2 = row(page)
 	toggle(r2, "推进", enabled, function(v) enabled = v; save("drift", v) end, 0.5)
-	btn(r2, "重绑踏板", bindPedals, 0.5)
-	local r3 = row(page, 36)
-	hold(r3, "▲ 油门", function(v) w = v end, 0.5)
-	hold(r3, "▼ 刹车", function(v) s = v end, 0.5)
+	btn(r2, "自动找踏板", function() autoBind(true) end, 0.5)
+	local r3 = row(page)
+	btn(r3, "选刹车", function() pick(1) end, 0.5)
+	btn(r3, "选油门", function() pick(2) end, 0.5)
+	local r4 = row(page, 36)
+	hold(r4, "▲ 油门", function(v) w = v end, 0.5)
+	hold(r4, "▼ 刹车", function(v) s = v end, 0.5)
 	status = text(page, "…")
 	task.spawn(function()
 		local pg = me:WaitForChild("PlayerGui")
-		on(pg.ChildAdded, function(c) if c.Name == "MobilePedals" then task.delay(0.2, bindPedals) end end)
-		bindPedals()
+		on(pg.ChildAdded, function(c) if c.Name == "MobilePedals" then task.delay(0.2, autoBind) end end)
+		autoBind()
+		while alive do -- 没绑上就每秒自己再试: 不用手动点, 也不怕游戏晚点才生成 UI
+			task.wait(1)
+			prune()
+			if enabled and (not pedalRoot or not pedalRoot.Parent or not slotLive(1) or not slotLive(2)) then autoBind() end
+		end
 	end)
 
-	DBG.drift = function() return "on=" .. tostring(enabled) .. " w=" .. tostring(w) .. " s=" .. tostring(s) .. " pedals=" .. #pedalConns end
-	return function() if att then att:Destroy() end; for _, c in ipairs(pedalConns) do c:Disconnect() end end
+	INFO.drift = function() return "推进=" .. tostring(enabled) .. " 油门=" .. tostring(w) .. " 刹车=" .. tostring(s) .. " " .. slotsText() .. " 状态=" .. tostring(status and status.Text) end
+	return function() if att then att:Destroy() end; for _, sl in pairs(slots) do for _, c in ipairs(sl.conns) do c:Disconnect() end end end
 end }
+
 
 -- ═════════ hud: 数据条 / 速度箭头 / 玩家 ESP (原生 Highlight + BillboardGui) ═════════
 MODS[#MODS + 1] = { name = "hud", tab = "显", fn = function(page)
@@ -497,7 +715,7 @@ MODS[#MODS + 1] = { name = "hud", tab = "显", fn = function(page)
 		if showBar then
 			local pos = r and string.format("%.0f %.0f %.0f", r.Position.X, r.Position.Y, r.Position.Z) or "-"
 			bar.Text = string.format("<font color='#89dceb'>%.0fms</font>  <font color='%s'>%.0ffps</font>  <font color='#c8b4eb'>%.0fMB</font>  <font color='#ebc896'>%s</font>  <font color='#eb96aa'>%d/%d</font>  <font color='#d2d4de'>%s</font>",
-				me:GetNetworkPing() * 1000, fps >= 50 and "#aae696" or "#eb7878", fps, Stats:GetTotalMemoryUsageMb(), os.date("%H:%M"), #Players:GetPlayers(), Players.MaxPlayers, pos)
+				me:GetNetworkPing() * 1000, fps >= 50 and "#aae696" or "#eb7878", fps, Stats:GetTotalMemoryUsageMb(), clock(), #Players:GetPlayers(), Players.MaxPlayers, pos)
 		end
 		for pl, e in pairs(esp) do
 			local c = pl.Character
@@ -517,26 +735,25 @@ MODS[#MODS + 1] = { name = "hud", tab = "显", fn = function(page)
 	toggle(r1, "数据条", showBar, function(v) showBar = v; save("stats", v) end, 0.5)
 	toggle(r1, "速度箭头", showArrow, function(v) showArrow = v; save("arrow", v) end, 0.5)
 	toggle(page, "玩家 ESP", showEsp, function(v) showEsp = v; save("esp", v) end)
+	btn(page, "复制状态", function() setclipboard(Http:JSONEncode(saved)); toast("配置已复制") end)
 
-	DBG.hud = function() return string.format("fps=%.0f players=%d", fps, #Players:GetPlayers()) end
+	INFO.hud = function() return string.format("数据条=%s 箭头=%s ESP=%s", tostring(showBar), tostring(showArrow), tostring(showEsp)) end
 	return function() for pl in pairs(esp) do espDrop(pl) end end
 end }
 
--- ═════════ log: 各模块状态定时追加到 Selfblox_log.txt ═════════
+-- ═════════ log: 配置 + 各模块状态定时追加到 Selfblox_log.txt ═════════
 MODS[#MODS + 1] = { name = "log", tab = "志", fn = function(page)
 	local S = { int = opt("logint", 2), max = opt("logmax", 512) }
 	local F, run, n, written = "Selfblox_log.txt", false, 0, 0
-	if not (appendfile and writefile) then text(page, "执行器没有 appendfile/writefile"); return end
 	local status = text(page, "开 录制 后写 " .. F)
-	local function head() local h = "---- Selfblox " .. os.date("%Y-%m-%d %H:%M:%S") .. " ----\n"; writefile(F, h); written = #h end
+	local function head() local h = "---- Selfblox " .. os.date("%Y-%m-%d ") .. clock(true) .. " ----\n"; writefile(F, h); written = #h end
 	task.spawn(function()
 		while alive do
 			task.wait(S.int)
-			if run and alive then
-				local L = {}
-				for name, fn in pairs(DBG) do local ok, s = pcall(fn); L[#L + 1] = name .. ": " .. tostring(s) end -- 别的模块 dump 炸了日志照写
-				table.sort(L)
-				local txt = "[" .. os.date("%H:%M:%S") .. "] #" .. n .. "\n" .. table.concat(L, "\n") .. "\n"
+			if run then
+				local L = { "[" .. clock(true) .. "] #" .. n, "配置 " .. Http:JSONEncode(saved) } -- 数值不用各模块自己拼, 这里全有
+				for _, m in ipairs(MODS) do if INFO[m.name] then L[#L + 1] = m.name .. " " .. INFO[m.name]() end end
+				local txt = table.concat(L, "\n") .. "\n"
 				if written == 0 or written + #txt > S.max * 1024 then head() end -- ponytail: 超限直接重写, 不归档; 要历史自己复制文件
 				appendfile(F, txt)
 				n, written = n + 1, written + #txt
@@ -544,9 +761,10 @@ MODS[#MODS + 1] = { name = "log", tab = "志", fn = function(page)
 			end
 		end
 	end)
+	btn(page, "诊断打包 (整机快照 → 剪贴板)", function() if dumpNow then dumpNow() end end)
 	local r1 = row(page)
-	num(r1, "间隔s", function() return S.int end, function(v) S.int = v; save("logint", v) end, 0.5)
-	num(r1, "上限KB", function() return S.max end, function(v) S.max = v; save("logmax", v) end, 0.5)
+	num(r1, "间隔s", S, "int", 0.5, "logint")
+	num(r1, "上限KB", S, "max", 0.5, "logmax")
 	toggle(page, "录制", false, function(v) run = v end)
 end }
 
@@ -574,7 +792,7 @@ MODS[#MODS + 1] = { name = "plane", tab = "机", fn = function(page)
 		return tostring(v)
 	end
 	local function args(a) local o = {}; for i = 1, a.n do o[i] = fmt(a[i]) end; return table.concat(o, ", ") end
-	local function push(log, s) log[#log + 1] = os.date("%H:%M:%S ") .. s; if #log > 200 then table.remove(log, 1) end end
+	local function push(log, s) log[#log + 1] = clock(true) .. " " .. s; if #log > 200 then table.remove(log, 1) end end
 	local function team(p) -- 属性 → Value → 乘员队伍 → 名字 → 最大部件颜色最接近的 Team
 		for k, v in pairs(p.model:GetAttributes()) do if hint(k, TEAMK) then return tostring(v), "attr:" .. k end end
 		if p.teamVal then return p.teamVal, "value" end
@@ -635,9 +853,7 @@ MODS[#MODS + 1] = { name = "plane", tab = "机", fn = function(page)
 	end
 	local function setSpy(v)
 		if v and not oldNC then
-			if not (hookmetamethod and getnamecallmethod) then toast("执行器没有 hookmetamethod"); return false end
-			local wrap = newcclosure or function(f) return f end
-			oldNC = hookmetamethod(game, "__namecall", wrap(function(self, ...)
+			oldNC = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
 				local m = getnamecallmethod()
 				if spyOn and (m == "FireServer" or m == "InvokeServer") then
 					local a = table.pack(...)
@@ -673,7 +889,7 @@ MODS[#MODS + 1] = { name = "plane", tab = "机", fn = function(page)
 		status.Text = "飞机 " .. #planes .. " · Remote " .. #remotes .. " · 发 " .. #sent .. " 收 " .. #got
 	end
 	local function report()
-		local L = { "==== PLANE " .. os.date("%Y-%m-%d %H:%M:%S") .. " place=" .. game.PlaceId .. " me=" .. me.Name .. " team=" .. (me.Team and me.Team.Name or "-") .. " ====", "-- 飞机 " .. #planes }
+		local L = { "==== PLANE " .. os.date("%Y-%m-%d ") .. clock(true) .. " place=" .. game.PlaceId .. " me=" .. me.Name .. " team=" .. (me.Team and me.Team.Name or "-") .. " ====", "-- 飞机 " .. #planes }
 		for _, p in ipairs(planes) do
 			L[#L + 1] = "[" .. p.score .. "] " .. p.path .. (p.mine and " ★我" or "") .. " | 座:" .. (p.seat and "有" or "无") .. " 翼:" .. p.wings .. " 件:" .. p.parts .. " | 队:" .. p.team .. "(" .. p.src .. ")" .. (p.occ and " 乘员:" .. p.occ.Name or "")
 			for k, v in pairs(p.model:GetAttributes()) do L[#L + 1] = "    attr " .. k .. "=" .. fmt(v) end
@@ -686,8 +902,8 @@ MODS[#MODS + 1] = { name = "plane", tab = "机", fn = function(page)
 		L[#L + 1] = "-- 收 " .. #got
 		for _, s in ipairs(got) do L[#L + 1] = "  " .. s end
 		local txt = table.concat(L, "\n")
-		if writefile then writefile("plane_debug.txt", txt) end
-		if setclipboard then setclipboard(txt) end
+		writefile("plane_debug.txt", txt)
+		setclipboard(txt)
 		toast("报告 " .. #L .. " 行 → plane_debug.txt / 剪贴板")
 	end
 
@@ -695,8 +911,7 @@ MODS[#MODS + 1] = { name = "plane", tab = "机", fn = function(page)
 	btn(r1, "重扫", scan, 0.5)
 	btn(r1, "写报告", report, 0.5)
 	local r2 = row(page)
-	local spyT
-	spyT = toggle(r2, "发侦听", false, function(v) if not setSpy(v) then spyT(false) end end, 0.5)
+	toggle(r2, "发侦听", false, setSpy, 0.5)
 	toggle(r2, "收侦听", false, setWatch, 0.5)
 	local r3 = row(page)
 	toggle(r3, "高亮", false, function(v) hlOn = v; highlight() end, 0.5)
@@ -707,7 +922,7 @@ MODS[#MODS + 1] = { name = "plane", tab = "机", fn = function(page)
 	status = text(page, "上机 → 发侦听 → 开几枪 → 写报告")
 	task.spawn(function() while alive do task.wait(5); if autoOn and alive then scan(); report() end end end)
 
-	DBG.plane = function() return "planes=" .. #planes .. " remotes=" .. #remotes .. " sent=" .. #sent .. " got=" .. #got .. " spy=" .. tostring(spyOn) end
+	INFO.plane = function() return "飞机=" .. #planes .. " Remote=" .. #remotes .. " 发=" .. #sent .. " 收=" .. #got .. " 侦听=" .. tostring(spyOn) end
 	return function() setWatch(false); hlOn = false; highlight(); if oldNC then hookmetamethod(game, "__namecall", oldNC) end end
 end }
 
@@ -748,11 +963,13 @@ MODS[#MODS + 1] = { name = "brick", tab = "砖", fn = function(page)
 	end
 	setRun = toggle(page, "刷砖", false, function(v) run = v; if v then task.spawn(loop) end end)
 	local r1 = row(page)
-	num(r1, "批次", function() return S.batch end, function(v) S.batch = v; save("bbatch", v) end, 0.5)
-	num(r1, "间隔", function() return S.int end, function(v) S.int = v; save("bint", v) end, 0.5)
+	num(r1, "批次", S, "batch", 0.5, "bbatch")
+	num(r1, "间隔", S, "int", 0.5, "bint")
+	local r2 = row(page)
+	num(r2, "排空间隔", S, "drain", nil, "bdrain")
 	status = text(page, "BitFarmer 专用")
 
-	DBG.brick = function() return "run=" .. tostring(run) .. " cycles=" .. st.cycles .. " earned=" .. st.earned .. " rate=" .. string.format("%.1f", st.rate) end
+	INFO.brick = function() return string.format("刷=%s 周期=%d 已刷=%.0f 速率=%.1f/s", tostring(run), st.cycles, st.earned, st.rate) end
 	return function() run = false end
 end }
 
@@ -765,13 +982,35 @@ local function show(name)
 end
 for _, m in ipairs(active) do
 	local page = mk("Frame", { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1, Visible = false, LayoutOrder = ord() }, body)
-	mk("UIListLayout", { Padding = UDim.new(0, 1) }, page)
+	mk("UIListLayout", { Padding = UDim.new(0, 0) }, page)
 	pages[m.name] = page
 	tabBtns[m.name] = btn(tabs, m.tab, function() show(m.name) end, 1 / #active)
 	local ok, stop = pcall(m.fn, page) -- 一个模块炸了不拖死其他模块
 	if ok then stops[#stops + 1] = stop else warn("[Selfblox] " .. m.name .. ": " .. tostring(stop)); text(page, "出错: " .. tostring(stop)) end
 end
 if #active > 0 then show(pages[opt("tab", "moc")] and opt("tab", "moc") or active[1].name) end
+
+local function dumpLines()
+	local L = { "==== SELFblox 诊断 " .. os.date("%Y-%m-%d ") .. clock(true) .. " ====",
+		"脚本=v13 页签=" .. tostring(saved.tab) .. " place=" .. game.PlaceId .. " 地图=" .. tostring(game.Name),
+		"配置 " .. Http:JSONEncode(saved),
+		"执行器 isfile=" .. tostring(isfile ~= nil) .. " writefile=" .. tostring(writefile ~= nil) .. " appendfile=" .. tostring(appendfile ~= nil) .. " setclipboard=" .. tostring(setclipboard ~= nil) .. " gethui=" .. tostring(gethui ~= nil) .. " hookmetamethod=" .. tostring(hookmetamethod ~= nil) .. " newcclosure=" .. tostring(newcclosure ~= nil) .. " getnamecallmethod=" .. tostring(getnamecallmethod ~= nil),
+		"角色 " .. tostring(me.Name) .. " 队=" .. tostring(me.Team and me.Team.Name) .. " 坐=" .. tostring(hum() and hum().SeatPart and (hum().SeatPart:GetFullName())) .. " 根=" .. tostring(root() and root().Anchored) }
+	local r = root()
+	if r then L[#L + 1] = string.format("角色 位置=(%.0f,%.0f,%.0f) 速度=%.0f 血=%s", r.Position.X, r.Position.Y, r.Position.Z, r.AssemblyLinearVelocity.Magnitude, tostring(hum() and hum().Health)) end
+	L[#L + 1] = "-- 模块状态"
+	for _, m in ipairs(MODS) do if INFO[m.name] then local o, v = pcall(INFO[m.name]); L[#L + 1] = "  " .. m.name .. " " .. (o and tostring(v) or ("INFO 报错: " .. tostring(v))) end end
+	for k, f in pairs(DUMP) do local o, lines = pcall(f); L[#L + 1] = "-- " .. k .. " dump"; if o then for _, x in ipairs(lines) do L[#L + 1] = "  " .. tostring(x) end else L[#L + 1] = "  dump 报错: " .. tostring(lines) end end
+	if isfile("Selfblox_log.txt") then local t = readfile("Selfblox_log.txt") or ""; L[#L + 1] = "-- 日志尾部"; L[#L + 1] = t:sub(-1500) end
+	return L
+end
+dumpNow = function()
+	local txt = table.concat(dumpLines(), "\n")
+	writefile("selfblox_dump.txt", txt)
+	setclipboard(txt)
+	toast("诊断 " .. #txt .. " 字节 → selfblox_dump.txt / 剪贴板")
+end
+_G.SB_DUMP = dumpNow
 
 _G.SB_UNLOAD = function()
 	alive = false
@@ -781,4 +1020,4 @@ _G.SB_UNLOAD = function()
 	FX:Destroy()
 	_G.SB_UNLOAD = nil
 end
-print("[Selfblox] v12 · " .. #active .. " 模块 · _G.SB_UNLOAD() 卸载")
+print("[Selfblox] v13 · " .. #active .. " 模块 · _G.SB_UNLOAD() 卸载")
