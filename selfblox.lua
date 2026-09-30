@@ -113,7 +113,7 @@ on(title.InputEnded, function(i)
 end)
 local tabs = row(body)
 
-local toastL = mk("TextLabel", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 22), Size = UDim2.fromOffset(0, 24), AutomaticSize = Enum.AutomaticSize.X, BackgroundColor3 = BG, BackgroundTransparency = 0.2, BorderSizePixel = 0, Font = FONT, TextSize = 13, TextColor3 = WHITE, Visible = false }, gui)
+local toastL = mk("TextLabel", { Name = "SB_Toast", AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 22), Size = UDim2.fromOffset(0, 24), AutomaticSize = Enum.AutomaticSize.X, BackgroundColor3 = BG, BackgroundTransparency = 0.2, BorderSizePixel = 0, Font = FONT, TextSize = 13, TextColor3 = WHITE, Visible = false }, gui)
 mk("UIPadding", { PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10) }, toastL)
 local toastN = 0
 local function toast(s) toastN = toastN + 1; local n = toastN; toastL.Text, toastL.Visible = s, true; task.delay(2, function() if toastN == n then toastL.Visible = false end end) end
@@ -241,7 +241,7 @@ end }
 
 -- ═════════ sibs: 载具 (坐着 = 控制座位所在装配体; 没坐 = 准星"换车"锁定) ═════════
 MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
-	local S = { acc = opt("acc", 500), grip = opt("grip", 5), turn = opt("turn", 2.2), cap = opt("turncap", 1), fly = opt("carfly", 60), horn = opt("hornkey", "H") }
+	local S = { acc = opt("acc", 500), grip = opt("grip", 5), turn = opt("turn", 2.2), cap = opt("turncap", 1), fly = opt("carfly", 60), horn = opt("hornkey", "H"), maxstuds = opt("carmaxstuds", 150) } -- maxstuds: 多大的 Model 还算"一辆车"(超过就不当成载具容器)
 	local picked, pickSeat, curSeat, curMax, att, vf, lv, status, clipModel, setBrake, lastCar
 	local accel, decel, up, down, cruise, brake, flying, lampOn, target, statT = false, false, false, false, false, false, false, false, 0, 0
 	local clip = opt("carclip", false)
@@ -255,11 +255,24 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 		if s then return s.AssemblyRootPart, s end
 		if picked and picked:IsDescendantOf(workspace) then return picked, pickSeat end
 	end
-	local function model() -- 载具模型: 座位/锁定件往上到最外层 Model
-		local p, s = part()
-		local m = (s or p) and (s or p):FindFirstAncestorOfClass("Model")
-		while m and m.Parent and m.Parent:IsA("Model") do m = m.Parent end -- ponytail: 游戏把所有车套在一个大 Model 里会拿到整个容器
-		return m
+	local function scopeOf(p) -- 载具范围: 往上第一个"带座位"的 Model; 没有就取最近一个"尺寸像载具"的 Model; 绝不爬到整个街区
+		if not p then return nil end
+		local best, node = nil, p:FindFirstAncestorOfClass("Model")
+		while node do
+			if node:FindFirstChildWhichIsA("Seat", true) then return node end
+			if not best then
+				local sz = node:GetExtentsSize()
+				if math.max(sz.X, sz.Y, sz.Z) <= S.maxstuds then best = node end
+			end
+			node = node:FindFirstAncestorOfClass("Model")
+		end
+		return best
+	end
+	local cacheP, cacheM
+	local function model() -- 缓存: 只有换部件时才重算, 不然每帧扫祖先太贵
+		local p = part()
+		if p ~= cacheP then cacheP, cacheM = p, scopeOf(p) end
+		return cacheM
 	end
 	local function facing() local p, s = part(); return p and (flat((s or p).CFrame.LookVector) or Vector3.zAxis) end
 	local function attach(p)
@@ -322,21 +335,27 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 		rp.FilterDescendantsInstances = { me.Character }
 		local hit = workspace:Raycast(cam.CFrame.Position, cam.CFrame.LookVector * 5000, rp)
 		if not hit then toast("准星前面没东西"); return end
-		local m = hit.Instance:FindFirstAncestorOfClass("Model")
-		while m and m.Parent and m.Parent:IsA("Model") do m = m.Parent end
-		local s = m and (m:FindFirstChildWhichIsA("VehicleSeat", true) or m:FindFirstChildWhichIsA("Seat", true))
-		local r = (s or hit.Instance).AssemblyRootPart
-		if m and m:FindFirstChildOfClass("Humanoid") then toast("打中的是人, 不是车"); return end
-		if r.Anchored then toast("车被锁死(锚定), 游戏解锁后再锁"); return end
+		local inst = hit.Instance
+		if inst:FindFirstAncestorOfClass("Model") == nil and not inst:IsA("BasePart") then toast("打中的不是部件"); return end
+		local node, seatM = inst:FindFirstAncestorOfClass("Model"), nil
+		while node do -- 往上找最近一个"里面真的有座位"的 Model: 那才是载具
+			if node:FindFirstChildWhichIsA("Seat", true) then seatM = node; break end
+			node = node:FindFirstAncestorOfClass("Model")
+		end
+		local s = seatM and (seatM:FindFirstChildWhichIsA("VehicleSeat", true) or seatM:FindFirstChildWhichIsA("Seat", true))
+		local r = (s or inst).AssemblyRootPart
+		if inst:FindFirstAncestorOfClass("Model") and inst:FindFirstAncestorOfClass("Model"):FindFirstChildOfClass("Humanoid") then toast("打中的是人, 不是车"); return end
+		if r.Anchored then toast("这个还锁着(锚定), 等游戏解锁"); return end
 		picked, pickSeat = r, s
 		dropLamps()
-		toast("锁定 " .. (m and m.Name or hit.Instance.Name))
+		if s then toast("锁定 " .. seatM.Name .. " · 座位 " .. s.Name)
+		else toast("锁定 " .. inst.Name .. " · 没座位(只能推/飞/翻转, 没油门)") end
 	end
 	local function flip()
 		local p, m = part(), model()
-		if not (p and m) then toast("没有载具"); return end
-		local pv = m:GetPivot()
-		m:PivotTo(CFrame.new(pv.Position + Vector3.yAxis * 2) * CFrame.fromAxisAngle(p.CFrame.LookVector, math.pi) * pv.Rotation)
+		if not p then toast("没有载具"); return end
+		local cf = CFrame.new(p.Position + Vector3.yAxis * 2) * CFrame.fromAxisAngle(p.CFrame.LookVector, math.pi)
+		if m then m:PivotTo(cf * m:GetPivot().Rotation) else p.CFrame = cf * p.CFrame.Rotation end -- 没有 Model 也能翻
 		p.AssemblyAngularVelocity = Vector3.zero
 	end
 	local function brakeNow(p, v) p.AssemblyLinearVelocity = Vector3.yAxis * v.Y end -- 急刹: 水平速度直接归零, 比推力快且不吃质量
@@ -384,7 +403,7 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 		attach(p) -- 锚定的车照样绑: 之前 v13 直接 return, 所以"要动一会(等游戏解锁)才能绑上"
 		local anch = p.Anchored -- 锚定 = 引擎不让推, 只能等游戏自己解锁; 滑条转向走 CFrame 照样有效
 		local m = model()
-		if lastCar then lastCar.p, lastCar.s, lastCar.m = p, s, m else lastCar = { p = p, s = s, m = m } end -- 诊断打包用: 哪怕打包时已经下车
+		if lastCar then lastCar.p, lastCar.s, lastCar.m, lastCar.path = p, s, m, p:GetFullName() else lastCar = { p = p, s = s, m = m, path = p:GetFullName() } end -- 诊断打包用: 哪怕打包时已经下车
 		local v = p.AssemblyLinearVelocity
 		local hv = Vector3.new(v.X, 0, v.Z)
 		local spd, mass, fwd = hv.Magnitude, p.AssemblyMass, facing()
@@ -426,6 +445,9 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 		local p, s, cached = part()
 		if not p and lastCar then p, s, cached = lastCar.p, lastCar.s, true end -- 打包时没车也能带出最近一辆的结构
 		if not p then return { "没有载具 (先用 换车 锁定或坐上去, 再点诊断打包)" } end
+		if cached and not (p:IsDescendantOf(workspace)) then
+			return { "最近一辆: " .. tostring(lastCar.path), "  已经不在 workspace 里了(被游戏销毁/回收) → 结构拿不到, 只能在车还在的时候点诊断打包" }
+		end
 		local m = cached and lastCar.m or model()
 		local L = { "==== CAR " .. os.date("%Y-%m-%d ") .. clock(true) .. " place=" .. game.PlaceId .. (cached and " (缓存的最近一辆)" or "") .. " ====",
 			"座位: " .. (s and s:GetFullName() or "-") .. "   根部件: " .. p:GetFullName() .. "   Model: " .. (m and m:GetFullName() or "-"),
@@ -441,6 +463,31 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 					if c:IsA("Light") then L[#L + 1] = "        灯 " .. c.ClassName .. " " .. c.Name .. " Enabled=" .. tostring(c.Enabled)
 					elseif c:IsA("Constraint") or c:IsA("BodyMover") or c:IsA("Attachment") then L[#L + 1] = "        " .. c.ClassName .. " " .. c.Name end
 				end
+			end
+		end
+		-- 准星现在打到什么: 车不听话时这一条最有用
+		local cam = workspace.CurrentCamera
+		rp.FilterDescendantsInstances = { me.Character }
+		local hit = workspace:Raycast(cam.CFrame.Position, cam.CFrame.LookVector * 5000, rp)
+		L[#L + 1] = "-- 准星射线: " .. (hit and (hit.Instance.ClassName .. " " .. hit.Instance:GetFullName()) or "没打到东西")
+		if hit then
+			local chain, x = {}, hit.Instance
+			while x and x ~= workspace do chain[#chain + 1] = x.Name .. "(" .. x.ClassName .. ")"; x = x.Parent end
+			L[#L + 1] = "    祖先: " .. table.concat(chain, " ← ")
+		end
+		L[#L + 1] = "-- 场景里的座位 (最近 8 个)"
+		local seats, seen2 = {}, 0
+		for _, d in ipairs(workspace:GetDescendants()) do
+			seen2 = seen2 + 1
+			if seen2 > 30000 then L[#L + 1] = "    (场景实例超过 3 万, 只扫了前 3 万)" break end
+			if d:IsA("Seat") then local r = d.AssemblyRootPart; seats[#seats + 1] = { d, r and (r.Position - cam.CFrame.Position).Magnitude or 1e9 } end
+		end
+		table.sort(seats, function(a, b) return a[2] < b[2] end)
+		if #seats == 0 then L[#L + 1] = "    一个座位都没有 → 这游戏的车没有座, 客户端推不动它"
+		else
+			for i = 1, math.min(#seats, 8) do
+				local d = seats[i][1]
+				L[#L + 1] = string.format("    %-32s %-12s 距离=%.0f 乘员=%s", d:GetFullName(), d.ClassName, seats[i][2], d.Occupant and (d.Occupant.Parent and d.Occupant.Parent.Name or "?") or "空")
 			end
 		end
 		return L

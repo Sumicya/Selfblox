@@ -86,8 +86,22 @@ function methods.SetAttribute(self, k, v) self.attrs[k] = v end
 function methods.GetAttributes(self) local o = {}; for k, v in pairs(self.attrs) do o[k] = v end; return o end
 function methods.GetPropertyChangedSignal(self, p) local s = self.props["__pcs_" .. p]; if not s then s = Signal.new(); self.props["__pcs_" .. p] = s end; return s end
 function methods.GetPivot(self) return self.props.__pivot or CFrame.new(Vector3.zero) end
+function methods.GetExtentsSize(self)
+	local ext = self.props.__extents
+	if ext then return ext end
+	local mn, mx
+	for _, d in ipairs(methods.GetDescendants(self)) do
+		if methods.IsA(d, "BasePart") then
+			local p, sz = d.Position or Vector3.zero, d.Size or Vector3.new(1, 1, 1)
+			mn = mn and Vector3.new(math.min(mn.X, p.X), math.min(mn.Y, p.Y), math.min(mn.Z, p.Z)) or Vector3.new(p.X, p.Y, p.Z)
+			mx = mx and Vector3.new(math.max(mx.X, p.X), math.max(mx.Y, p.Y), math.max(mx.Z, p.Z)) or Vector3.new(p.X, p.Y, p.Z)
+		end
+	end
+	if not mn then return Vector3.new(1, 1, 1) end
+	return Vector3.new(math.max(mx.X - mn.X, 1), math.max(mx.Y - mn.Y, 1), math.max(mx.Z - mn.Z, 1))
+end
 function methods.PivotTo(self, cf) self.props.__pivot = cf end
-function methods.Raycast() return nil end
+function methods.Raycast(self, o, d) local h = _G.__rayHit; if h then return { Instance = h.Instance, Position = o, Distance = 10 } end end
 function methods.Clone(self) return inst(self.ClassName, self.props) end
 function methods.WorldToViewportPoint(self, v) return Vector3.new(100, 200, 10), true end
 function methods.ChangeState() end
@@ -276,6 +290,13 @@ local carBody = inst("Part", { Name = "Body", CanCollide = true, Anchored = fals
 carBody.props.AssemblyRootPart = seat
 seat.Parent, carBody.Parent = car, car
 car.Parent = workspace
+local street = inst("Model", { Name = "Street", __extents = Vector3.new(4000, 200, 4000) }) -- 整个街区: 绝不能当成一辆车
+local truck = inst("Model", { Name = "Truck", __extents = Vector3.new(6, 2, 12) })
+local truckBed = inst("Part", { Name = "Primary", CanCollide = true, Anchored = false, Size = Vector3.new(4, 1, 16), Position = Vector3.new(60, 5, 0), CFrame = CFrame.new(Vector3.new(60, 5, 0)), AssemblyLinearVelocity = Vector3.zero, AssemblyMass = 1 })
+truckBed.props.AssemblyRootPart = truckBed
+truckBed.Parent = truck
+truck.Parent = street
+street.Parent = workspace
 
 -- ───────── 假执行器: 文件 / 剪贴板 / 钩子 / task / JSON ─────────
 local VFS, CLIP = {}, nil
@@ -384,6 +405,7 @@ local function tabs() return _G.__SVC.CoreGui:FindFirstChild("Selfblox") end
 local function all() local g = tabs(); return g and g:GetDescendants() or {} end
 local function buttons() local o = {}; for _, d in ipairs(all()) do if d:IsA("TextButton") and d.Text ~= "–" and d.Text ~= "+" then o[#o + 1] = d end end; return o end
 local function findBtn(prefix) for _, b in ipairs(buttons()) do if b.Text:sub(1, #prefix) == prefix then return b end end end
+local function toastText() local t = tabs() and tabs():FindFirstChild("SB_Toast"); return t and t.Text or "" end
 local function input(kind) return { UserInputType = Enum.UserInputType[kind] } end
 local function ends(s, suf) return #s >= #suf and s:sub(-#suf) == suf end
 local function starts(s, pre) return s:sub(1, #pre) == pre end
@@ -651,6 +673,29 @@ for _, b in ipairs(buttons()) do if ends(b.Text, " 开") then click(b); flipped 
 step(1 / 60, 10)
 ok(true, "按住/松开 " .. held .. " 个按钮 + 全开全关走完没炸")
 ok(_G.__SVC.VirtualInputManager.props.keys ~= nil, "喇叭真的发了按键事件")
+
+print("\n[6f] 载具范围: 街区的 Model 不能当车 (你的游戏就是这种结构)")
+humanoid.props.SeatPart = nil -- 走"准星锁定"这条路(你那台卡车就是这样), 不然 part() 会优先用座位
+step(1 / 60, 3)
+_G.__rayHit = { Instance = truckBed }
+click(findBtn("换车"))
+step(1 / 60, 5)
+local toastNoSeat = toastText() -- 先抓提示, 下面打包会把提示条覆盖掉
+if _G.SB_DUMP then _G.SB_DUMP() end
+local dumpCar = VFS["selfblox_dump.txt"]
+ok(dumpCar and dumpCar:find("Model: Street", 1, true) == nil, "载具范围不是整个街区 Street")
+ok(dumpCar and dumpCar:find("Truck", 1, true) ~= nil, "锁到的是 Truck 那层")
+ok(toastNoSeat:find("没座位", 1, true) ~= nil, "提示如实说明「没座位」(当时提示: " .. toastNoSeat .. ")")
+ok(dumpCar and dumpCar:find("座位: -", 1, true) ~= nil, "快照里座位一栏是空的")
+ok(dumpCar and dumpCar:find("准星射线", 1, true) ~= nil and dumpCar:find("祖先: ", 1, true) ~= nil, "快照里有准星射线 + 祖先链")
+ok(dumpCar and dumpCar:find("场景里的座位", 1, true) ~= nil, "快照里有场景座位清单")
+_G.__rayHit = { Instance = seat } -- 换回真车: 带座位的那种
+click(findBtn("换车"))
+step(1 / 60, 5)
+local toastSeat = toastText()
+if _G.SB_DUMP then _G.SB_DUMP() end
+ok(toastSeat:find("座位 Seat", 1, true) ~= nil, "有座位时提示带座位名 (当时提示: " .. toastSeat .. ")")
+_G.__rayHit = nil
 
 print("\n[7b] 诊断打包")
 humanoid.props.SeatPart = nil -- 下车了: 车结构要靠缓存带出去
