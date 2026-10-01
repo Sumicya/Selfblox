@@ -26,6 +26,73 @@ local methods = {}
 local SIGNALS = {}
 for _, n in ipairs({ "Activated", "InputBegan", "InputEnded", "FocusLost", "Focused", "DragStart", "DragContinue", "DragEnd", "ChildAdded", "ChildRemoved", "DescendantAdded", "DescendantRemoving", "PlayerAdded", "PlayerRemoving", "PreSimulation", "PreRender", "Heartbeat", "RenderStepped", "JumpRequest", "OnClientEvent", "Changed", "Destroying" }) do SIGNALS[n] = true end
 local STRICT = { UIDragDetector = { DragStart = true, DragContinue = true, DragEnd = true } } -- 官方文档(classes/UIDragDetector): 这个类的事件只有这三个. 对它严格: 读到别的成员就和真引擎一样直接抛错 —— v13 的 DragBegin 就是被"什么名字都认"的假引擎放过去的
+-- ───────── 成员白名单: 脚本只许碰"对照官方文档核对过"的成员 ─────────
+-- 假引擎原来什么名字都认, DragBegin / GetMoveVector 这种官方根本没有的成员就这样溜过了测试. 现在没核对过的一碰就抛错.
+-- 新增成员时: 先去 create.roblox.com/docs/reference/engine/classes/<类> 确认它存在 (官方没文档的内部服务, 如 VirtualInputManager, 看 robloxapi.github.io/ref/class/<类>.html), 再加进来. 没列出的类不检查.
+local function words(s) local t = {}; for w in s:gmatch("%S+") do t[w] = true end; return t end
+local function fromScript(level) -- 谁在访问: selfblox.lua 的代码 (chunk 名 selfblox*) 还是测试自己
+	local ii = debug.getinfo(level or 4, "S")
+	return ii ~= nil and (ii.short_src or ""):find('^%[string "selfblox') ~= nil
+end
+local INSTANCE_OK = words("ChildAdded DescendantAdded Destroy FindFirstAncestorOfClass FindFirstChild FindFirstChildOfClass FindFirstChildWhichIsA GetChildren GetDescendants GetFullName GetPropertyChangedSignal IsA IsDescendantOf Name Parent WaitForChild") -- Instance / Object 上的公共成员
+local VERIFIED = {
+	AlignOrientation = words("Attachment0 CFrame MaxTorque Mode Responsiveness"),
+	Attachment = words(""),
+	Camera = words("CFrame ViewportSize WorldToViewportPoint"),
+	ColorCorrectionEffect = words("Brightness Contrast Saturation"),
+	Folder = words(""),
+	Frame = words("AbsolutePosition Active AnchorPoint AutomaticSize BackgroundColor3 BackgroundTransparency BorderSizePixel LayoutOrder Position Rotation Size Visible ZIndex"),
+	HttpService = words("JSONDecode JSONEncode"),
+	Humanoid = words("ChangeState Health JumpHeight JumpPower MoveDirection PlatformStand SeatPart UseJumpPower WalkSpeed"),
+	ImageButton = words("AbsolutePosition AbsoluteSize InputBegan InputEnded Visible"),
+	Lighting = words("Ambient Brightness FogEnd GlobalShadows OutdoorAmbient"),
+	LinearVelocity = words("Attachment0 MaxForce RelativeTo VectorVelocity"),
+	Model = words("GetExtentsSize"),
+	Part = words("Anchored AssemblyLinearVelocity AssemblyMass AssemblyRootPart CFrame CanCollide GetConnectedParts Position Size"),
+	Player = words("Character GetNetworkPing Team"),
+	PlayerGui = words("GetGuiObjectsAtPosition"),
+	Players = words("GetPlayers LocalPlayer MaxPlayers PlayerAdded PlayerRemoving"),
+	ReplicatedStorage = words(""),
+	RunService = words("PreRender PreSimulation"),
+	ScreenGui = words("DisplayOrder IgnoreGuiInset ResetOnSpawn"),
+	Seat = words("Anchored AssemblyLinearVelocity AssemblyMass AssemblyRootPart CFrame Occupant Position"),
+	SpotLight = words("Angle Brightness Color Enabled Face Range"),
+	Stats = words("GetTotalMemoryUsageMb"),
+	TextBox = words("BackgroundTransparency ClearTextOnFocus FocusLost Font Position Size Text TextColor3 TextSize TextXAlignment TextYAlignment"),
+	TextButton = words("AbsolutePosition AbsoluteSize Activated AutoButtonColor BackgroundColor3 BackgroundTransparency BorderSizePixel Font InputBegan InputEnded LayoutOrder Position Size Text TextColor3 TextSize TextXAlignment TextYAlignment Visible"),
+	TextLabel = words("AbsolutePosition AnchorPoint AutomaticSize BackgroundColor3 BackgroundTransparency BorderSizePixel Font InputBegan InputEnded LayoutOrder Position RichText Size Text TextColor3 TextSize TextStrokeTransparency TextWrapped TextXAlignment TextYAlignment Visible"),
+	UICorner = words("CornerRadius"),
+	UIDragDetector = words("BoundingUI DragAxis DragContinue DragEnd DragStart DragStyle"),
+	UIListLayout = words("FillDirection Padding"),
+	UIPadding = words("PaddingLeft PaddingRight"),
+	UserInputService = words("InputBegan JumpRequest"),
+	VectorForce = words("ApplyAtCenterOfMass Attachment0 Force RelativeTo"),
+	VehicleSeat = words("Anchored AssemblyLinearVelocity AssemblyMass AssemblyRootPart CFrame CanCollide GetConnectedParts MaxSpeed Occupant Position Size Steer Throttle Torque"),
+	VirtualInputManager = words("SendKeyEvent SendMouseButtonEvent SendMouseMoveEvent"),
+	Workspace = words("CurrentCamera GetPartBoundsInRadius Raycast"),
+}
+local ENUM_OK = { -- 枚举字面量 (KeyCode 是按配置字符串动态取的, 不检查)
+	ActuatorRelativeTo = words("World"),
+	AutomaticSize = words("X Y"),
+	FillDirection = words("Horizontal"),
+	Font = words("Gotham GothamBold"),
+	HighlightDepthMode = words("AlwaysOnTop"),
+	HumanoidStateType = words("Jumping"),
+	NormalId = words("Back Front"),
+	OrientationAlignmentMode = words("OneAttachment"),
+	RaycastFilterType = words("Exclude"),
+	TextXAlignment = words("Center"),
+	TextYAlignment = words("Center"),
+	UIDragDetectorDragStyle = words("TranslateLine"),
+	UserInputType = words("MouseButton1 Touch"),
+}
+local function guardMember(t, k) -- 读/写实例成员时调用
+	local cls = rawget(t, "ClassName")
+	local allow = VERIFIED[cls]
+	if allow and type(k) == "string" and not allow[k] and not INSTANCE_OK[k] and fromScript() then
+		error(cls .. "." .. k .. " 没对照官方文档核对过 (不在 VERIFIED 里): 先确认它真的存在, 再加进来", 3)
+	end
+end
 local Signal = {}
 Signal.__index = Signal
 function Signal.new() return setmetatable({ hs = {} }, Signal) end
@@ -40,7 +107,7 @@ function Signal:Once(fn) local c = self:Connect(function(...) c:Disconnect(); fn
 function Signal:Fire(...) for _, c in ipairs(self.hs) do if c.on then c.fn(...) end end end
 
 local ISA = {
-	Part = { "BasePart" }, MeshPart = { "BasePart" }, VehicleSeat = { "Seat", "BasePart" }, Seat = { "BasePart" },
+	Part = { "BasePart" }, MeshPart = { "BasePart" }, VehicleSeat = { "BasePart" }, Seat = { "Part", "BasePart" }, -- 官方继承链: VehicleSeat 直接挂在 BasePart 下, 不是 Seat (假引擎原来写成 Seat, 把脚本里"只查 Seat"的 bug 藏住了)
 	SpotLight = { "Light" }, PointLight = { "Light" }, SurfaceLight = { "Light" },
 	TextButton = { "GuiButton", "GuiObject" }, ImageButton = { "GuiButton", "GuiObject" }, TextLabel = { "GuiObject" }, TextBox = { "GuiObject" }, Frame = { "GuiObject" },
 	ScreenGui = { "LayerCollector" }, BillboardGui = { "LayerCollector" },
@@ -80,7 +147,7 @@ function methods.FindFirstChildWhichIsA(self, cls, recur)
 end
 function methods.WaitForChild(self, name) return methods.FindFirstChild(self, name) end
 function methods.FindFirstAncestorOfClass(self, cls) local p = rawget(self, "parent"); while p do if methods.IsA(p, cls) then return p end; p = rawget(p, "parent") end end
-function methods.IsDescendantOf(self, x) local p = rawget(self, "parent"); while p do if p == x then return true end; p = rawget(p, "parent") end; return false end
+function methods.IsDescendantOf(self, x) if x == nil then error("Argument 1 missing or nil", 2) end local p = rawget(self, "parent"); while p do if p == x then return true end; p = rawget(p, "parent") end; return false end
 function methods.GetFullName(self) local p = rawget(self, "parent"); return (p and (methods.GetFullName(p) .. ".") or "") .. tostring(self.Name) end
 function methods.GetAttribute(self, k) return self.attrs[k] end
 function methods.SetAttribute(self, k, v) self.attrs[k] = v end
@@ -102,17 +169,29 @@ function methods.GetExtentsSize(self)
 	return Vector3.new(math.max(mx.X - mn.X, 1), math.max(mx.Y - mn.Y, 1), math.max(mx.Z - mn.Z, 1))
 end
 function methods.PivotTo(self, cf) self.props.__pivot = cf end
-function methods.Raycast(self, o, d) local h = _G.__rayHit; if h then return { Instance = h.Instance, Position = o, Distance = 10 } end end
+function methods.Raycast(self, o, d) local h = _G.__rayHit; if h then return { Instance = h.Instance, Position = o, Distance = h.Distance or 10 } end end
 function methods.Clone(self) return inst(self.ClassName, self.props) end
 function methods.WorldToViewportPoint(self, v) return Vector3.new(100, 200, 10), true end
 function methods.ChangeState() end
-function methods.SendKeyEvent(self, ...) self.props.keys = (self.props.keys or 0) + 1 end
-function methods.SendMouseMoveEvent(self, x, y) self.props.mouseMove = { x = x, y = y } end
-function methods.SendMouseButtonEvent(self, x, y, b, down) self.props.mouse = self.props.mouse or {}; self.props.mouse[#self.props.mouse + 1] = { x = x, y = y, down = down } end
-function methods.GetConnectedParts(self) -- 假装配体: 同 Model 里的所有 BasePart
+-- VirtualInputManager 官方没有文档, 签名取自 API 清单 (robloxapi.github.io/ref/class/VirtualInputManager): 参数类型不对, 真引擎抛错, 假引擎也抛 (v13 的 SendMouseMoveEvent 多塞了个 0, 顶掉了 layerCollector)
+local function vimArgs(name, ok_, spec) if not ok_ then error(name .. " 参数类型不对, 应为 " .. spec, 3) end end
+function methods.SendKeyEvent(self, down, key, rep, layer)
+	vimArgs("SendKeyEvent", type(down) == "boolean" and type(key) == "table" and key.EnumType == "KeyCode" and type(rep) == "boolean" and type(layer) == "table", "(isPressed: bool, keyCode: KeyCode, isRepeatedKey: bool, layerCollector: Instance)")
+	self.props.keys = (self.props.keys or 0) + 1
+end
+function methods.SendMouseMoveEvent(self, x, y, layer)
+	vimArgs("SendMouseMoveEvent", type(x) == "number" and type(y) == "number" and type(layer) == "table", "(x: float, y: float, layerCollector: Instance)")
+	self.props.mouseMove = { x = x, y = y }
+end
+function methods.SendMouseButtonEvent(self, x, y, b, down, layer, rep)
+	vimArgs("SendMouseButtonEvent", type(x) == "number" and type(y) == "number" and type(b) == "number" and type(down) == "boolean" and type(layer) == "table" and type(rep) == "number", "(x: int, y: int, mouseButton: int, isDown: bool, layerCollector: Instance, repeatCount: int)")
+	self.props.mouse = self.props.mouse or {}; self.props.mouse[#self.props.mouse + 1] = { x = x, y = y, down = down }
+end
+function methods.GetConnectedParts(self) -- 假装配体: 同 Model 里 AssemblyRootPart 相同的 BasePart (真引擎只返回焊在一起的, 锚定的停车台/另一个装配体不算)
 	local o, seen = {}, {}
 	local m = methods.FindFirstAncestorOfClass(self, "Model") or self
-	for _, d in ipairs(methods.GetDescendants(m)) do if not seen[d] and methods.IsA(d, "BasePart") then seen[d] = true; o[#o + 1] = d end end
+	local ra = self.props.AssemblyRootPart or self
+	for _, d in ipairs(methods.GetDescendants(m)) do if not seen[d] and methods.IsA(d, "BasePart") and (d.props.AssemblyRootPart or d) == ra then seen[d] = true; o[#o + 1] = d end end
 	if not seen[self] then o[#o + 1] = self end
 	return o
 end
@@ -122,6 +201,7 @@ function methods.GetPartBoundsInRadius() return _G.__radius or {} end
 
 local mt = {
 	__index = function(t, k)
+		guardMember(t, k)
 		if k == "Parent" then return rawget(t, "parent") end
 		local m = methods[k]
 		if m then return m end
@@ -143,6 +223,7 @@ local mt = {
 		return v
 	end,
 	__newindex = function(t, k, v)
+		guardMember(t, k)
 		if k == "Parent" then
 			local old = rawget(t, "parent")
 			if old then for i, c in ipairs(old.children) do if c == t then table.remove(old.children, i); break end end end
@@ -250,7 +331,8 @@ setmetatable(UDim2, { __call = function(_, ...) return UDim2.new(...) end })
 for _, f in ipairs({ "new", "fromOffset", "fromScale" }) do local orig = UDim2[f]; UDim2[f] = function(...) return setmetatable(orig(...), udmt) end end
 
 local Enum = setmetatable({}, { __index = function(t, k)
-	local sub = setmetatable({}, { __index = function(_, v) local item = { Name = v, EnumType = k }; rawset(t[k], v, item); return item end })
+	if k ~= "KeyCode" and not ENUM_OK[k] and fromScript(3) then error("Enum." .. tostring(k) .. " 没对照官方文档核对过 (不在 ENUM_OK 里)", 2) end
+	local sub = setmetatable({}, { __index = function(_, v) if ENUM_OK[k] and not ENUM_OK[k][v] and fromScript(3) then error("Enum." .. k .. "." .. tostring(v) .. " 没对照官方文档核对过 (不在 ENUM_OK 里)", 2) end; local item = { Name = v, EnumType = k }; rawset(t[k], v, item); return item end })
 	rawset(t, k, sub)
 	return sub
 end })
@@ -285,7 +367,7 @@ local pgui = inst("PlayerGui", sig())
 pgui.Parent = player
 svc("Players", inst("Players", { LocalPlayer = player, MaxPlayers = 12, GetPlayers = function() return { player } end, GetPlayerFromCharacter = function(_, c) return c == char and player or nil end, PlayerAdded = Signal.new(), PlayerRemoving = Signal.new() }))
 svc("RunService", inst("RunService", { PreSimulation = Signal.new(), PreRender = Signal.new(), Heartbeat = Signal.new() }))
-svc("UserInputService", inst("UserInputService", { JumpRequest = Signal.new(), TouchEnabled = true, GetMoveVector = function() return Vector3.zero end, GetMouseLocation = function() return Vector2.new(100, 100) end }))
+svc("UserInputService", inst("UserInputService", { JumpRequest = Signal.new(), TouchEnabled = true, GetMouseLocation = function() return Vector2.new(100, 100) end }))
 svc("Lighting", inst("Lighting", { Ambient = Color3.fromRGB(70, 70, 70), OutdoorAmbient = Color3.fromRGB(70, 70, 70), Brightness = 1, FogEnd = 100000, GlobalShadows = true }))
 svc("Stats", inst("Stats", { GetTotalMemoryUsageMb = function() return 512 end }))
 svc("Teams", inst("Teams", { GetTeams = function() return {} end }))
@@ -318,6 +400,27 @@ seat.props.AssemblyRootPart = seat
 local carBody = inst("Part", { Name = "Body", CanCollide = true, Anchored = false, Size = Vector3.new(6, 2, 12), CFrame = CFrame.new(Vector3.new(10, 5, 0)), Position = Vector3.new(10, 5, 0), AssemblyLinearVelocity = Vector3.zero, AssemblyMass = 20, AssemblyRootPart = seat })
 carBody.props.AssemblyRootPart = seat
 seat.Parent, carBody.Parent = car, car
+-- 轮子(车上最低, 底在 y=0) / 影子(本来就不碰撞, 比轮子还低) / 停车台(锚定, 和车在同一个 Model 里) / 装饰件 Sur(自己一个装配体): 穿墙和"座位是共同点"靠这些才测得出来
+local CP = {}
+local function carPart(name, size, pos, extra)
+	local d = inst("Part", { Name = name, CanCollide = true, Anchored = false, Size = size, CFrame = CFrame.new(pos), Position = pos, AssemblyLinearVelocity = Vector3.zero, AssemblyMass = 2 })
+	for k, v in pairs(extra or {}) do d.props[k] = v end
+	d.props.AssemblyRootPart = seat
+	d.Parent = car
+	return d
+end
+CP.wheelL = carPart("Wheel_L", Vector3.new(1, 3, 3), Vector3.new(7, 1.5, 3))
+CP.wheelR = carPart("Wheel_R", Vector3.new(1, 3, 3), Vector3.new(13, 1.5, 3))
+CP.wheelUp = carPart("Wheel_Up", Vector3.new(1, 3, 3), Vector3.new(10, 2.5, 5)) -- 悬挂把这个轮子抬高了 (底在 y=1, 不在最低那圈): 只能靠名字保留
+CP.hubL = carPart("RL", Vector3.new(1, 3, 3), Vector3.new(7, 1.5, -3)) -- 名字里没有 wheel/tire: 只能靠"整车最低"判成轮胎
+CP.hubR = carPart("RR", Vector3.new(1, 3, 3), Vector3.new(13, 1.5, -3))
+CP.shadow = carPart("Shadow", Vector3.new(4, 1, 4), Vector3.new(10, -2.5, 0), { CanCollide = false })
+CP.pad = carPart("Pad", Vector3.new(30, 1, 30), Vector3.new(10, -0.5, 0), { Anchored = true })
+CP.sur = carPart("Sur", Vector3.new(3, 1, 3), Vector3.new(10, 7, 0))
+CP.sur.props.AssemblyRootPart = CP.sur
+CP.pad.props.AssemblyRootPart = CP.pad -- 锚定的停车台自己一个装配体, 不是车的一部分
+CP.fence = carPart("Fence", Vector3.new(1, 6, 20), Vector3.new(30, 6, 0), { Anchored = true }) -- 锚定的栏杆, 在高处: 不是"最低", 碰了就会被穿掉
+CP.fence.props.AssemblyRootPart = CP.fence
 car.Parent = workspace
 local street = inst("Model", { Name = "Street", __extents = Vector3.new(4000, 200, 4000) }) -- 整个街区: 绝不能当成一辆车
 local truck = inst("Model", { Name = "Truck", __extents = Vector3.new(6, 2, 12) })
@@ -577,6 +680,22 @@ NOW = NOW + 0.5
 foldBtn.Activated:Fire(); tdrag.DragStart:Fire(Vector2.new(180, 10)); tdrag.DragEnd:Fire(Vector2.new(180, 10))
 ok(bd.Visible == true, "点 +/- 时拖拽器也响 → 仍然只翻一次 (折回去, 后面要面板开着)")
 
+do
+print("\n[3c] 文字居中: 标签 / 按钮 / 输入框")
+local left, boxes, good = 0, 0, 0
+for _, d in ipairs(all()) do
+	if (d:IsA("TextLabel") or d:IsA("TextButton") or d:IsA("TextBox")) and d.TextXAlignment ~= nil and d.TextXAlignment.Name == "Left" then left = left + 1 end
+	if d:IsA("TextBox") then
+		boxes = boxes + 1
+		local lab = d.Parent:FindFirstChildOfClass("TextLabel")
+		if d.TextXAlignment.Name == "Center" and d.TextYAlignment.Name == "Center" and d.Parent.ClassName == "Frame"
+			and (lab == nil or (lab.Size.X.Scale == 0.5 and d.Position.X.Scale == 0.5 and lab.Text:sub(1, 1) ~= " ")) then good = good + 1 end
+	end
+end
+ok(left == 0, "面板里没有靠左的文字 (靠左 " .. left .. " 个)")
+ok(boxes > 0 and good == boxes, "输入框: 左半标签 + 右半输入框, 文字水平垂直都居中, 标签前面不垫空格 (" .. good .. "/" .. boxes .. ")")
+end
+
 print("\n[4] 角色模块: 开速度 → 真的动")
 local spd = findBtn("速度")
 click(spd)
@@ -618,7 +737,17 @@ step(1 / 60, 10)
 ok(seat.MaxSpeed == math.huge, "上车后座位限速抬到无穷")
 local clipOn = 0
 for _, b in ipairs(buttons()) do if starts(b.Text, "穿墙") and ends(b.Text, " 开") then clipOn = clipOn + 1 end end
-ok(seat.CanCollide == false and carBody.CanCollide == false, "穿墙开着时车部件 CanCollide=false (穿墙开着 " .. clipOn .. " 个 · 座=" .. tostring(seat.CanCollide) .. " 身=" .. tostring(carBody.CanCollide) .. ")")
+ok(seat.CanCollide == false and carBody.CanCollide == false and CP.sur.CanCollide == false, "穿墙开着: 座位 / 车身 / 装饰件都穿 (穿墙开着 " .. clipOn .. " 个 · 座=" .. tostring(seat.CanCollide) .. " 身=" .. tostring(carBody.CanCollide) .. " 饰=" .. tostring(CP.sur.CanCollide) .. ")")
+ok(CP.wheelL.CanCollide == true and CP.wheelR.CanCollide == true, "穿墙开着: 只有轮胎底(整车最低的)保留碰撞, 车才不会掉下去 (左=" .. tostring(CP.wheelL.CanCollide) .. " 右=" .. tostring(CP.wheelR.CanCollide) .. ")")
+ok(CP.wheelUp.CanCollide == true, "悬挂抬高、不在最低那圈的轮子, 名字带 wheel 仍然保留")
+ok(CP.hubL.CanCollide == true and CP.hubR.CanCollide == true, "名字里没有 wheel 的低位零件, 也按\"整车最低\"判成轮胎保留 (停车台比它们还低, 但锚定的不参与; 影子不碰撞也不参与)")
+ok(CP.pad.CanCollide == true and CP.fence.CanCollide == true, "穿墙不碰同一个 Model 里锚定的停车台 / 栏杆 (地面/平台不是车)")
+seat.props.AssemblyLinearVelocity = Vector3.new(0, -5, 0)
+_G.__rayHit = { Instance = CP.fence, Distance = 1.2 } -- 老逻辑: 离地只剩 0.7 → 把竖直速度顶到 +3 (上浮); 新逻辑根本不探地
+step(1 / 60, 3)
+ok(seat.props.AssemblyLinearVelocity.Y == -5, "穿墙不再探地推起, 开启后不上浮 (竖直速度 " .. tostring(seat.props.AssemblyLinearVelocity.Y) .. ")")
+_G.__rayHit = nil
+seat.props.AssemblyLinearVelocity = Vector3.zero
 ok(seat:FindFirstChild("SB_SIBS") ~= nil, "车约束挂在座位装配体上")
 click(findBtn("常亮"))
 step(1 / 60, 3)
@@ -697,6 +826,14 @@ print("\n[6e] 锚定的车也要立刻绑上 (不再等游戏解锁)")
 seat.props.Anchored = true
 step(1 / 60, 5)
 ok(seat:FindFirstChild("SB_SIBS") ~= nil, "锚定状态下 SB_SIBS 照样挂上")
+local rival = inst("Part", { Name = "Rival", CanCollide = true, Anchored = false, Size = Vector3.new(8, 3, 16), Position = Vector3.new(14, 5, 0), CFrame = CFrame.new(Vector3.new(14, 5, 0)), AssemblyLinearVelocity = Vector3.zero, AssemblyAngularVelocity = Vector3.zero, AssemblyMass = 500 })
+rival.props.AssemblyRootPart = rival
+rival.Parent = workspace
+_G.__radius = { rival } -- 附近有个更重的自由件 (别人的车/装饰件)
+step(1 / 60, 10)
+ok(seat:FindFirstChild("SB_SIBS") ~= nil and rival:FindFirstChild("SB_SIBS") == nil, "有座位的车锚着时, 不会改绑到附近更重的零件")
+_G.__radius = nil
+rival:Destroy()
 local stTxt
 for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" and d.Text:find("锚定", 1, true) then stTxt = d.Text end end
 ok(stTxt ~= nil, "状态行直接标出锚定 (" .. tostring(stTxt) .. ")")
@@ -710,17 +847,24 @@ tapTitle()
 seat.props.Anchored = false
 step(1 / 60, 3)
 
-print("\n[6d] 飞车: 摇杆前推 = 车头方向")
+print("\n[6d] 飞车: 摇杆前推 = 车头方向 (摇杆读 Humanoid.MoveDirection; 官方 UserInputService 没有 GetMoveVector)")
 click(findBtn("飞车"))
-_G.__SVC.UserInputService.props.GetMoveVector = function() return Vector3.new(0, 0, -1) end -- 前推 = Z -1 (引擎约定)
+humanoid.props.MoveDirection = Vector3.new(0, 0, -1) -- 摄像机朝 -Z: 前推 = 世界 -Z
 seat.props.Throttle = 0
 step(1 / 60, 3)
 local lvc = seat:FindFirstChild("SB_SIBS"):FindFirstChildOfClass("LinearVelocity")
 ok(lvc and lvc.VectorVelocity.Z < -10, "摇杆前推 → 车头方向 " .. tostring(lvc and lvc.VectorVelocity))
-_G.__SVC.UserInputService.props.GetMoveVector = function() return Vector3.new(1, 0, 0) end -- 右推 = X 1
+humanoid.props.MoveDirection = Vector3.new(1, 0, 0) -- 右推 = 世界 +X
 step(1 / 60, 3)
 ok(lvc and lvc.VectorVelocity.X > 10, "摇杆右推 → 车右方向 " .. tostring(lvc and lvc.VectorVelocity))
-_G.__SVC.UserInputService.props.GetMoveVector = function() return Vector3.zero end
+camera.CFrame = CFrame.new(Vector3.zero, Vector3.new(1, 0, 0)) -- 摄像机转到朝 +X: 前推 = 世界 +X, 但车还是该往车头(-Z)飞, 不能跟着相机跑
+humanoid.props.MoveDirection = Vector3.new(1, 0, 0)
+step(1 / 60, 3)
+local fw = seat.props.CFrame.LookVector -- 前面方向盘测试已经把假车转过了, 车头不再是 -Z, 所以跟车头的实际朝向比
+fw = Vector3.new(fw.X, 0, fw.Z).Unit
+ok(lvc and lvc.VectorVelocity.Magnitude > 10 and lvc.VectorVelocity.Unit:Dot(fw) > 0.99, "相机转 90° 后, 前推仍是车头方向, 不跟着相机跑 (与车头夹角余弦 " .. string.format("%.3f", lvc and lvc.VectorVelocity.Unit:Dot(fw) or 0) .. ", 速度 " .. tostring(lvc and lvc.VectorVelocity) .. ")")
+camera.CFrame = CFrame.new(Vector3.zero)
+humanoid.props.MoveDirection = Vector3.zero
 step(1 / 60, 3)
 ok(lvc and lvc.VectorVelocity.Magnitude < 0.1, "松手悬停")
 click(findBtn("飞车"))
@@ -744,6 +888,7 @@ for _, b in ipairs(buttons()) do if ends(b.Text, " 开") then click(b); flipped 
 step(1 / 60, 10)
 ok(true, "按住/松开 " .. held .. " 个按钮 + 全开全关走完没炸")
 ok(_G.__SVC.VirtualInputManager.props.keys ~= nil, "喇叭真的发了按键事件")
+ok(seat.CanCollide and carBody.CanCollide and CP.sur.CanCollide and CP.wheelL.CanCollide and CP.wheelUp.CanCollide and CP.hubL.CanCollide and CP.pad.CanCollide and CP.fence.CanCollide and not CP.shadow.CanCollide, "穿墙关掉后车部件原样还原 (本来不碰撞的影子仍是不碰撞)")
 
 print("\n[6b2] 滑条常可拖 (折不起来时的后备)")
 local alwaysBtn = findBtn("滑条常可拖")
@@ -844,6 +989,22 @@ click(findBtn("换车"))
 step(1 / 60, 5)
 _G.__rayHit = nil
 
+do
+print("\n[6h] 座位是一辆车的共同点: 瞄哪个零件, 绑的都是座位所在装配体 (带 VehicleSeat 的车)")
+humanoid.props.SeatPart = nil
+for _, hit in ipairs({ CP.sur, CP.wheelL, carBody, seat }) do
+	_G.__rayHit = { Instance = hit }
+	click(findBtn("换车"))
+	step(1 / 60, 20)
+	ok(seat:FindFirstChild("SB_SIBS") ~= nil and CP.sur:FindFirstChild("SB_SIBS") == nil and CP.wheelL:FindFirstChild("SB_SIBS") == nil, "瞄 " .. hit.Name .. " → 绑的是座位 Seat 所在的装配体, 不是瞄到的零件")
+	ok(toastText():find("座位 Seat", 1, true) ~= nil, "提示说明是按座位锁的 (" .. toastText() .. ")")
+end
+local st
+for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" and d.Text:find(" sps", 1, true) then st = d.Text end end
+ok(st ~= nil and st:sub(1, 3) == "Car", "状态行显示整辆车的名字 Car, 不是某个零件/子模型 (" .. tostring(st) .. ")")
+_G.__rayHit = nil
+end
+
 print("\n[7b] 诊断打包")
 humanoid.props.SeatPart = nil -- 下车了: 车结构要靠缓存带出去
 step(1 / 60, 5)
@@ -924,6 +1085,118 @@ step(1 / 60, 3)
 leaked = 0
 for _, i in ipairs(newInstancesFrom(SNAP)) do if not i.destroyed then leaked = leaked + 1 end end
 ok(leaked == 0 and LIVE == 0, "第三轮卸载同样干净")
+
+-- ───────── 第四轮: 一进游戏就绑 ─────────
+do
+print("\n[12] 一进游戏就绑: 没坐没锁时自动绑最近的空载具座位")
+local bench = inst("Seat", { Name = "Bench", CanCollide = true, Anchored = true, Size = Vector3.new(6, 1, 2), CFrame = CFrame.new(Vector3.new(3, 1, 0)), Position = Vector3.new(3, 1, 0), AssemblyLinearVelocity = Vector3.zero, AssemblyAngularVelocity = Vector3.zero, AssemblyMass = 1 })
+bench.props.AssemblyRootPart = bench
+bench.Parent = workspace
+local farCar = inst("Model", { Name = "FarCar" })
+local farSeat = inst("VehicleSeat", { Name = "FarSeat", CanCollide = true, Anchored = false, Size = Vector3.new(2, 1, 2), CFrame = CFrame.new(Vector3.new(100, 5, 0)), Position = Vector3.new(100, 5, 0), AssemblyLinearVelocity = Vector3.zero, AssemblyAngularVelocity = Vector3.zero, AssemblyMass = 20, MaxSpeed = 30, Steer = 0, Throttle = 0 })
+farSeat.props.AssemblyRootPart = farSeat
+farSeat.Parent = farCar
+farCar.Parent = workspace
+local tb2 = inst("Part", { Name = "Primary2", CanCollide = true, Anchored = false, Size = Vector3.new(4, 1, 16), Position = Vector3.new(60, 5, 0), CFrame = CFrame.new(Vector3.new(60, 5, 0)), AssemblyLinearVelocity = Vector3.zero, AssemblyAngularVelocity = Vector3.zero, AssemblyMass = 1 })
+tb2.props.AssemblyRootPart = tb2
+tb2.Parent = truck
+local occ = inst("Humanoid", {})
+local driver = seat.props.Occupant
+seat.props.Occupant = nil -- 空座位 (场景里默认是玩家自己坐着)
+humanoid.props.SeatPart = nil
+local SNAP12 = #INSTANCES
+local function freshSibs(o)
+	if _G.SB_UNLOAD then _G.SB_UNLOAD() end
+	VFS["Selfblox.json"] = nil -- 前面点开关会把 carauto 存进配置
+	o = o or {}; o.only = { "sibs" }; _G.SB = o
+	local okf, ef = pcall(assert(load_chunk(SRC, "selfblox12")))
+	ok(okf, "sibs 单模块能起 " .. tostring(ef or ""))
+end
+local function bound(p) return p:FindFirstChild("SB_SIBS") ~= nil end
+
+_G.__radius = { bench, farSeat, seat }
+freshSibs()
+step(1 / 60, 90)
+ok(bound(seat) and not bound(bench) and not bound(farSeat), "自动绑到最近的车座位 (长椅被跳过, 远的不选)")
+ok(toastText():find("自动绑定", 1, true) ~= nil, "提示说明自动绑了 (" .. toastText() .. ")")
+
+_G.__radius = { bench }
+freshSibs()
+step(1 / 60, 90)
+ok(not bound(bench) and not bound(seat), "附近只有锚定的长椅 → 不绑")
+
+seat.props.Occupant = occ
+_G.__radius = { seat }
+freshSibs()
+step(1 / 60, 90)
+ok(not bound(seat), "座位上有人 → 不绑别人的车")
+seat.props.Occupant = nil
+
+freshSibs({ carauto = false })
+step(1 / 60, 90)
+ok(not bound(seat), "_G.SB.carauto=false → 不自动绑")
+
+-- 只有普通 Seat、没有 VehicleSeat 的车 (没锚定): 也该绑上; 锚定的才是长椅
+local sCar = inst("Model", { Name = "SeatCar" })
+local sSeat = inst("Seat", { Name = "Chair", CanCollide = true, Anchored = false, Size = Vector3.new(2, 1, 2), CFrame = CFrame.new(Vector3.new(30, 5, 0)), Position = Vector3.new(30, 5, 0), AssemblyLinearVelocity = Vector3.zero, AssemblyAngularVelocity = Vector3.zero, AssemblyMass = 20 })
+sSeat.props.AssemblyRootPart = sSeat
+sSeat.Parent = sCar
+sCar.Parent = workspace
+_G.__radius = { sSeat }
+freshSibs()
+step(1 / 60, 90)
+ok(bound(sSeat), "只有没锚定的普通 Seat 的车 → 也绑上 (锚定的才是长椅)")
+_G.__radius = { sSeat, farSeat } -- 普通 Seat 更近 (30 格) 且排在前面, VehicleSeat 在 100 格外
+freshSibs()
+step(1 / 60, 90)
+ok(bound(farSeat) and not bound(sSeat), "VehicleSeat 优先于更近的普通 Seat")
+sCar:Destroy() -- 场景物件用完就销毁, 不然会被当成脚本漏的实例
+_G.__radius = { bench, farSeat, seat }
+
+freshSibs()
+step(1 / 60, 90)
+ok(bound(seat), "(对照) 默认开着 → 绑上了")
+_G.__rayHit = { Instance = tb2 }
+click(findBtn("换车"))
+step(1 / 60, 150)
+ok(bound(tb2) and not bound(seat), "手动瞄准是粘性的: 附近还有更近的车座位, 也不会被自动绑抢回去")
+_G.__rayHit = nil
+
+freshSibs()
+step(1 / 60, 90)
+ok(bound(seat), "重新开始: 自动绑上")
+humanoid.props.SeatPart = seat -- 坐下: 座位优先, 自动绑的作废
+step(1 / 60, 5)
+humanoid.props.SeatPart = nil
+_G.__radius = {}
+step(1 / 60, 120)
+ok(not bound(seat), "坐过一次后自动绑的作废: 下车且附近没车 → 不留旧车")
+_G.__radius = { seat }
+step(1 / 60, 90)
+ok(bound(seat), "下车后附近有车 → 又绑上")
+
+-- 重生那几秒 me.Character 是 nil: 车还绑着、穿墙还开着时, noclip 每帧都在跑, 不能因为 IsDescendantOf(nil) 抛错
+freshSibs({ carclip = true })
+step(1 / 60, 90)
+ok(bound(seat), "(对照) 穿墙开着 + 自动绑上")
+local charSaved = player.props.Character
+player.props.Character = nil
+local late = carPart("Late", Vector3.new(1, 1, 1), Vector3.new(10, 8, 0)) -- 重生期间车上新冒出来一个零件: noclip 要判它是不是人物的 (只有新零件才会走到这一步)
+local okR, eR = pcall(step, 1 / 60, 60)
+ok(okR, "重生那几秒(Character=nil) 车还绑着、穿墙开着, 车上还冒出新零件: 不抛错 " .. tostring(not okR and eR or ""))
+ok(late.CanCollide == false, "重生期间新冒出来的零件也照常穿墙")
+late:Destroy()
+player.props.Character = charSaved
+step(1 / 60, 5)
+
+_G.SB_UNLOAD()
+step(1 / 60, 3)
+local leaked12 = 0
+for i = SNAP12 + 1, #INSTANCES do if not INSTANCES[i].destroyed then leaked12 = leaked12 + 1 end end
+ok(leaked12 == 0 and LIVE == 0, "自动绑车这一轮卸载同样干净 (漏 " .. leaked12 .. " 个实例 / " .. LIVE .. " 个连接)")
+_G.__radius = nil
+seat.props.Occupant = driver
+end
 
 print("\n" .. (FAILS == 0 and "全部通过 ✓" or ("有 " .. FAILS .. " 条没过 ✗")))
 if os.exit then os.exit(FAILS == 0 and 0 or 1) end

@@ -1,4 +1,4 @@
--- Selfblox v13 · 单文件 · 一次 loadstring · 一个面板 · 七个模块
+-- Selfblox v13.1 · 单文件 · 一次 loadstring · 一个面板 · 七个模块
 -- 用法:  loadstring(game:HttpGet("https://raw.githubusercontent.com/Sumicya/Selfblox/main/selfblox.lua"))()
 -- 覆盖:  执行前 _G.SB = { spd = 50, flyspd = 80, only = {"moc", "sibs"} }
 -- 优先级: _G.SB > Selfblox.json(面板里改过的值) > 默认值
@@ -39,6 +39,7 @@ local function on(sig, fn) local c = sig:Connect(fn); conns[#conns + 1] = c; ret
 local function mk(cls, props, parent) local i = Instance.new(cls); for k, v in pairs(props) do i[k] = v end; i.Parent = parent; return i end
 local function tap(i) return i.UserInputType == Enum.UserInputType.Touch or i.UserInputType == Enum.UserInputType.MouseButton1 end
 local function hum() local c = me.Character; return c and c:FindFirstChildOfClass("Humanoid") end
+local function mine(d) local c = me.Character; return c ~= nil and (d == c or d:IsDescendantOf(c)) end -- 零件是不是我人物的: 重生那几秒 Character 是 nil, 直接 IsDescendantOf(nil) 在真引擎里会抛错
 local function root() local c = me.Character; return c and (c:FindFirstChild("HumanoidRootPart") or c:FindFirstChild("Root")) end
 local function flat(v) v = Vector3.new(v.X, 0, v.Z); if v.Magnitude > 1e-3 then return v.Unit end end
 local function reclipAll(col) for d in pairs(col) do if d.Parent then d.CanCollide = true end end; table.clear(col) end -- 穿墙还原: moc/sibs 原来各写了一份一模一样的
@@ -51,7 +52,7 @@ local W, ROW = 200, 26
 local gui = mk("ScreenGui", { Name = "Selfblox", ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = 99999 }, ROOT)
 local FX = mk("Folder", { Name = "Selfblox_FX" }, ROOT) -- Highlight / BillboardGui 放这里, 卸载一起删
 
-local BASE = { BackgroundColor3 = OFF, BackgroundTransparency = 0.3, BorderSizePixel = 0, Font = FONT, TextSize = 12, TextColor3 = WHITE }
+local BASE = { BackgroundColor3 = OFF, BackgroundTransparency = 0.3, BorderSizePixel = 0, Font = FONT, TextSize = 12, TextColor3 = WHITE, TextXAlignment = Enum.TextXAlignment.Center, TextYAlignment = Enum.TextYAlignment.Center }
 local ORD = 0
 local function ord() ORD = ORD + 1; return ORD end -- UIListLayout 按创建顺序排
 local function ui(cls, parent, w, props) -- w=nil 整行, w=0.5 半行
@@ -86,8 +87,9 @@ local function hold(parent, s, fn, w) -- 按住 fn(true) 松开 fn(false)
 	on(b.InputEnded, function(i) if tap(i) then b.BackgroundColor3 = OFF; fn(false) end end)
 end
 local function num(parent, s, S, k, w, savek) -- 直接绑 S[k], 改完自动存盘; savek 缺省 = k
-	local f = ui("TextLabel", parent, w, { Text = s and " " .. s or "", TextXAlignment = Enum.TextXAlignment.Left })
-	local tb = mk("TextBox", { Size = UDim2.new(s and 0.5 or 1, 0, 1, 0), Position = UDim2.new(s and 0.5 or 0, 0, 0, 0), BackgroundTransparency = 1, Font = FONT, TextSize = 12, TextColor3 = Color3.fromRGB(255, 225, 140), Text = tostring(S[k]), TextXAlignment = Enum.TextXAlignment.Center, ClearTextOnFocus = false }, f)
+	local f = mk("Frame", { Size = w and UDim2.new(w, 0, 1, 0) or UDim2.new(1, 0, 0, ROW), LayoutOrder = ord(), BackgroundColor3 = OFF, BackgroundTransparency = 0.3, BorderSizePixel = 0 }, parent) -- 一行分两半: 左半标签, 右半输入框, 文字各在自己那半格里居中 (原来标签靠左 + 前面垫个空格, 和居中的按钮/输入框对不齐)
+	if s then ui("TextLabel", f, nil, { Text = s, BackgroundTransparency = 1, Size = UDim2.fromScale(0.5, 1) }) end
+	local tb = mk("TextBox", { Size = UDim2.fromScale(s and 0.5 or 1, 1), Position = UDim2.fromScale(s and 0.5 or 0, 0), BackgroundTransparency = 1, Font = FONT, TextSize = 12, TextColor3 = Color3.fromRGB(255, 225, 140), Text = tostring(S[k]), TextXAlignment = Enum.TextXAlignment.Center, TextYAlignment = Enum.TextYAlignment.Center, ClearTextOnFocus = false }, f)
 	on(tb.FocusLost, function() local v = tonumber(tb.Text); if v then S[k] = v; save(savek or k, v) end; tb.Text = tostring(S[k]) end)
 end
 
@@ -99,7 +101,7 @@ local function pickButton(label, cb, tell)
 end
 local function pressGame(btn, down) -- 用虚拟鼠标按住游戏按钮 (Delta 的 VIM 可用; 静默失败 = 游戏收不到, 不会崩)
 	local p, sz = btn.AbsolutePosition, btn.AbsoluteSize
-	VIM:SendMouseMoveEvent(p.X + sz.X / 2, p.Y + sz.Y / 2, 0, game)
+	VIM:SendMouseMoveEvent(p.X + sz.X / 2, p.Y + sz.Y / 2, game) -- 官方 API 清单: (x, y, layerCollector) 只有 3 个参数; 原来多塞的 0 顶掉了 layerCollector 的位置
 	VIM:SendMouseButtonEvent(p.X + sz.X / 2, p.Y + sz.Y / 2, 0, down, game, 0)
 end
 on(UIS.InputBegan, function(i)
@@ -115,7 +117,7 @@ end)
 
 local vp = workspace.CurrentCamera.ViewportSize
 local pos = opt("pos", { vp.X / 2 - W / 2, vp.Y * 0.3 })
-local title = mk("TextLabel", { Name = "SB_Title", Size = UDim2.fromOffset(W, ROW), Position = UDim2.fromOffset(math.clamp(pos[1], 0, math.max(vp.X - W, 0)), math.clamp(pos[2], 0, math.max(vp.Y - ROW, 0))), BackgroundColor3 = BG, BackgroundTransparency = 0.15, BorderSizePixel = 0, Font = FONT, TextSize = 13, TextColor3 = WHITE, Text = "Selfblox v13" }, gui)
+local title = mk("TextLabel", { Name = "SB_Title", Size = UDim2.fromOffset(W, ROW), Position = UDim2.fromOffset(math.clamp(pos[1], 0, math.max(vp.X - W, 0)), math.clamp(pos[2], 0, math.max(vp.Y - ROW, 0))), BackgroundColor3 = BG, BackgroundTransparency = 0.15, BorderSizePixel = 0, Font = FONT, TextSize = 13, TextColor3 = WHITE, Text = "Selfblox v13.1" }, gui)
 local body = mk("Frame", { Name = "SB_Body", Size = UDim2.new(0, W, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Position = title.Position + UDim2.fromOffset(0, ROW), BackgroundColor3 = BG, BackgroundTransparency = 0.35, BorderSizePixel = 0 }, gui)
 mk("UIListLayout", { Padding = UDim.new(0, 0) }, body)
 on(title:GetPropertyChangedSignal("Position"), function() body.Position = title.Position + UDim2.fromOffset(0, ROW) end)
@@ -272,7 +274,7 @@ end }
 -- ═════════ sibs: 载具 (坐着 = 控制座位所在装配体; 没坐 = 准星"换车"锁定) ═════════
 MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 	local S = { acc = opt("acc", 500), grip = opt("grip", 5), turn = opt("turn", 2.2), cap = opt("turncap", 1), fly = opt("carfly", 60), horn = opt("hornkey", "H"), maxstuds = opt("carmaxstuds", 150), swap = opt("carswap", true) } -- maxstuds: 多大的 Model 还算"一辆车"(超过就不当成载具容器)
-	local picked, pickSeat, pickPath, curSeat, curMax, att, vf, lv, status, clipModel, setBrake, lastCar, lastAnch
+	local picked, pickSeat, pickPath, autoPick, curSeat, curMax, att, vf, lv, status, clipModel, setBrake, lastCar, lastAnch
 	local gbtn, held = {}, {} -- 游戏自己的按钮 [1]油 [2]刹 [3]左 [4]右; 按不动力的游戏(服务器驱动)就靠按它的按钮开
 	local accel, decel, up, down, cruise, brake, flying, lampOn, target, statT = false, false, false, false, false, false, false, false, 0, 0
 	local clip = opt("carclip", false)
@@ -281,6 +283,7 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 	rp.FilterType = Enum.RaycastFilterType.Exclude
 
 	local function seat() local h = hum(); return h and h.SeatPart end
+	local function seatIn(m) return m:FindFirstChildWhichIsA("VehicleSeat", true) or m:FindFirstChildWhichIsA("Seat", true) end -- 官方继承链: VehicleSeat 和 Seat 互不相干 (都挂在 BasePart 下), 只查 "Seat" 会把带 VehicleSeat 的车当成"没座位"
 	local function findByPath(path) -- 锁的那件被游戏换掉后按路径捞回来 (只在 workspace 底下找)
 		local node = workspace
 		for seg in tostring(path):gmatch("[^.]+") do
@@ -312,7 +315,7 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 		if not p then return nil end
 		local best, node = nil, p:FindFirstAncestorOfClass("Model")
 		while node do
-			if node:FindFirstChildWhichIsA("Seat", true) then return node end
+			if seatIn(node) then return node end
 			if not best then
 				local sz = node:GetExtentsSize()
 				if math.max(sz.X, sz.Y, sz.Z) <= S.maxstuds then best = node end
@@ -336,19 +339,29 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 		lv = nil
 	end
 	local function detach() if att then att:Destroy(); att, vf, lv = nil, nil, nil end end
-	local function reclip() reclipAll(col); clipModel = nil end
-	local function noclip(p, m)
-		if m ~= clipModel then reclip(); clipModel = m end
-		if m then for _, d in ipairs(m:GetDescendants()) do if d:IsA("BasePart") and d.CanCollide then col[d] = true; d.CanCollide = false end end end -- ponytail: 每物理步扫全车部件, 几百件无感
+	local clipList, clipSeen, clipKeep, clipLow, clipT = {}, {}, {}, nil, -1
+	local function reclip() reclipAll(col); clipModel, clipList, clipSeen, clipKeep, clipLow, clipT = nil, {}, {}, {}, nil, -1 end
+	local function bottomY(d) -- 零件在世界坐标里的最低点 (按旋转后的包围盒算)
+		local c, z = d.CFrame, d.Size
+		return d.Position.Y - 0.5 * (math.abs(c.RightVector.Y) * z.X + math.abs(c.UpVector.Y) * z.Y + math.abs(c.LookVector.Y) * z.Z)
 	end
-	local function hover(p, m) -- 穿墙时探地: 贴地推起 / 带内止跌, 坠得快探得远
-		rp.FilterDescendantsInstances = { m or p, me.Character }
-		local v, half = p.AssemblyLinearVelocity, p.Size.Y / 2
-		local hit = workspace:Raycast(p.Position, Vector3.new(0, -(half + 3 + math.max(6, -v.Y * 0.05)), 0), rp)
-		if not hit then return end
-		local d = hit.Distance - half
-		if d < 1 then p.AssemblyLinearVelocity = Vector3.new(v.X, math.max(v.Y, (1 - d) * 10), v.Z)
-		elseif d < 3 and v.Y < 0 then p.AssemblyLinearVelocity = Vector3.new(v.X, 0, v.Z) end
+	local function noclip(p, m) -- 穿墙: 只有"轮胎底"留碰撞 (名字带 wheel/tire/tyre/轮, 或整车最低的那几块), 其余全穿; 锚定的(地面/平台)和人不碰. 不再悬浮: 原来的探地推起把车托高, 轮子反而悬空 = "开启上浮"
+		local scope = m or p
+		if scope ~= clipModel then reclip(); clipModel = scope end
+		if os.clock() - clipT > 0.5 then -- 清单半秒补一次, 只判断新出现的零件; 判过的不再变 (悬挂压缩时轮子会抬高, 不能因此被穿掉掉下去). ponytail: 车翻着开启时"最低"会判成车顶; 起伏地形上, 比最低的高出 0.5 以上又不叫 wheel/tire 的轮子会被穿掉 — 要更稳就按尺寸放宽容差
+			clipT = os.clock()
+			local fresh = {}
+			for _, d in ipairs(m and m:GetDescendants() or p:GetConnectedParts(true)) do
+				if d:IsA("BasePart") and not clipSeen[d] and not d.Anchored and not mine(d) then fresh[#fresh + 1] = d end
+			end
+			if not clipLow then for _, d in ipairs(fresh) do if d.CanCollide then clipLow = math.min(clipLow or math.huge, bottomY(d)) end end end -- 本来就不碰撞的(影子/玻璃)不参与"最低"
+			for _, d in ipairs(fresh) do
+				clipSeen[d] = true; clipList[#clipList + 1] = d
+				local nm = d.Name:lower()
+				if d.CanCollide and (bottomY(d) <= (clipLow or math.huge) + 0.5 or nm:find("wheel") or nm:find("tire") or nm:find("tyre") or nm:find("轮")) then clipKeep[d] = true end
+			end
+		end
+		for _, d in ipairs(clipList) do if d.CanCollide and not clipKeep[d] then col[d] = true; d.CanCollide = false end end
 	end
 	local function dropLamps() for _, l in ipairs(lamps) do if lampSaved[l] ~= nil then l.Enabled = lampSaved[l] else l:Destroy() end end; table.clear(lamps) end
 	local function asm(p) return p:GetConnectedParts(true) end -- 本车装配体的所有部件 (不是整个 Model 容器, 免得动到别人的车)
@@ -358,14 +371,14 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 		local fwd = facing()
 		if v and #lamps == 0 then
 			for _, d in ipairs(asm(p)) do -- 先接车自己带的灯 (SpotLight/PointLight/SurfaceLight)
-				if d ~= me.Character and not d:IsDescendantOf(me.Character) then
+				if not mine(d) then
 					for _, c in ipairs(d:GetChildren()) do if c:IsA("Light") then lampSaved[c] = c.Enabled; lamps[#lamps + 1] = c end end
 				end
 			end
 			if #lamps == 0 then -- 车上本来没灯: 装到车头/车尾部件上, 不装座位; 车头朝向和车相反就照背面
 				local head, tail, big, vol = nil, nil, nil, 0
 				for _, d in ipairs(asm(p)) do
-					if not d:IsDescendantOf(me.Character) then
+					if not mine(d) then
 						local n = d.Name:lower()
 						if not head and (n:find("head") or n:find("front") or n:find("lamp")) then head = d
 						elseif not tail and (n:find("tail") or n:find("rear") or n:find("brake") or n:find("back")) then tail = d end
@@ -410,19 +423,37 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 		if not hit then toast("准星前面没东西"); return end
 		local inst = hit.Instance
 		if inst:FindFirstAncestorOfClass("Model") == nil and not inst:IsA("BasePart") then toast("打中的不是部件"); return end
-		local node, seatM = inst:FindFirstAncestorOfClass("Model"), nil
-		while node do -- 往上找最近一个"里面真的有座位"的 Model: 那才是载具
-			if node:FindFirstChildWhichIsA("Seat", true) then seatM = node; break end
+		local node, seatM, s = inst:FindFirstAncestorOfClass("Model"), nil, nil
+		while node do -- 往上找最近一个"里面真的有座位"的 Model: 那才是载具. 座位 = 一辆车的共同点: 不管瞄到哪个零件, 绑的都是座位所在装配体的根
+			s = seatIn(node)
+			if s then seatM = node; break end
 			node = node:FindFirstAncestorOfClass("Model")
 		end
-		local s = seatM and (seatM:FindFirstChildWhichIsA("VehicleSeat", true) or seatM:FindFirstChildWhichIsA("Seat", true))
 		local r = (s or inst).AssemblyRootPart
 		if inst:FindFirstAncestorOfClass("Model") and inst:FindFirstAncestorOfClass("Model"):FindFirstChildOfClass("Humanoid") then toast("打中的是人, 不是车"); return end
 		if r.Anchored then toast("这个还锁着(锚定), 等游戏解锁"); return end
-		picked, pickSeat, pickPath = r, s, r:GetFullName()
+		picked, pickSeat, pickPath, autoPick = r, s, r:GetFullName(), false
 		dropLamps()
 		if s then toast("锁定 " .. seatM.Name .. " · 座位 " .. s.Name)
 		else toast("锁定 " .. inst.Name .. " · 没座位(只能推/飞/翻转, 没油门)") end
+	end
+	local autoOn, autoT = opt("carauto", true), 0
+	local function autoBind() -- 没坐没锁: 找最近的"空载具座位"绑上. ponytail: 每秒一次 150 格球查询; 极稠密的地图可改成 DescendantAdded 注册表
+		local r = root()
+		if not r then return end
+		swapParams.FilterDescendantsInstances = { me.Character }
+		local best, bd, bv
+		for _, d in ipairs(workspace:GetPartBoundsInRadius(r.Position, 150, swapParams)) do
+			local isV = d:IsA("VehicleSeat")
+			if (isV or d:IsA("Seat")) and not d.Occupant and d.AssemblyRootPart and (isV or not d.AssemblyRootPart.Anchored) then -- 锚定的普通 Seat 是长椅/椅子, 不是车
+				local dist = (d.Position - r.Position).Magnitude
+				if not best or (isV and not bv) or (isV == bv and dist < bd) then best, bd, bv = d, dist, isV end -- VehicleSeat 优先, 同类取最近
+			end
+		end
+		if not best then return end
+		picked, pickSeat, pickPath, autoPick = best.AssemblyRootPart, best, best.AssemblyRootPart:GetFullName(), true
+		dropLamps()
+		toast("自动绑定 " .. (best:FindFirstAncestorOfClass("Model") or best).Name .. " · 座位 " .. best.Name)
 	end
 	local function flip()
 		local p, m = part(), model()
@@ -469,6 +500,14 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 		return s / 82
 	end
 
+	local function moveVec() -- 摇杆原始输入 (前推 Z=-1, 右推 X=1). 官方 UserInputService 没有 GetMoveVector (那是 PlayerModule.ControlModule 的方法), 真引擎里一调就抛错; 这里把 Humanoid.MoveDirection (相机相对的世界方向) 换回相机坐标
+		local h, md = hum(), nil
+		md = h and h.MoveDirection
+		if not md or md.Magnitude < 1e-3 then return Vector3.zero end
+		local r = flat(workspace.CurrentCamera.CFrame.RightVector) or Vector3.xAxis
+		return Vector3.new(md:Dot(r), 0, -md:Dot(Vector3.yAxis:Cross(r)))
+	end
+
 	on(RunService.PreSimulation, function(dt)
 		local s = seat()
 		if s ~= curSeat then -- 换座: 还原旧座限速, 新座解限速, 灯重挂
@@ -478,8 +517,10 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 			dropLamps()
 			if lampOn then setLamps(true) end
 		end
+		if s and autoPick then picked, pickSeat, pickPath, autoPick = nil, nil, nil, false end -- 坐下了: 座位优先, 自动绑的作废; 下车后再找最近的
 		local p, sp = part()
-		if p and p.Anchored and S.swap then -- 锁的是锚定件(还没解锁/装饰件): 就近改绑到能推的那件
+		if not p and not s and autoOn and os.clock() - autoT > 1 then autoT = os.clock(); autoBind(); p, sp = part() end -- 一进游戏就绑: 没坐没锁时每秒找一次
+		if p and not sp and p.Anchored and S.swap then -- 没座位的锚定件(还没解锁/装饰件): 就近改绑到能推的那件. 有座位的车不改绑: 座位所在装配体就是车, 锚着就等游戏解锁
 			local cand = heavyNear(p)
 			if cand and cand ~= p then
 				picked, pickSeat, pickPath = cand, nil, cand:GetFullName()
@@ -504,10 +545,10 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 		if sp and sp:IsA("VehicleSeat") then gst, thr, st = sp.Steer, sp.Throttle, math.clamp(st + sp.Steer, -1, 1) end -- 游戏自带的手机油门/方向盘也吃
 		local acc, dec = accel or thr > 0, decel or thr < 0
 		if os.clock() - statT > 0.2 then statT = os.clock(); status.Text = (m and m.Name or p.Name) .. " · " .. math.floor(spd + 0.5) .. " sps" .. (s and "" or " · 准星锁定") .. (anch and " · 锚定(等游戏解锁)" or "") end
-		if clip then noclip(p, m); if not flying then hover(p, m) end elseif clipModel then reclip() end
+		if clip then noclip(p, m) elseif clipModel then reclip() end
 		if flying then -- 飞车: 摇杆(前后左右) + 面板按钮都吃; 松手悬停
 			if not lv then lv = mk("LinearVelocity", { Attachment0 = att, MaxForce = math.huge, VectorVelocity = Vector3.zero, RelativeTo = Enum.ActuatorRelativeTo.World }, att) end
-			local mv = UIS:GetMoveVector() -- 摇杆: 前推 Z=-1, 右推 X=1 (引擎原生, 坐姿也能读)
+			local mv = moveVec() -- 摇杆: 前推 Z=-1, 右推 X=1
 			local dir = fwd * math.clamp(-mv.Z + (acc and 1 or 0) - (dec and 1 or 0), -1, 1) + (flat(p.CFrame.RightVector) or Vector3.xAxis) * math.clamp(mv.X, -1, 1)
 			if dir.Magnitude > 1 then dir = dir.Unit end
 			lv.VectorVelocity = anch and Vector3.zero or (dir * S.fly + Vector3.yAxis * (S.fly * ((up and 1 or 0) - (down and 1 or 0))))
@@ -552,7 +593,7 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 		end
 		L[#L + 1] = "-- 装配体部件 (含游戏自己的约束/灯/脚本钩子)"
 		for _, d in ipairs(p:GetConnectedParts(true)) do
-			if d ~= me.Character and not d:IsDescendantOf(me.Character) then
+			if not mine(d) then
 				L[#L + 1] = string.format("  %-26s %-14s 锚=%-5s 质量=%.0f 尺寸=(%.0f,%.0f,%.0f)", d.Name, d.ClassName, tostring(d.Anchored), d.AssemblyMass, d.Size.X, d.Size.Y, d.Size.Z)
 				for _, c in ipairs(d:GetChildren()) do
 					if c:IsA("Light") then L[#L + 1] = "        灯 " .. c.ClassName .. " " .. c.Name .. " Enabled=" .. tostring(c.Enabled)
@@ -576,7 +617,7 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 		op.FilterDescendantsInstances = { me.Character }
 		local center = p.Position
 		local found = {}
-		for _, d in ipairs(workspace:GetPartBoundsInRadius(center, 150, op)) do if d:IsA("Seat") then found[#found + 1] = d end end
+		for _, d in ipairs(workspace:GetPartBoundsInRadius(center, 150, op)) do if d:IsA("Seat") or d:IsA("VehicleSeat") then found[#found + 1] = d end end
 		if #found == 0 then L[#L + 1] = "    车周围 150 格没有 Seat/VehicleSeat → 这辆车没有座位"
 		else
 			for _, d in ipairs(found) do
@@ -622,6 +663,7 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 	toggle(r5, "常亮", false, function(v) lampOn = v; if v then setLamps(true) else dropLamps() end end, 0.5)
 	btn(r5, "闪 ×3", function() task.spawn(function() for _ = 1, 3 do setLamps(true); task.wait(0.12); setLamps(false); task.wait(0.12) end; if lampOn then setLamps(true) else dropLamps() end end) end, 0.5)
 	toggle(page, "滑条常可拖", steerOpen, function(v) steerOpen = v; save("steeropen", v); setLive(v or not body.Visible) end)
+	toggle(page, "自动绑车", autoOn, function(v) autoOn = v; save("carauto", v) end)
 	local rb = row(page)
 	btn(rb, "选油门", function() pickBtn(1) end, 0.5)
 	btn(rb, "选刹车", function() pickBtn(2) end, 0.5)
@@ -1089,7 +1131,7 @@ if #active > 0 then show(pages[opt("tab", "moc")] and opt("tab", "moc") or activ
 
 local function dumpLines()
 	local L = { "==== SELFblox 诊断 " .. os.date("%Y-%m-%d ") .. clock(true) .. " ====",
-		"脚本=v13 页签=" .. tostring(saved.tab) .. " place=" .. game.PlaceId .. " 地图=" .. tostring(game.Name),
+		"脚本=v13.1 页签=" .. tostring(saved.tab) .. " place=" .. game.PlaceId .. " 地图=" .. tostring(game.Name),
 		"配置 " .. Http:JSONEncode(saved),
 		"执行器 isfile=" .. tostring(isfile ~= nil) .. " writefile=" .. tostring(writefile ~= nil) .. " appendfile=" .. tostring(appendfile ~= nil) .. " setclipboard=" .. tostring(setclipboard ~= nil) .. " gethui=" .. tostring(gethui ~= nil) .. " hookmetamethod=" .. tostring(hookmetamethod ~= nil) .. " newcclosure=" .. tostring(newcclosure ~= nil) .. " getnamecallmethod=" .. tostring(getnamecallmethod ~= nil),
 		"角色 " .. tostring(me.Name) .. " 队=" .. tostring(me.Team and me.Team.Name) .. " 坐=" .. tostring(hum() and hum().SeatPart and (hum().SeatPart:GetFullName())) .. " 根=" .. tostring(root() and root().Anchored) }
@@ -1132,4 +1174,4 @@ _G.SB_UNLOAD = function()
 	FX:Destroy()
 	_G.SB_UNLOAD = nil
 end
-print("[Selfblox] v13 · " .. #active .. " 模块 · _G.SB_UNLOAD() 卸载")
+print("[Selfblox] v13.1 · " .. #active .. " 模块 · _G.SB_UNLOAD() 卸载")
