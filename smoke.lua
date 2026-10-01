@@ -106,6 +106,8 @@ function methods.Clone(self) return inst(self.ClassName, self.props) end
 function methods.WorldToViewportPoint(self, v) return Vector3.new(100, 200, 10), true end
 function methods.ChangeState() end
 function methods.SendKeyEvent(self, ...) self.props.keys = (self.props.keys or 0) + 1 end
+function methods.SendMouseMoveEvent(self, x, y) self.props.mouseMove = { x = x, y = y } end
+function methods.SendMouseButtonEvent(self, x, y, b, down) self.props.mouse = self.props.mouse or {}; self.props.mouse[#self.props.mouse + 1] = { x = x, y = y, down = down } end
 function methods.GetConnectedParts(self) -- 假装配体: 同 Model 里的所有 BasePart
 	local o, seen = {}, {}
 	local m = methods.FindFirstAncestorOfClass(self, "Model") or self
@@ -115,12 +117,17 @@ function methods.GetConnectedParts(self) -- 假装配体: 同 Model 里的所有
 end
 function methods.SetNetworkOwner() error("SetNetworkOwner 客户端不让调 (上一版就是这一句把车搞成完全绑不上)") end
 function methods.GetGuiObjectsAtPosition() return _G.__guiHit or {} end
+function methods.GetPartBoundsInRadius() return _G.__radius or {} end
 
 local mt = {
 	__index = function(t, k)
 		if k == "Parent" then return rawget(t, "parent") end
 		local m = methods[k]
 		if m then return m end
+		if k == "AbsoluteSize" then -- 假布局: 默认 100x40, 允许测试自己给
+			local pp = rawget(t, "props")
+			return (pp and pp.AbsoluteSize) or { X = 100, Y = 40 }
+		end
 		if k == "AbsolutePosition" then -- 假布局: 默认 0, 但允许测试自己给坐标 (踏板排序要看它)
 			local pp = rawget(t, "props")
 			return (pp and pp.AbsolutePosition) or { X = 0, Y = 0 }
@@ -237,6 +244,7 @@ end })
 -- 假引擎: 挂成全局, selfblox.lua 是另一个 chunk, 只能看全局
 _G.Instance = { new = function(cls, parent) local i = inst(cls); if parent then i.Parent = parent end; return i end }
 _G.RaycastParams = { new = function() return { FilterType = nil } end }
+_G.OverlapParams = { new = function() return { FilterType = nil, FilterDescendantsInstances = {} } end }
 _G.Vector3, _G.Vector2, _G.Color3, _G.CFrame, _G.UDim, _G.UDim2, _G.Enum = Vector3, Vector2, Color3, CFrame, UDim, UDim2, Enum
 if not warn then _G.warn = function(...) print("warn:", ...) end end
 
@@ -281,6 +289,13 @@ local brakeBtn = inst("ImageButton", { Name = "Brake", AbsolutePosition = Vector
 local gasBtn = inst("ImageButton", { Name = "Gas", AbsolutePosition = Vector2.new(900, 2100) }) -- 油门在右
 pedalBox.Parent, brakeBtn.Parent, gasBtn.Parent = pedals, pedalBox, pedalBox
 pedals.Parent = pgui
+
+-- 游戏自己的开车按钮 (模拟你那个 DragGui: 游戏用它的按钮开车, 不是靠推力)
+local dragGui = inst("ScreenGui", { Name = "DragGui" })
+local gameGas = inst("TextButton", { Name = "GO", Text = "GO", AbsolutePosition = Vector2.new(800, 2200), AbsoluteSize = Vector2.new(120, 60) })
+local gameLeft = inst("TextButton", { Name = "L", Text = "左", AbsolutePosition = Vector2.new(40, 2200), AbsoluteSize = Vector2.new(90, 90) })
+gameGas.Parent, gameLeft.Parent = dragGui, dragGui
+dragGui.Parent = pgui
 
 -- 一辆假车 (座位 + 车身), 用来跑 sibs
 local car = inst("Model", { Name = "Car" })
@@ -405,6 +420,11 @@ local function tabs() return _G.__SVC.CoreGui:FindFirstChild("Selfblox") end
 local function all() local g = tabs(); return g and g:GetDescendants() or {} end
 local function buttons() local o = {}; for _, d in ipairs(all()) do if d:IsA("TextButton") and d.Text ~= "–" and d.Text ~= "+" then o[#o + 1] = d end end; return o end
 local function findBtn(prefix) for _, b in ipairs(buttons()) do if b.Text:sub(1, #prefix) == prefix then return b end end end
+local function findBtnLast(prefix) -- 「选油门」在车页和漂页都有, 要能指定拿哪个
+	local last
+	for _, b in ipairs(buttons()) do if b.Text:sub(1, #prefix) == prefix then last = b end end
+	return last
+end
 local function toastText() local t = tabs() and tabs():FindFirstChild("SB_Toast"); return t and t.Text or "" end
 local function input(kind) return { UserInputType = Enum.UserInputType[kind] } end
 local function ends(s, suf) return #s >= #suf and s:sub(-#suf) == suf end
@@ -471,9 +491,9 @@ pedals2:Destroy() -- 这套假踏板是测试自己造的, 用完自己收, 不�
 local fakePedal = inst("ImageButton", { Name = "某游戏的油门键" })
 fakePedal.Parent = pgui
 _G.__guiHit = { fakePedal }
-click(findBtn("选油门"))
+click(findBtnLast("选油门")) -- 漂页那个 (车页也有个同名的)
 local hintTxt
-for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" and d.Text:find("点游戏里的", 1, true) then hintTxt = d.Text end end
+for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" and d.Text:find("点游戏画面上的", 1, true) then hintTxt = d.Text end end
 ok(hintTxt ~= nil, "点「选油门」会告诉你点哪儿 (" .. tostring(hintTxt) .. ")")
 _G.__SVC.UserInputService.InputBegan:Fire({ UserInputType = Enum.UserInputType.Touch, Position = Vector3.new(500, 900, 0) })
 local pickedTxt
@@ -674,6 +694,39 @@ step(1 / 60, 10)
 ok(true, "按住/松开 " .. held .. " 个按钮 + 全开全关走完没炸")
 ok(_G.__SVC.VirtualInputManager.props.keys ~= nil, "喇叭真的发了按键事件")
 
+print("\n[6d2] 绑游戏自己的按钮 (服务器驱动的车只能这么开)")
+local gb = findBtn("选油门") -- 第一个 = 车页那个 (漂页也有同名按钮)
+ok(gb ~= nil, "车页有「选油门」")
+_G.__guiHit = { gameGas } -- 你在游戏画面上点哪, 就绑哪
+gb.Activated:Fire()
+_G.__SVC.UserInputService.InputBegan:Fire({ UserInputType = Enum.UserInputType.Touch, Position = Vector3.new(860, 2230, 0) })
+local boundTxt
+for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" and d.Text:find("油门 = ", 1, true) then boundTxt = d.Text end end
+ok(boundTxt ~= nil, "绑上了 (" .. tostring(boundTxt) .. ")")
+local btnGas
+for _, d in ipairs(all()) do if d:IsA("TextButton") and d.Text == "▲ 加速" then btnGas = d end end
+local before = #(_G.__SVC.VirtualInputManager.props.mouse or {})
+btnGas.InputBegan:Fire(input("Touch"))
+step(1 / 60, 3)
+local ev = _G.__SVC.VirtualInputManager.props.mouse or {}
+ok(#ev > before, "按住「▲ 加速」→ 发了虚拟鼠标事件 (" .. tostring(#ev - before) .. " 个)")
+ok(ev[#ev] and ev[#ev].down == true and math.abs(ev[#ev].x - 860) < 2 and math.abs(ev[#ev].y - 2230) < 2, "按的正是游戏按钮中心 (" .. string.format("%.0f,%.0f", ev[#ev] and ev[#ev].x or -1, ev[#ev] and ev[#ev].y or -1) .. ")")
+btnGas.InputEnded:Fire(input("Touch"))
+step(1 / 60, 3)
+ev = _G.__SVC.VirtualInputManager.props.mouse or {}
+ok(ev[#ev] and ev[#ev].down == false, "松手 → 松开事件")
+_G.__guiHit = { gameLeft }
+for _, d in ipairs(all()) do if d:IsA("TextButton") and d.Text == "选左" then d.Activated:Fire() end end
+_G.__SVC.UserInputService.InputBegan:Fire({ UserInputType = Enum.UserInputType.Touch, Position = Vector3.new(80, 2240, 0) })
+tapTitle() -- 折面板 → 滑条可用
+kd.DragContinue:Fire({ Position = { X = -999, Y = 0 } })
+step(1 / 60, 3)
+ev = _G.__SVC.VirtualInputManager.props.mouse or {}
+ok(ev[#ev] and ev[#ev].down == true and ev[#ev].x < 200, "滑条往左 → 按住游戏「左」键")
+kd.DragEnd:Fire()
+tapTitle()
+_G.__guiHit = nil
+
 print("\n[6f] 载具范围: 街区的 Model 不能当车 (你的游戏就是这种结构)")
 humanoid.props.SeatPart = nil -- 走"准星锁定"这条路(你那台卡车就是这样), 不然 part() 会优先用座位
 step(1 / 60, 3)
@@ -688,7 +741,8 @@ ok(dumpCar and dumpCar:find("Truck", 1, true) ~= nil, "锁到的是 Truck 那层
 ok(toastNoSeat:find("没座位", 1, true) ~= nil, "提示如实说明「没座位」(当时提示: " .. toastNoSeat .. ")")
 ok(dumpCar and dumpCar:find("座位: -", 1, true) ~= nil, "快照里座位一栏是空的")
 ok(dumpCar and dumpCar:find("准星射线", 1, true) ~= nil and dumpCar:find("祖先: ", 1, true) ~= nil, "快照里有准星射线 + 祖先链")
-ok(dumpCar and dumpCar:find("场景里的座位", 1, true) ~= nil, "快照里有场景座位清单")
+ok(dumpCar and dumpCar:find("周围的座位", 1, true) ~= nil, "快照里有周围座位(半径扫描)")
+ok(dumpCar and dumpCar:find("车周围 25 格里的部件", 1, true) ~= nil, "快照里有周围部件")
 _G.__rayHit = { Instance = seat } -- 换回真车: 带座位的那种
 click(findBtn("换车"))
 step(1 / 60, 5)
@@ -710,6 +764,8 @@ ok(dm ~= nil, "写了 selfblox_dump.txt")
 ok(dm and dm:find("执行器 isfile=", 1, true) ~= nil, "快照里有执行器能力")
 ok(dm and dm:find("MobilePedals", 1, true) ~= nil, "快照里有踏板树")
 ok(dm and dm:find("sibs ", 1, true) ~= nil, "快照里有各模块状态")
+ok(dm and dm:find("PlayerGui 树", 1, true) ~= nil, "快照里有整个 PlayerGui 树")
+ok(dm and dm:find("文本=GO", 1, true) ~= nil, "树里有游戏按钮的文本(能看出该绑哪个)")
 ok(dm and dm:find("CAr", 1, true) == nil and dm:find("=== CAR", 1, true) ~= nil, "快照里有车结构")
 ok(CLIP ~= nil and CLIP:find("SELFblox 诊断", 1, true) ~= nil, "快照同时进了剪贴板")
 ok(type(_G.SB_DUMP) == "function", "也可以用 _G.SB_DUMP() 手动打")

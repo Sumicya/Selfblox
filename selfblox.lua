@@ -90,6 +90,28 @@ local function num(parent, s, S, k, w, savek) -- 直接绑 S[k], 改完自动存
 	on(tb.FocusLost, function() local v = tonumber(tb.Text); if v then S[k] = v; save(savek or k, v) end; tb.Text = tostring(S[k]) end)
 end
 
+-- 点选游戏自己的按钮: 模块调 pickButton("油门", cb, tell); 玩家点游戏画面那一下, cb(按钮) 就被调到
+local pickCB
+local function pickButton(label, cb, tell)
+	pickCB = cb
+	if tell then tell("点游戏画面上的【" .. label .. "】") end
+end
+local function pressGame(btn, down) -- 用虚拟鼠标按住游戏按钮 (Delta 的 VIM 可用; 静默失败 = 游戏收不到, 不会崩)
+	local p, sz = btn.AbsolutePosition, btn.AbsoluteSize
+	VIM:SendMouseMoveEvent(p.X + sz.X / 2, p.Y + sz.Y / 2, 0, game)
+	VIM:SendMouseButtonEvent(p.X + sz.X / 2, p.Y + sz.Y / 2, 0, down, game, 0)
+end
+on(UIS.InputBegan, function(i)
+	if not pickCB or not tap(i) then return end
+	local cb, pos = pickCB, i.Position
+	local hit
+	local pg = me:FindFirstChild("PlayerGui")
+	if pg and pos then
+		for _, o in ipairs(pg:GetGuiObjectsAtPosition(pos.X, pos.Y)) do if o:IsA("GuiButton") then hit = o; break end end
+	end
+	if hit then pickCB = nil; cb(hit) end -- 没点中按钮就不清, 再点一次就行
+end)
+
 local vp = workspace.CurrentCamera.ViewportSize
 local pos = opt("pos", { vp.X / 2 - W / 2, vp.Y * 0.3 })
 local title = mk("TextLabel", { Name = "SB_Title", Size = UDim2.fromOffset(W, ROW), Position = UDim2.fromOffset(math.clamp(pos[1], 0, math.max(vp.X - W, 0)), math.clamp(pos[2], 0, math.max(vp.Y - ROW, 0))), BackgroundColor3 = BG, BackgroundTransparency = 0.15, BorderSizePixel = 0, Font = FONT, TextSize = 13, TextColor3 = WHITE, Text = "Selfblox v13" }, gui)
@@ -243,6 +265,7 @@ end }
 MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 	local S = { acc = opt("acc", 500), grip = opt("grip", 5), turn = opt("turn", 2.2), cap = opt("turncap", 1), fly = opt("carfly", 60), horn = opt("hornkey", "H"), maxstuds = opt("carmaxstuds", 150) } -- maxstuds: 多大的 Model 还算"一辆车"(超过就不当成载具容器)
 	local picked, pickSeat, curSeat, curMax, att, vf, lv, status, clipModel, setBrake, lastCar
+	local gbtn, held = {}, {} -- 游戏自己的按钮 [1]油 [2]刹 [3]左 [4]右; 按不动力的游戏(服务器驱动)就靠按它的按钮开
 	local accel, decel, up, down, cruise, brake, flying, lampOn, target, statT = false, false, false, false, false, false, false, false, 0, 0
 	local clip = opt("carclip", false)
 	local lamps, lampSaved, col = {}, setmetatable({}, { __mode = "k" }), setmetatable({}, { __mode = "k" })
@@ -330,6 +353,26 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 		for _, l in ipairs(lamps) do l.Enabled = v end
 	end
 	local function horn(v) VIM:SendKeyEvent(v, Enum.KeyCode[S.horn], false, game) end
+	local gname = { "油门", "刹车", "左", "右" }
+	local function slotsInfo()
+		local o = {}
+		for i = 1, 4 do if gbtn[i] then o[#o + 1] = gname[i] .. "=" .. gbtn[i].Name end end
+		return #o > 0 and table.concat(o, " ") or "游戏按钮未绑"
+	end
+	local function gameHold(n, v) -- n 号槽跟着 v 按下/松开游戏按钮, 状态没变就不重复发
+		local b = gbtn[n]
+		if not b or held[n] == v then return end
+		held[n] = v
+		pressGame(b, v)
+	end
+	local function bindGame(n, btn)
+		gameHold(n, false)
+		gbtn[n] = btn
+		status.Text = gname[n] .. " = " .. btn:GetFullName() .. " · " .. slotsInfo()
+	end
+	local function pickBtn(n)
+		pickButton(gname[n], function(hit) bindGame(n, hit) end, function(t) status.Text = t end)
+	end
 	local function pick()
 		local cam = workspace.CurrentCamera
 		rp.FilterDescendantsInstances = { me.Character }
@@ -371,6 +414,12 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 	on(kd.DragContinue, function(i) local x = i and i.Position and i.Position.X; dragX = (x and x ~= 0) and x or UIS:GetMouseLocation().X end)
 	on(kd.DragEnd, function() dragX = nil; handle.Position = UDim2.fromScale(0.5, 0.5) end)
 	local live = false -- 只有面板折起来才接管触摸: 面板开着时滑条固定, 免得调参数时手一滑把车带跑
+	local function steerButtons(st) -- 绑了左/右游戏按钮就用按钮转, 没绑才用 CFrame 硬转
+		if not (gbtn[3] or gbtn[4]) then return false end
+		gameHold(3, st < -0.25)
+		gameHold(4, st > 0.25)
+		return true
+	end
 	local function setLive(v)
 		live = v
 		handle.Visible = v
@@ -422,6 +471,7 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 			return
 		elseif lv then lv:Destroy(); lv = nil end
 		-- 转向: 游戏自己的 Steer 那部分让它自己转, 我们只转滑条多出来的部分, 不重复
+		if not steerButtons(st) then
 		local mine = st - gst
 		if math.abs(mine) > 0.02 then -- 停着也能转(原地打方向), 不再等车动起来
 			p.CFrame = CFrame.fromAxisAngle(Vector3.yAxis, -mine * S.turn * math.clamp(spd / 25, 0.2, S.cap) * dt) * p.CFrame.Rotation + p.Position -- turncap = 转向速率随速度放大的上限
@@ -429,6 +479,7 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 				local dir = hv:Dot(fwd) < 0 and -fwd or fwd
 				p.AssemblyLinearVelocity = hv.Unit:Lerp(dir, math.min(dt * S.grip, 1)).Unit * spd + Vector3.yAxis * v.Y
 			end
+		end
 		end
 		local f, F = mass * S.acc, Vector3.zero
 		if brake then -- 急刹: 刹到停, 再踩油门自动解除
@@ -475,19 +526,25 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 			while x and x ~= workspace do chain[#chain + 1] = x.Name .. "(" .. x.ClassName .. ")"; x = x.Parent end
 			L[#L + 1] = "    祖先: " .. table.concat(chain, " ← ")
 		end
-		L[#L + 1] = "-- 场景里的座位 (最近 8 个)"
-		local seats, seen2 = {}, 0
-		for _, d in ipairs(workspace:GetDescendants()) do
-			seen2 = seen2 + 1
-			if seen2 > 30000 then L[#L + 1] = "    (场景实例超过 3 万, 只扫了前 3 万)" break end
-			if d:IsA("Seat") then local r = d.AssemblyRootPart; seats[#seats + 1] = { d, r and (r.Position - cam.CFrame.Position).Magnitude or 1e9 } end
-		end
-		table.sort(seats, function(a, b) return a[2] < b[2] end)
-		if #seats == 0 then L[#L + 1] = "    一个座位都没有 → 这游戏的车没有座, 客户端推不动它"
+		L[#L + 1] = "-- 周围的座位 (以车为圆心 150 格内, 半径扫描, 不看场景多大)"
+		local op = OverlapParams.new()
+		op.FilterType = Enum.RaycastFilterType.Exclude
+		op.FilterDescendantsInstances = { me.Character }
+		local center = p.Position
+		local found = {}
+		for _, d in ipairs(workspace:GetPartBoundsInRadius(center, 150, op)) do if d:IsA("Seat") then found[#found + 1] = d end end
+		if #found == 0 then L[#L + 1] = "    车周围 150 格没有 Seat/VehicleSeat → 这辆车没有座位"
 		else
-			for i = 1, math.min(#seats, 8) do
-				local d = seats[i][1]
-				L[#L + 1] = string.format("    %-32s %-12s 距离=%.0f 乘员=%s", d:GetFullName(), d.ClassName, seats[i][2], d.Occupant and (d.Occupant.Parent and d.Occupant.Parent.Name or "?") or "空")
+			for _, d in ipairs(found) do
+				L[#L + 1] = string.format("    %-34s %-12s 距离=%.0f 乘员=%s", d:GetFullName(), d.ClassName, (d.Position - center).Magnitude, d.Occupant and (d.Occupant.Parent and d.Occupant.Parent.Name or "?") or "空")
+			end
+		end
+		L[#L + 1] = "-- 车周围 25 格里的部件 (车的真身, 不依赖 Model 层级)"
+		local near = 0
+		for _, d in ipairs(workspace:GetPartBoundsInRadius(center, 25, op)) do
+			if d:IsA("BasePart") and near < 24 then
+				near = near + 1
+				L[#L + 1] = string.format("    %-30s %-14s 距离=%.0f 质量=%.0f 尺寸=(%.0f,%.0f,%.0f)", d.Name, d.ClassName, (d.Position - center).Magnitude, nn(d.AssemblyMass), d.Size.X, d.Size.Y, d.Size.Z)
 			end
 		end
 		return L
@@ -520,13 +577,19 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 	local r5 = row(page)
 	toggle(r5, "常亮", false, function(v) lampOn = v; if v then setLamps(true) else dropLamps() end end, 0.5)
 	btn(r5, "闪 ×3", function() task.spawn(function() for _ = 1, 3 do setLamps(true); task.wait(0.12); setLamps(false); task.wait(0.12) end; if lampOn then setLamps(true) else dropLamps() end end) end, 0.5)
+	local rb = row(page)
+	btn(rb, "选油门", function() pickBtn(1) end, 0.5)
+	btn(rb, "选刹车", function() pickBtn(2) end, 0.5)
+	local rb2 = row(page)
+	btn(rb2, "选左", function() pickBtn(3) end, 0.5)
+	btn(rb2, "选右", function() pickBtn(4) end, 0.5)
 	local r6 = row(page)
 	toggle(r6, "常声(" .. S.horn .. ")", false, horn, 0.5)
 	hold(r6, "声", horn, 0.5)
 	btn(page, "扫车 (结构进日志/剪贴板)", scanCar)
 	local r7 = row(page, 36)
-	hold(r7, "▲ 加速", function(v) accel = v end, 0.5)
-	hold(r7, "▼ 减速", function(v) decel = v end, 0.5)
+	hold(r7, "▲ 加速", function(v) accel = v; gameHold(1, v) end, 0.5)
+	hold(r7, "▼ 减速", function(v) decel = v; gameHold(2, v) end, 0.5)
 	local r8 = row(page, 36)
 	hold(r8, "飞 ↑", function(v) up = v end, 0.5)
 	hold(r8, "飞 ↓", function(v) down = v end, 0.5)
@@ -543,18 +606,18 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 		if p and vf then
 			return string.format("抓地=%s/转向=%s/过弯上限=%s 部件=%s%s 推力=%.0f(%.1f/kg) 质量=%.0f 速度=%.0f%s 定速=%s@%.0f 飞车=%s 穿墙=%s 急刹=%s%s",
 				S.grip, S.turn, S.cap, p:GetFullName(), seatInfo(s), vf.Force.Magnitude, vf.Force.Magnitude / math.max(p.AssemblyMass, 1), p.AssemblyMass,
-				p.AssemblyLinearVelocity.Magnitude, p.Anchored and " 锚定(引擎不让推)" or "", tostring(cruise), target, tostring(flying), tostring(clip), tostring(brake), holdInfo())
+				p.AssemblyLinearVelocity.Magnitude, p.Anchored and " 锚定(引擎不让推)" or "", tostring(cruise), target, tostring(flying), tostring(clip), tostring(brake), holdInfo()) .. " " .. slotsInfo()
 		end
-		return "抓地=" .. S.grip .. "/转向=" .. S.turn .. "/过弯上限=" .. S.cap .. " 部件=-" .. seatInfo(nil) .. " 定速=" .. tostring(cruise) .. "@" .. math.floor(target) .. " 飞车=" .. tostring(flying) .. " 穿墙=" .. tostring(clip) .. " 急刹=" .. tostring(brake) .. holdInfo()
+		return "抓地=" .. S.grip .. "/转向=" .. S.turn .. "/过弯上限=" .. S.cap .. " 部件=-" .. seatInfo(nil) .. " " .. slotsInfo() .. " 定速=" .. tostring(cruise) .. "@" .. math.floor(target) .. " 飞车=" .. tostring(flying) .. " 穿墙=" .. tostring(clip) .. " 急刹=" .. tostring(brake) .. holdInfo()
 	end
-	return function() detach(); reclip(); dropLamps(); horn(false); if curSeat and curMax then curSeat.MaxSpeed = curMax end end
+	return function() for i = 1, 4 do gameHold(i, false) end; detach(); reclip(); dropLamps(); horn(false); if curSeat and curMax then curSeat.MaxSpeed = curMax end end
 end }
 
 -- ═════════ drift: 人物推进 (自动找踏板; 找不到就自己点选; 都没有就用面板按钮) ═════════
 MODS[#MODS + 1] = { name = "drift", tab = "漂", fn = function(page)
 	local S = { acc = opt("dacc", 5), brake = opt("dbrake", 10) }
 	local enabled, w, s, att, vf, status = opt("drift", true), false, false, nil, nil, nil
-	local slots, manual, pedalRoot, picking = {}, {}, nil, nil -- slots[1]=刹车 slots[2]=油门; manual[n]=这是我自己点选的, 自动找别覆盖
+	local slots, manual, pedalRoot = {}, {}, nil -- slots[1]=刹车 slots[2]=油门; manual[n]=这是我自己点选的, 自动找别覆盖
 	local function pedalLines() -- 踏板的真实结构: 绑不上时能直接看出它长啥样
 		local pg = me:FindFirstChild("PlayerGui")
 		local f = pg and pg:FindFirstChild("MobilePedals")
@@ -605,23 +668,12 @@ MODS[#MODS + 1] = { name = "drift", tab = "漂", fn = function(page)
 		pedalRoot = f
 		status.Text = "自动找踏板: " .. slotsText()
 	end
-	local function pick(n) -- 点一下我们自己就选中的游戏按钮: 不猜名字, 不猜层级
-		picking = n
-		status.Text = (n == 1 and "点游戏里的【刹车】键" or "点游戏里的【油门】键") .. " (再点一下取消)"
+	local function pick(n) -- 点游戏画面里那个踏板: 不猜名字, 不猜层级
+		pickButton(n == 1 and "刹车" or "油门", function(hit)
+			bindSlot(n, hit, true)
+			status.Text = (n == 1 and "刹车" or "油门") .. " = " .. hit:GetFullName() .. " · " .. slotsText()
+		end, function(t) status.Text = t end)
 	end
-	on(UIS.InputBegan, function(i)
-		if not picking or not tap(i) then return end
-		local n, pos = picking, i.Position
-		local pg = me:FindFirstChild("PlayerGui")
-		local hit
-		if pg and pos then
-			for _, o in ipairs(pg:GetGuiObjectsAtPosition(pos.X, pos.Y)) do if o:IsA("GuiButton") then hit = o; break end end
-		end
-		if not hit then status.Text = "那一下没点到按钮, 再来一次"; return end
-		picking = nil
-		bindSlot(n, hit, true)
-		status.Text = (n == 1 and "刹车" or "油门") .. " = " .. hit:GetFullName() .. " · " .. slotsText()
-	end)
 
 	on(RunService.PreSimulation, function()
 		local c = me.Character
@@ -1001,6 +1053,21 @@ local function dumpLines()
 	L[#L + 1] = "-- 模块状态"
 	for _, m in ipairs(MODS) do if INFO[m.name] then local o, v = pcall(INFO[m.name]); L[#L + 1] = "  " .. m.name .. " " .. (o and tostring(v) or ("INFO 报错: " .. tostring(v))) end end
 	for k, f in pairs(DUMP) do local o, lines = pcall(f); L[#L + 1] = "-- " .. k .. " dump"; if o then for _, x in ipairs(lines) do L[#L + 1] = "  " .. tostring(x) end else L[#L + 1] = "  dump 报错: " .. tostring(lines) end end
+	local pg = me:FindFirstChild("PlayerGui")
+	if pg then
+		L[#L + 1] = "-- PlayerGui 树 (可见的按钮/文本, 最多 120 条)"
+		local n = 0
+		for _, d in ipairs(pg:GetDescendants()) do
+			if d:IsA("GuiObject") and d.Visible and n < 120 then
+				local txt = (d:IsA("TextButton") or d:IsA("TextLabel") or d:IsA("TextBox")) and d.Text or ""
+				if d:IsA("GuiButton") or txt ~= "" then
+					n = n + 1
+					L[#L + 1] = string.format("  %-38s %-12s 位置=(%.0f,%.0f) 尺寸=(%.0f,%.0f)%s", d:GetFullName(), d.ClassName, nn(d.AbsolutePosition.X), nn(d.AbsolutePosition.Y), nn(d.AbsoluteSize.X), nn(d.AbsoluteSize.Y), txt ~= "" and ("  文本=" .. tostring(txt):sub(1, 24)) or "")
+				end
+			end
+		end
+		if n == 0 then L[#L + 1] = "  (没有可见的 GUI 按钮)" end
+	end
 	if isfile("Selfblox_log.txt") then local t = readfile("Selfblox_log.txt") or ""; L[#L + 1] = "-- 日志尾部"; L[#L + 1] = t:sub(-1500) end
 	return L
 end
