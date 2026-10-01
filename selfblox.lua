@@ -41,6 +41,7 @@ local function tap(i) return i.UserInputType == Enum.UserInputType.Touch or i.Us
 local function hum() local c = me.Character; return c and c:FindFirstChildOfClass("Humanoid") end
 local function root() local c = me.Character; return c and (c:FindFirstChild("HumanoidRootPart") or c:FindFirstChild("Root")) end
 local function flat(v) v = Vector3.new(v.X, 0, v.Z); if v.Magnitude > 1e-3 then return v.Unit end end
+local function reclipAll(col) for d in pairs(col) do if d.Parent then d.CanCollide = true end end; table.clear(col) end -- 穿墙还原: moc/sibs 原来各写了一份一模一样的
 local function nn(v) return tonumber(v) or 0 end -- 诊断/日志里的引擎数字: 拿不到就 0, 不能因为一个属性缺失把整份 dump 弄炸
 
 -- ───────── UI: 一个 ScreenGui, 标题条(原生 UIDragDetector 拖) + 页签 + 每模块一页 ─────────
@@ -187,7 +188,6 @@ MODS[#MODS + 1] = { name = "moc", tab = "动", fn = function(page)
 		end
 	end
 	local function noclip(c) for _, p in ipairs(c:GetDescendants()) do if p:IsA("BasePart") and p.CanCollide then col[p] = true; p.CanCollide = false end end end
-	local function reclip() for p in pairs(col) do if p.Parent then p.CanCollide = true end end; table.clear(col) end
 	local function doSpin(r)
 		local a = attach(r)
 		if not spinAV then spinAV = mk("AngularVelocity", { Attachment0 = a, MaxTorque = math.huge, RelativeTo = Enum.ActuatorRelativeTo.World }, a) end
@@ -252,7 +252,7 @@ MODS[#MODS + 1] = { name = "moc", tab = "动", fn = function(page)
 	num(r4, nil, S, "spin", 0.5)
 	local r5 = row(page)
 	toggle(r5, "无限跳", false, function(v) infJump = v end, 0.5)
-	toggle(r5, "穿墙", false, function(v) clip = v; if not v then reclip() end end, 0.5)
+	toggle(r5, "穿墙", false, function(v) clip = v; if not v then reclipAll(col) end end, 0.5)
 	local r6 = row(page)
 	toggle(r6, "夜视", false, function(v) nv = v; if v then nvOn() else nvOff() end end, 0.5)
 	local NEXT, CN = { off = "normal", normal = "force", force = "off" }, { off = "秒互动 关", normal = "秒互动 普通", force = "秒互动 强制" }
@@ -263,7 +263,7 @@ MODS[#MODS + 1] = { name = "moc", tab = "动", fn = function(page)
 	num(page, "秒互动距离", S, "dist", nil, "promptdist")
 
 	INFO.moc = function() return string.format("速度=%s/%s 飞行=%s 高跳=%s 旋转=%s 穿墙=%s 夜视=%s 秒互动=%s", tostring(speedOn), S.mode, tostring(flyOn), tostring(jumpOn), tostring(spinOn), tostring(clip), tostring(nv), nocd) end
-	return function() setFly(false); stopSpin(); reclip(); restore(); nvOff(); setNocd("off"); if att then att:Destroy() end end
+	return function() setFly(false); stopSpin(); reclipAll(col); restore(); nvOff(); setNocd("off"); if att then att:Destroy() end end
 end }
 
 -- ═════════ sibs: 载具 (坐着 = 控制座位所在装配体; 没坐 = 准星"换车"锁定) ═════════
@@ -333,7 +333,7 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 		lv = nil
 	end
 	local function detach() if att then att:Destroy(); att, vf, lv = nil, nil, nil end end
-	local function reclip() for d in pairs(col) do if d.Parent then d.CanCollide = true end end; table.clear(col); clipModel = nil end
+	local function reclip() reclipAll(col); clipModel = nil end
 	local function noclip(p, m)
 		if m ~= clipModel then reclip(); clipModel = m end
 		if m then for _, d in ipairs(m:GetDescendants()) do if d:IsA("BasePart") and d.CanCollide then col[d] = true; d.CanCollide = false end end end -- ponytail: 每物理步扫全车部件, 几百件无感
