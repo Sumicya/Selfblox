@@ -1,1 +1,7 @@
-node_modules/
+# 运行时产物 (脚本会写这些, 不该进仓库)
+Selfblox.json
+Selfblox_log.txt
+selfblox_dump.txt
+selfblox_car.txt
+plane_debug.txt
+luacheck/
