@@ -22,14 +22,14 @@ local Teams = game:GetService("Teams")
 local RS = game:GetService("ReplicatedStorage")
 local VIM = game:GetService("VirtualInputManager")
 local me = Players.LocalPlayer
-local ROOT = gethui() or game:GetService("CoreGui") -- Delta 有 gethui; 没有就退回 CoreGui
+local ROOT = (pcall(gethui) and gethui()) or game:GetService("CoreGui") -- gethui 没有/报错都得能起面板, 退回 CoreGui
 
 -- ───────── 配置: _G.SB 覆盖 > JSON > 默认 ─────────
 local O = type(rawget(_G, "SB")) == "table" and _G.SB or {}
 local FILE, saved = "Selfblox.json", {}
-if isfile(FILE) then local okf, d = pcall(Http.JSONDecode, Http, readfile(FILE)); if okf and type(d) == "table" then saved = d end end -- 配置文件坏了不能连面板一起死
+if isfile and isfile(FILE) then local okf, d = pcall(Http.JSONDecode, Http, readfile(FILE)); if okf and type(d) == "table" then saved = d end end -- 配置文件坏了不能连面板一起死
 local function opt(k, d) local v = O[k]; if v == nil then v = saved[k] end; if v == nil then v = d end; return v end
-local function save(k, v) saved[k] = v; writefile(FILE, Http:JSONEncode(saved)) end
+local function save(k, v) saved[k] = v; if writefile then writefile(FILE, Http:JSONEncode(saved)) end end
 local CLOCK12 = opt("clock", "12") ~= "24" -- 12 小时制默认; _G.SB = { clock = "24" } 切 24
 local function clock(sec) return os.date((CLOCK12 and "%I" or "%H") .. (sec and ":%M:%S" or ":%M")) end
 
