@@ -123,19 +123,22 @@ local fold = mk("TextButton", { Size = UDim2.fromOffset(ROW, ROW), Position = UD
 local foldHooks = {} -- 想知道"面板是折着还是开着"的模块挂这里
 local function setFold(v) body.Visible = v; fold.Text = v and "–" or "+"; for _, f in ipairs(foldHooks) do f(v) end end
 local drag = mk("UIDragDetector", { BoundingUI = gui }, title)
-local dragged = false -- 拖拽器自己会说"这次是拖还是点": 真机上它会把标签的输入事件吃掉, 所以只能听它的
-on(drag.DragBegin, function() dragged = false end)
-on(drag.DragContinue, function() dragged = true end)
-on(drag.DragEnd, function()
-	if dragged then save("pos", { title.AbsolutePosition.X, title.AbsolutePosition.Y }) else setFold(not body.Visible) end
+local flipT, down = -math.huge, nil
+local function flip() -- 一次点按可能同时走下面三条路(拖拽器 / +按钮 / 标签自己的输入), 0.2 秒内只认第一条, 不然翻两次等于没翻. ponytail: 0.2 秒内连点两下会被当成一下
+	if os.clock() - flipT > 0.2 then flipT = os.clock(); setFold(not body.Visible) end
+end
+on(drag.DragStart, function(p) down = p end) -- 事件名: 官方文档里 UIDragDetector 只有 DragStart / DragContinue / DragEnd, 没有 DragBegin (写错 = 真引擎直接抛错, 脚本死在这一行, 后面一个页签都没建)
+on(drag.DragEnd, function(p) -- 抬手: 挪动 <8px = 点击 = 折叠, 否则是拖动 = 存位置. 手指必然会抖, 所以不能拿"有没有收到 DragContinue"来判
+	if down and (p - down).Magnitude < 8 then flip() else save("pos", { title.AbsolutePosition.X, title.AbsolutePosition.Y }) end
+	down = nil
 end)
-on(fold.Activated, function() setFold(not body.Visible) end)
-local pressPos -- 备用: 某些客户端不吞事件, 那时也认"没挪动=点击"
+on(fold.Activated, flip)
+local pressPos -- 备用: 万一拖拽器不为纯点按发事件, 标签自己的输入也认"没挪动=点击"
 on(title.InputBegan, function(i) if tap(i) then pressPos = title.AbsolutePosition end end)
 on(title.InputEnded, function(i)
 	if pressPos and tap(i) then
 		local p = title.AbsolutePosition
-		if math.abs(p.X - pressPos.X) + math.abs(p.Y - pressPos.Y) < 8 then setFold(not body.Visible) end
+		if math.abs(p.X - pressPos.X) + math.abs(p.Y - pressPos.Y) < 8 then flip() end
 	end
 	pressPos = nil
 end)
@@ -435,11 +438,12 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 	mk("UICorner", { CornerRadius = UDim.new(1, 0) }, track)
 	local knob = mk("Frame", { Name = "SB_Knob", AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(36, 36), BackgroundColor3 = Color3.fromRGB(95, 65, 135), BorderSizePixel = 0, ZIndex = 11 }, track)
 	mk("UICorner", { CornerRadius = UDim.new(1, 0) }, knob)
-	local handle = mk("Frame", { Name = "SB_Handle", Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Active = true, ZIndex = 12 }, track) -- 看不见的手柄盖在最上面, 整条都能按
+	local HOME = UDim2.new(0, 0, 0, 0) -- 手柄的家: 全宽 + 锚点(0,0). 松手要回到这里; 原来照抄圆点的 fromScale(0.5,0.5), 一松手整条手柄被推到右下半格, 左半条就按不到了
+	local handle = mk("Frame", { Name = "SB_Handle", Position = HOME, Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Active = true, ZIndex = 12 }, track) -- 看不见的手柄盖在最上面, 整条都能按
 	local kd = mk("UIDragDetector", { DragStyle = Enum.UIDragDetectorDragStyle.TranslateLine, DragAxis = Vector2.new(1, 0), BoundingUI = track }, handle)
 	local dragX
-	on(kd.DragContinue, function(i) local x = i and i.Position and i.Position.X; dragX = (x and x ~= 0) and x or UIS:GetMouseLocation().X end)
-	on(kd.DragEnd, function() dragX = nil; handle.Position = UDim2.fromScale(0.5, 0.5) end)
+	on(kd.DragContinue, function(p) dragX = p.X end) -- 官方文档: DragContinue 给的是 inputPosition: Vector2 (屏幕坐标), 不是 InputObject; 原来按 i.Position 读, 在 Vector2 上会直接抛错
+	on(kd.DragEnd, function() dragX = nil; handle.Position = HOME end)
 	local steerOpen = opt("steeropen", false) -- true = 面板开着也能拖滑条 (默认: 折起来才能拖)
 	local live = false
 	local function steerButtons(st) -- 绑了左/右游戏按钮就用按钮转, 没绑才用 CFrame 硬转

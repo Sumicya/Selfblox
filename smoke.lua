@@ -24,7 +24,8 @@ table.unpack = table.unpack or unpack
 local INSTANCES, LIVE = {}, 0
 local methods = {}
 local SIGNALS = {}
-for _, n in ipairs({ "Activated", "InputBegan", "InputEnded", "FocusLost", "Focused", "DragBegin", "DragContinue", "DragEnd", "ChildAdded", "ChildRemoved", "DescendantAdded", "DescendantRemoving", "PlayerAdded", "PlayerRemoving", "PreSimulation", "PreRender", "Heartbeat", "RenderStepped", "JumpRequest", "OnClientEvent", "Changed", "Destroying" }) do SIGNALS[n] = true end
+for _, n in ipairs({ "Activated", "InputBegan", "InputEnded", "FocusLost", "Focused", "DragStart", "DragContinue", "DragEnd", "ChildAdded", "ChildRemoved", "DescendantAdded", "DescendantRemoving", "PlayerAdded", "PlayerRemoving", "PreSimulation", "PreRender", "Heartbeat", "RenderStepped", "JumpRequest", "OnClientEvent", "Changed", "Destroying" }) do SIGNALS[n] = true end
+local STRICT = { UIDragDetector = { DragStart = true, DragContinue = true, DragEnd = true } } -- 官方文档(classes/UIDragDetector): 这个类的事件只有这三个. 对它严格: 读到别的成员就和真引擎一样直接抛错 —— v13 的 DragBegin 就是被"什么名字都认"的假引擎放过去的
 local Signal = {}
 Signal.__index = Signal
 function Signal.new() return setmetatable({ hs = {} }, Signal) end
@@ -134,7 +135,11 @@ local mt = {
 		end
 		local props = rawget(t, "props")
 		local v = props[k]
-		if v == nil and SIGNALS[k] then v = Signal.new(); props[k] = v end -- 信号字段按需生成
+		local strict = STRICT[rawget(t, "ClassName")]
+		if v == nil and strict then
+			if not strict[k] then error(tostring(k) .. " is not a valid member of " .. t.ClassName, 2) end
+			v = Signal.new(); props[k] = v
+		elseif v == nil and SIGNALS[k] then v = Signal.new(); props[k] = v end -- 信号字段按需生成
 		return v
 	end,
 	__newindex = function(t, k, v)
@@ -178,7 +183,16 @@ local v3mt = {
 Vector3 = { new = function(x, y, z) return setmetatable({ X = x or 0, Y = y or 0, Z = z or 0 }, v3mt) end }
 Vector3.zero, Vector3.one = Vector3.new(0, 0, 0), Vector3.new(1, 1, 1)
 Vector3.xAxis, Vector3.yAxis, Vector3.zAxis = Vector3.new(1, 0, 0), Vector3.new(0, 1, 0), Vector3.new(0, 0, 1)
-Vector2 = { new = function(x, y) return setmetatable({ X = x or 0, Y = y or 0 }, { __index = { Magnitude = 0 } }) end }
+Vector2 = {}
+Vector2.mt = {
+	__index = function(t, k)
+		if k == "Magnitude" then return math.sqrt(t.X * t.X + t.Y * t.Y) end
+		error(tostring(k) .. " is not a valid member of Vector2", 2) -- 真引擎读数据类型上不存在的成员也是直接抛错; 这里不抛, i.Position 就会悄悄变成 nil 溜过去
+	end,
+	__add = function(a, b) return Vector2.new(a.X + b.X, a.Y + b.Y) end,
+	__sub = function(a, b) return Vector2.new(a.X - b.X, a.Y - b.Y) end,
+}
+Vector2.new = function(x, y) return setmetatable({ X = x or 0, Y = y or 0 }, Vector2.mt) end
 Vector2.zero = Vector2.new(0, 0)
 
 Color3 = {
@@ -515,14 +529,23 @@ ok(tl ~= nil and bd ~= nil and bd.Visible, "标题条 + 面板体都在")
 local tdrag
 for _, d in ipairs(tl:GetDescendants()) do if d.ClassName == "UIDragDetector" then tdrag = d end end
 ok(tdrag ~= nil, "标题条上有拖拽器")
-local function tapTitle() -- 真机路线: 拖拽器说"没动过" = 点击
-	tdrag.DragBegin:Fire()
-	tdrag.DragEnd:Fire()
+local function tapTitle() -- 真机路线: 拖拽器 DragStart/DragEnd 给的是屏幕坐标 (Vector2), 手没挪 = 点击
+	NOW = NOW + 0.5 -- 虚拟时钟拨过去: 脚本里"一次点按只认一次"有 0.2 秒窗口
+	tdrag.DragStart:Fire(Vector2.new(50, 20))
+	tdrag.DragEnd:Fire(Vector2.new(50, 20))
 end
-local function dragTitle() -- 拖过 = 只挪位置, 不折叠
-	tdrag.DragBegin:Fire()
-	tdrag.DragContinue:Fire()
-	tdrag.DragEnd:Fire()
+local function dragTitle() -- 拖过 (挪了 110px) = 只挪位置, 不折叠
+	NOW = NOW + 0.5
+	tdrag.DragStart:Fire(Vector2.new(50, 20))
+	tdrag.DragContinue:Fire(Vector2.new(90, 30))
+	tdrag.DragContinue:Fire(Vector2.new(160, 60))
+	tdrag.DragEnd:Fire(Vector2.new(160, 60))
+end
+local function jitterTitle() -- 手指必抖: 收到过 DragContinue, 但总共才挪 2px, 仍然是点击
+	NOW = NOW + 0.5
+	tdrag.DragStart:Fire(Vector2.new(50, 20))
+	tdrag.DragContinue:Fire(Vector2.new(51, 21))
+	tdrag.DragEnd:Fire(Vector2.new(52, 21))
 end
 tapTitle()
 ok(bd.Visible == false, "点一下标题条 → 折起来")
@@ -530,16 +553,29 @@ tapTitle()
 ok(bd.Visible == true, "再点一下 → 展开")
 dragTitle()
 ok(bd.Visible == true, "拖标题条只挪位置, 不折叠")
+jitterTitle()
+ok(bd.Visible == false, "手指抖了 2px (收到过 DragContinue) 仍算点击 → 折叠")
+tapTitle()
+ok(bd.Visible == true, "再点回去 → 展开")
 tapTitle()
 ok(bd.Visible == false, "拖完再点 → 折叠")
 tapTitle()
 ok(bd.Visible == true, "再点回去 → 展开 (后面测试要面板开着)")
 local foldBtn
 for _, d in ipairs(all()) do if d:IsA("TextButton") and (d.Text == "–" or d.Text == "+") then foldBtn = d end end
-foldBtn.Activated:Fire()
+local function clickFold() NOW = NOW + 0.5; foldBtn.Activated:Fire() end
+clickFold()
 ok(bd.Visible == false, "+/- 也还能折叠")
-foldBtn.Activated:Fire()
+clickFold()
 ok(bd.Visible == true, "再点展开")
+-- 真机上到底哪几条路会响没法在这里验, 所以三条全响也得只翻一次
+NOW = NOW + 0.5
+tdrag.DragStart:Fire(Vector2.new(50, 20)); tl.InputBegan:Fire(input("Touch"))
+tdrag.DragEnd:Fire(Vector2.new(50, 20)); tl.InputEnded:Fire(input("Touch"))
+ok(bd.Visible == false, "一次点按同时触发拖拽器 + 标签输入 → 只翻一次 (翻两次 = 没翻)")
+NOW = NOW + 0.5
+foldBtn.Activated:Fire(); tdrag.DragStart:Fire(Vector2.new(180, 10)); tdrag.DragEnd:Fire(Vector2.new(180, 10))
+ok(bd.Visible == true, "点 +/- 时拖拽器也响 → 仍然只翻一次 (折回去, 后面要面板开着)")
 
 print("\n[4] 角色模块: 开速度 → 真的动")
 local spd = findBtn("速度")
@@ -630,25 +666,26 @@ local handle
 for _, d in ipairs(track:GetDescendants()) do if d.Name == "SB_Handle" then handle = d end end
 ok(handle and handle.Visible == false, "面板开着 → 滑条固定, 不接管触摸")
 local look0 = seat.props.CFrame.LookVector
-kd.DragContinue:Fire({ Position = { X = 999, Y = 0 } })
+kd.DragContinue:Fire(Vector2.new(999, 0))
 step(1 / 60, 12)
 ok((seat.props.CFrame.LookVector - look0).Magnitude < 0.01, "面板开着时拖它 → 车不动")
 kd.DragEnd:Fire()
 tapTitle() -- 折起来 → 滑条才可拖
 ok(handle.Visible == true, "面板折起来 → 滑条可拖")
-kd.DragContinue:Fire({ Position = { X = 999, Y = 0 } })
+kd.DragContinue:Fire(Vector2.new(999, 0))
 step(1 / 60, 12)
 local turned = (seat.props.CFrame.LookVector - look0).Magnitude
 ok(turned > 0.05, "拖到最右 → 车真的转了 " .. string.format("%.2f", turned))
 ok(knob.Position.X.Offset > 10, "圆点跟着手指跑 (偏 " .. knob.Position.X.Offset .. "px)")
 seat.props.AssemblyLinearVelocity = Vector3.zero -- 停着也要能打方向
 local look1 = seat.props.CFrame.LookVector
-kd.DragContinue:Fire({ Position = { X = 999, Y = 0 } })
+kd.DragContinue:Fire(Vector2.new(999, 0))
 step(1 / 60, 10)
 ok((seat.props.CFrame.LookVector - look1).Magnitude > 0.02, "车停着, 拖滑条照样转")
 kd.DragEnd:Fire()
 step(1 / 60, 2)
 ok(knob.Position.X.Offset == 0 and knob.Position.X.Scale == 0.5, "松手回中, 平时固定")
+ok(handle.Position.X.Scale == 0 and handle.Position.X.Offset == 0 and handle.Position.Y.Scale == 0 and handle.Position.Y.Offset == 0, "松手后手柄回到原位, 仍盖满整条轨道 (没被推到右下半格)")
 ok(track.Position.Y.Scale == 1 and track.Position.Y.Offset == -10, "钉在屏幕底部 (不跟面板跑)")
 tapTitle() -- 折回去, 后面还要用面板
 ok(handle.Visible == false, "展开 → 滑条又固定")
@@ -665,7 +702,7 @@ for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" 
 ok(stTxt ~= nil, "状态行直接标出锚定 (" .. tostring(stTxt) .. ")")
 tapTitle() -- 折起来才能拖滑条
 local lookA = seat.props.CFrame.LookVector
-kd.DragContinue:Fire({ Position = { X = 999, Y = 0 } })
+kd.DragContinue:Fire(Vector2.new(999, 0))
 step(1 / 60, 10)
 ok((seat.props.CFrame.LookVector - lookA).Magnitude > 0.02, "锚定车的转向照样有效 (走 CFrame)")
 kd.DragEnd:Fire()
@@ -714,7 +751,7 @@ ok(alwaysBtn ~= nil, "车页有「滑条常可拖」")
 click(alwaysBtn)
 ok(handle and handle.Visible == true, "开了之后面板开着也能拖")
 local lookA2 = seat.props.CFrame.LookVector
-kd.DragContinue:Fire({ Position = { X = 999, Y = 0 } })
+kd.DragContinue:Fire(Vector2.new(999, 0))
 step(1 / 60, 10)
 ok((seat.props.CFrame.LookVector - lookA2).Magnitude > 0.03, "面板开着也能转向了")
 kd.DragEnd:Fire()
@@ -746,7 +783,7 @@ _G.__guiHit = { gameLeft }
 for _, d in ipairs(all()) do if d:IsA("TextButton") and d.Text == "选左" then d.Activated:Fire() end end
 _G.__SVC.UserInputService.InputBegan:Fire({ UserInputType = Enum.UserInputType.Touch, Position = Vector3.new(80, 2240, 0) })
 tapTitle() -- 折面板 → 滑条可用
-kd.DragContinue:Fire({ Position = { X = -999, Y = 0 } })
+kd.DragContinue:Fire(Vector2.new(-999, 0))
 step(1 / 60, 3)
 ev = _G.__SVC.VirtualInputManager.props.mouse or {}
 ok(ev[#ev] and ev[#ev].down == true and ev[#ev].x < 200, "滑条往左 → 按住游戏「左」键")
