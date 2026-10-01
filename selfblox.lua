@@ -118,13 +118,18 @@ local title = mk("TextLabel", { Name = "SB_Title", Size = UDim2.fromOffset(W, RO
 local body = mk("Frame", { Name = "SB_Body", Size = UDim2.new(0, W, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Position = title.Position + UDim2.fromOffset(0, ROW), BackgroundColor3 = BG, BackgroundTransparency = 0.35, BorderSizePixel = 0 }, gui)
 mk("UIListLayout", { Padding = UDim.new(0, 0) }, body)
 on(title:GetPropertyChangedSignal("Position"), function() body.Position = title.Position + UDim2.fromOffset(0, ROW) end)
-local drag = mk("UIDragDetector", { BoundingUI = gui }, title)
-on(drag.DragEnd, function() save("pos", { title.AbsolutePosition.X, title.AbsolutePosition.Y }) end)
 local fold = mk("TextButton", { Size = UDim2.fromOffset(ROW, ROW), Position = UDim2.new(1, -ROW, 0, 0), BackgroundTransparency = 1, Font = FONT, TextSize = 16, TextColor3 = WHITE, Text = "–" }, title)
 local foldHooks = {} -- 想知道"面板是折着还是开着"的模块挂这里
 local function setFold(v) body.Visible = v; fold.Text = v and "–" or "+"; for _, f in ipairs(foldHooks) do f(v) end end
+local drag = mk("UIDragDetector", { BoundingUI = gui }, title)
+local dragged = false -- 拖拽器自己会说"这次是拖还是点": 真机上它会把标签的输入事件吃掉, 所以只能听它的
+on(drag.DragBegin, function() dragged = false end)
+on(drag.DragContinue, function() dragged = true end)
+on(drag.DragEnd, function()
+	if dragged then save("pos", { title.AbsolutePosition.X, title.AbsolutePosition.Y }) else setFold(not body.Visible) end
+end)
 on(fold.Activated, function() setFold(not body.Visible) end)
-local pressPos -- 标题条整条都能点: 手指没挪动 = 点击折叠, 挪了 = 拖面板
+local pressPos -- 备用: 某些客户端不吞事件, 那时也认"没挪动=点击"
 on(title.InputBegan, function(i) if tap(i) then pressPos = title.AbsolutePosition end end)
 on(title.InputEnded, function(i)
 	if pressPos and tap(i) then
@@ -263,8 +268,8 @@ end }
 
 -- ═════════ sibs: 载具 (坐着 = 控制座位所在装配体; 没坐 = 准星"换车"锁定) ═════════
 MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
-	local S = { acc = opt("acc", 500), grip = opt("grip", 5), turn = opt("turn", 2.2), cap = opt("turncap", 1), fly = opt("carfly", 60), horn = opt("hornkey", "H"), maxstuds = opt("carmaxstuds", 150) } -- maxstuds: 多大的 Model 还算"一辆车"(超过就不当成载具容器)
-	local picked, pickSeat, curSeat, curMax, att, vf, lv, status, clipModel, setBrake, lastCar
+	local S = { acc = opt("acc", 500), grip = opt("grip", 5), turn = opt("turn", 2.2), cap = opt("turncap", 1), fly = opt("carfly", 60), horn = opt("hornkey", "H"), maxstuds = opt("carmaxstuds", 150), swap = opt("carswap", true) } -- maxstuds: 多大的 Model 还算"一辆车"(超过就不当成载具容器)
+	local picked, pickSeat, pickPath, curSeat, curMax, att, vf, lv, status, clipModel, setBrake, lastCar, lastAnch
 	local gbtn, held = {}, {} -- 游戏自己的按钮 [1]油 [2]刹 [3]左 [4]右; 按不动力的游戏(服务器驱动)就靠按它的按钮开
 	local accel, decel, up, down, cruise, brake, flying, lampOn, target, statT = false, false, false, false, false, false, false, false, 0, 0
 	local clip = opt("carclip", false)
@@ -273,9 +278,31 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 	rp.FilterType = Enum.RaycastFilterType.Exclude
 
 	local function seat() local h = hum(); return h and h.SeatPart end
+	local function findByPath(path) -- 锁的那件被游戏换掉后按路径捞回来 (只在 workspace 底下找)
+		local node = workspace
+		for seg in tostring(path):gmatch("[^.]+") do
+			node = (seg == "Workspace") and workspace or (node and node:FindFirstChild(seg))
+			if not node then return nil end
+		end
+		return node
+	end
+	local swapParams = OverlapParams.new()
+	swapParams.FilterType = Enum.RaycastFilterType.Exclude
+	local function heavyNear(p) -- 附近最重的"没锚定"零件: 锁到装饰件时, 真身往往是它
+		swapParams.FilterDescendantsInstances = { me.Character }
+		local best, bm
+		for _, d in ipairs(workspace:GetPartBoundsInRadius(p.Position, 30, swapParams)) do
+			if d:IsA("BasePart") and not d.Anchored and d.AssemblyRootPart and nn(d.AssemblyMass) > (bm or 0) then best, bm = d.AssemblyRootPart, nn(d.AssemblyMass) end
+		end
+		return best
+	end
 	local function part() -- 控制部件, 座位
 		local s = seat()
 		if s then return s.AssemblyRootPart, s end
+		if picked and not picked.Parent and pickPath then -- 车被换掉了: 按路径找回
+			local node = findByPath(pickPath)
+			if node and node:IsA("BasePart") then picked = node; toast("车被换掉, 自动更到 " .. node.Name) end
+		end
 		if picked and picked:IsDescendantOf(workspace) then return picked, pickSeat end
 	end
 	local function scopeOf(p) -- 载具范围: 往上第一个"带座位"的 Model; 没有就取最近一个"尺寸像载具"的 Model; 绝不爬到整个街区
@@ -389,7 +416,7 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 		local r = (s or inst).AssemblyRootPart
 		if inst:FindFirstAncestorOfClass("Model") and inst:FindFirstAncestorOfClass("Model"):FindFirstChildOfClass("Humanoid") then toast("打中的是人, 不是车"); return end
 		if r.Anchored then toast("这个还锁着(锚定), 等游戏解锁"); return end
-		picked, pickSeat = r, s
+		picked, pickSeat, pickPath = r, s, r:GetFullName()
 		dropLamps()
 		if s then toast("锁定 " .. seatM.Name .. " · 座位 " .. s.Name)
 		else toast("锁定 " .. inst.Name .. " · 没座位(只能推/飞/翻转, 没油门)") end
@@ -413,7 +440,8 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 	local dragX
 	on(kd.DragContinue, function(i) local x = i and i.Position and i.Position.X; dragX = (x and x ~= 0) and x or UIS:GetMouseLocation().X end)
 	on(kd.DragEnd, function() dragX = nil; handle.Position = UDim2.fromScale(0.5, 0.5) end)
-	local live = false -- 只有面板折起来才接管触摸: 面板开着时滑条固定, 免得调参数时手一滑把车带跑
+	local steerOpen = opt("steeropen", false) -- true = 面板开着也能拖滑条 (默认: 折起来才能拖)
+	local live = false
 	local function steerButtons(st) -- 绑了左/右游戏按钮就用按钮转, 没绑才用 CFrame 硬转
 		if not (gbtn[3] or gbtn[4]) then return false end
 		gameHold(3, st < -0.25)
@@ -427,7 +455,7 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 		track.BackgroundTransparency, knob.BackgroundTransparency = v and 0.4 or 0.75, v and 0 or 0.55
 		if not v then dragX = nil; knob.Position = UDim2.fromScale(0.5, 0.5) end
 	end
-	foldHooks[#foldHooks + 1] = function(open) setLive(not open) end -- 钩子收到的是"面板开着吗", 滑条要的是"能不能拖"
+	foldHooks[#foldHooks + 1] = function(open) setLive(steerOpen or not open) end -- 钩子收到的是"面板开着吗", 滑条要的是"能不能拖"
 	setLive(not body.Visible)
 	local function steer() -- 轨道宽 200 / 圆点半径 18 → 圆心能走 ±82
 		if not live then return 0 end
@@ -447,10 +475,22 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 			if lampOn then setLamps(true) end
 		end
 		local p, sp = part()
+		if p and p.Anchored and S.swap then -- 锁的是锚定件(还没解锁/装饰件): 就近改绑到能推的那件
+			local cand = heavyNear(p)
+			if cand and cand ~= p then
+				picked, pickSeat, pickPath = cand, nil, cand:GetFullName()
+				toast("锚定件改用 " .. cand.Name)
+				p, sp = cand, nil
+			end
+		end
 		track.Visible = p ~= nil
 		if not p then detach(); if clipModel then reclip() end; return end
 		attach(p) -- 锚定的车照样绑: 之前 v13 直接 return, 所以"要动一会(等游戏解锁)才能绑上"
 		local anch = p.Anchored -- 锚定 = 引擎不让推, 只能等游戏自己解锁; 滑条转向走 CFrame 照样有效
+		if anch ~= lastAnch then
+			if lastAnch and not anch then toast("车解锁了, 推力生效") end -- 之前锚着现在放开 = 游戏把车交出来了
+			lastAnch = anch
+		end
 		local m = model()
 		if lastCar then lastCar.p, lastCar.s, lastCar.m, lastCar.path = p, s, m, p:GetFullName() else lastCar = { p = p, s = s, m = m, path = p:GetFullName() } end -- 诊断打包用: 哪怕打包时已经下车
 		local v = p.AssemblyLinearVelocity
@@ -577,6 +617,7 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 	local r5 = row(page)
 	toggle(r5, "常亮", false, function(v) lampOn = v; if v then setLamps(true) else dropLamps() end end, 0.5)
 	btn(r5, "闪 ×3", function() task.spawn(function() for _ = 1, 3 do setLamps(true); task.wait(0.12); setLamps(false); task.wait(0.12) end; if lampOn then setLamps(true) else dropLamps() end end) end, 0.5)
+	toggle(page, "滑条常可拖", steerOpen, function(v) steerOpen = v; save("steeropen", v); setLive(v or not body.Visible) end)
 	local rb = row(page)
 	btn(rb, "选油门", function() pickBtn(1) end, 0.5)
 	btn(rb, "选刹车", function() pickBtn(2) end, 0.5)

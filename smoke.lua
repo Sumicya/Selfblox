@@ -512,14 +512,28 @@ _G.__guiHit = nil
 print("\n[3b] 点标题条 = 折叠 (+/- 也还能用)")
 local tl, bd = tabs():FindFirstChild("SB_Title"), tabs():FindFirstChild("SB_Body")
 ok(tl ~= nil and bd ~= nil and bd.Visible, "标题条 + 面板体都在")
-local function tapTitle()
-	tl.InputBegan:Fire(input("Touch"))
-	tl.InputEnded:Fire(input("Touch"))
+local tdrag
+for _, d in ipairs(tl:GetDescendants()) do if d.ClassName == "UIDragDetector" then tdrag = d end end
+ok(tdrag ~= nil, "标题条上有拖拽器")
+local function tapTitle() -- 真机路线: 拖拽器说"没动过" = 点击
+	tdrag.DragBegin:Fire()
+	tdrag.DragEnd:Fire()
+end
+local function dragTitle() -- 拖过 = 只挪位置, 不折叠
+	tdrag.DragBegin:Fire()
+	tdrag.DragContinue:Fire()
+	tdrag.DragEnd:Fire()
 end
 tapTitle()
 ok(bd.Visible == false, "点一下标题条 → 折起来")
 tapTitle()
 ok(bd.Visible == true, "再点一下 → 展开")
+dragTitle()
+ok(bd.Visible == true, "拖标题条只挪位置, 不折叠")
+tapTitle()
+ok(bd.Visible == false, "拖完再点 → 折叠")
+tapTitle()
+ok(bd.Visible == true, "再点回去 → 展开 (后面测试要面板开着)")
 local foldBtn
 for _, d in ipairs(all()) do if d:IsA("TextButton") and (d.Text == "–" or d.Text == "+") then foldBtn = d end end
 foldBtn.Activated:Fire()
@@ -694,6 +708,19 @@ step(1 / 60, 10)
 ok(true, "按住/松开 " .. held .. " 个按钮 + 全开全关走完没炸")
 ok(_G.__SVC.VirtualInputManager.props.keys ~= nil, "喇叭真的发了按键事件")
 
+print("\n[6b2] 滑条常可拖 (折不起来时的后备)")
+local alwaysBtn = findBtn("滑条常可拖")
+ok(alwaysBtn ~= nil, "车页有「滑条常可拖」")
+click(alwaysBtn)
+ok(handle and handle.Visible == true, "开了之后面板开着也能拖")
+local lookA2 = seat.props.CFrame.LookVector
+kd.DragContinue:Fire({ Position = { X = 999, Y = 0 } })
+step(1 / 60, 10)
+ok((seat.props.CFrame.LookVector - lookA2).Magnitude > 0.03, "面板开着也能转向了")
+kd.DragEnd:Fire()
+click(alwaysBtn)
+ok(handle and handle.Visible == false, "关掉 → 回到「折叠才能拖」")
+
 print("\n[6d2] 绑游戏自己的按钮 (服务器驱动的车只能这么开)")
 local gb = findBtn("选油门") -- 第一个 = 车页那个 (漂页也有同名按钮)
 ok(gb ~= nil, "车页有「选油门」")
@@ -749,6 +776,35 @@ step(1 / 60, 5)
 local toastSeat = toastText()
 if _G.SB_DUMP then _G.SB_DUMP() end
 ok(toastSeat:find("座位 Seat", 1, true) ~= nil, "有座位时提示带座位名 (当时提示: " .. toastSeat .. ")")
+_G.__rayHit = nil
+
+print("\n[6g] 锁定自愈: 车被换掉 / 锁到锚定件")
+humanoid.props.SeatPart = nil
+_G.__rayHit = { Instance = truckBed }
+click(findBtn("换车"))
+step(1 / 60, 5)
+ok(truckBed:FindFirstChild("SB_SIBS") ~= nil, "先正常锁上")
+truckBed:Destroy() -- 游戏把车换了一件(你日志里那种"缓存对象已销毁")
+local newBed = inst("Part", { Name = "Primary", CanCollide = true, Anchored = false, Size = Vector3.new(4, 1, 16), Position = Vector3.new(60, 5, 0), CFrame = CFrame.new(Vector3.new(60, 5, 0)), AssemblyLinearVelocity = Vector3.zero, AssemblyMass = 1200 })
+newBed.props.AssemblyRootPart = newBed
+newBed.Parent = truck
+_G.__rayHit = nil
+step(1 / 60, 5)
+ok(newBed:FindFirstChild("SB_SIBS") ~= nil, "被换件后按路径自动更到新件")
+newBed.props.Anchored = true -- 这件还没解锁(锚定) → 应该自动改绑到旁边更重的自由件
+local heavy = inst("Part", { Name = "Chassis", CanCollide = true, Anchored = false, Size = Vector3.new(6, 2, 14), Position = Vector3.new(61, 5, 0), CFrame = CFrame.new(Vector3.new(61, 5, 0)), AssemblyLinearVelocity = Vector3.zero, AssemblyMass = 2000 })
+heavy.props.AssemblyRootPart = heavy
+heavy.Parent = truck
+_G.__radius = { newBed, heavy }
+step(1 / 60, 5)
+ok(heavy:FindFirstChild("SB_SIBS") ~= nil, "锚定件被换成了附近更重的自由件 (Chassis)")
+newBed.props.Anchored = false
+heavy:Destroy()
+newBed:Destroy()
+_G.__radius = nil
+_G.__rayHit = { Instance = seat } -- 收尾: 锁回真车, 后面的测试要用
+click(findBtn("换车"))
+step(1 / 60, 5)
 _G.__rayHit = nil
 
 print("\n[7b] 诊断打包")
