@@ -10,8 +10,8 @@ const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
 
 const SCENARIOS = {
   default: null,
-  override: `_G.SB = { spd = 60, flyspd = 120, spdmode = "cframe", only = { "moc", "sibs", "hud" } }`,
-  json: `_G._SB.FILES["Selfblox.json"] = '{"spd":99,"tab":"sibs","pos":[120,340],"logint":1}'`,
+  override: `_G.SB = { spd = 6161, flyspd = 7272, spdmode = "cframe", only = { "moc", "sibs", "hud" } }`,
+  json: `_G._SB.FILES["Selfblox.json"] = '{"spd":9999,"tab":"sibs","pos":[120,340],"logint":1}'`,
 };
 
 function run(name, setup) {

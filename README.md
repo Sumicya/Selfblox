@@ -1,4 +1,4 @@
-# Selfblox v12
+# Selfblox v12.1
 
 一个文件、一个面板、七个模块。Delta（安卓）为目标，纯触屏。
 
@@ -42,6 +42,30 @@ _G.SB = { spd = 60, flyspd = 120, hornkey = "H", only = {"moc", "sibs"} }
 | 志 | log | 各模块状态定时追加 `Selfblox_log.txt`，超上限重写 |
 | 机 | plane | 找飞机、判队伍、列 Remote、发/收侦听(`__namecall` 钩子)、高亮、报告写 `plane_debug.txt` + 剪贴板 |
 | 砖 | brick | BitFarmer 刷砖，开关式 |
+
+## v12 → v12.1
+
+功能一个没动，只拆重复：
+
+- `num()` 直接绑状态表 `num(行, "加速", S, "acc", 500, 0.5)`，读写 + 落盘一步到位，干掉 14 对 get/set 闭包
+- 字段名统一成 json 键名（`S.fly`→`S.carfly`、`S.mode`→`S.spdmode`…），**`Selfblox.json` 键集一个没变**，老配置照读
+- 穿墙还原 moc/sibs 两份一样的 → 一个 `reclipAll(col)`
+- sibs 每物理步原来要 `part()` 两次、`model()` 一次、`facing()` 一次，各自都往上爬一遍祖先链 → 现在只解析一次 `host`
+- 剩下的猜的门槛（飞机 55 分、收发各 200 条、dump 一层 8 个字段）都打上 `ponytail:` 标记写清上限
+
+## 本地检查
+
+不用开 Roblox 就能把脚本整个跑一遍：
+
+```bash
+npm i fengari   # 纯 JS 的 Lua VM
+node check.js
+```
+
+`stub.lua` 是最小的 Roblox/执行器 API 桩，`check.lua` 装面板 → 点每个按钮 → 跑物理帧 → 坐下开车 → 准星换车 → 卸载。
+`check.js` 起三个干净 VM：默认 / `_G.SB` 覆盖 / 已有 `Selfblox.json`，顺带验证配置优先级还活着。
+
+改坏了会被抓住（负向验证过：改坏 `doFly`、删掉 brick 模块、让 `num()` 无视 `_G.SB` 都会 FAIL）。
 
 ## v11 → v12 砍掉的
 

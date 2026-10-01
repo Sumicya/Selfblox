@@ -62,7 +62,13 @@ for _, name in ipairs(TABS) do
 	end
 end
 
--- ── 3. 数字框: 填个数回车 (走 FocusLost → set → save) ──
+-- ── 3. 配置优先级: _G.SB > Selfblox.json > 默认 (num() 刚改成直接绑状态表, 这条必须还在) ──
+local function boxWith(txt) for _, b in ipairs(boxes) do if b._p.Text == txt then return b end end end
+if _G._SCENARIO == "default" then need(boxWith("16") ~= nil, "默认速度 16 没显示在数字框里") end
+if _G._SCENARIO == "override" then need(boxWith("6161") ~= nil, "_G.SB.spd=6161 没进到速度框") end
+if _G._SCENARIO == "json" then need(boxWith("9999") ~= nil, "Selfblox.json 的 spd=9999 没进到速度框") end
+
+-- ── 4. 数字框: 填个数回车 (走 FocusLost → 写状态表 → 落盘) ──
 for i, tb in ipairs(boxes) do
 	try("数字框 #" .. i, function()
 		tb._p.Text = "3"
@@ -70,29 +76,31 @@ for i, tb in ipairs(boxes) do
 	end)
 end
 
--- ── 4. 每个按钮都点一遍 (toggle 全开, btn 全触发) ──
+-- ── 5. 每个按钮都点一遍 (toggle 全开, btn 全触发) ──
 local touch = { UserInputType = Enum.UserInputType.Touch }
+need(S.FILES["Selfblox.json"] ~= nil and S.FILES["Selfblox.json"]:find('"spd":3', 1, true) ~= nil,
+	"改了数字框却没写进 Selfblox.json")
 for i, b in ipairs(buttons) do
 	try("按钮 #" .. i .. " (" .. tostring(b._p.Text) .. ") Activated", function() b.Activated:Fire() end)
 	try("按钮 #" .. i .. " 按住", function() b.InputBegan:Fire(touch); b.InputEnded:Fire(touch) end)
 end
 
--- ── 5. 空转一会儿, 让 task.spawn 的循环起来 (log 录制 / brick 刷砖 / plane 自动) ──
+-- ── 6. 空转一会儿, 让 task.spawn 的循环起来 (log 录制 / brick 刷砖 / plane 自动) ──
 try("调度器", function() S.run(1, 20000) end)
 
--- ── 6. 站着: 速度/飞行/高跳/旋转/穿墙/夜视/漂移 全开时跑物理帧 ──
+-- ── 7. 站着: 速度/飞行/高跳/旋转/穿墙/夜视/漂移 全开时跑物理帧 ──
 for i = 1, 60 do try("PreSimulation 站立 #" .. i, function() S.tick("PreSimulation", 1 / 60) end) end
 for i = 1, 10 do try("PreRender #" .. i, function() S.tick("PreRender", 1 / 60) end) end
 try("JumpRequest", function() S.services.UserInputService.JumpRequest:Fire() end)
 
--- ── 7. 漂移踏板: 左刹右油 ──
+-- ── 8. 漂移踏板: 左刹右油 ──
 try("踏板", function()
 	S.brake.InputBegan:Fire(touch); S.gas.InputBegan:Fire(touch)
 	for i = 1, 20 do S.tick("PreSimulation", 1 / 60) end
 	S.brake.InputEnded:Fire(touch); S.gas.InputEnded:Fire(touch)
 end)
 
--- ── 8. 坐下开车: sibs 的座位分支 ──
+-- ── 9. 坐下开车: sibs 的座位分支 ──
 try("上车", function()
 	S.hum._p.SeatPart = S.seat
 	S.seat._p.Throttle = 1
@@ -102,7 +110,7 @@ try("上车", function()
 	for i = 1, 30 do S.tick("PreSimulation", 1 / 60) end
 end)
 
--- ── 9. 没座位时用准星换车 ──
+-- ── 10. 没座位时用准星换车 ──
 try("下车 + 准星换车", function()
 	S.hum._p.SeatPart = nil
 	for _, b in ipairs(buttons) do
@@ -112,7 +120,7 @@ try("下车 + 准星换车", function()
 end)
 need(textHas("锁定 ") ~= nil, "准星换车没锁定到 MuscleCar")
 
--- ── 10. 新 ProximityPrompt 出现 (秒互动) ──
+-- ── 11. 新 ProximityPrompt 出现 (秒互动) ──
 try("秒互动", function()
 	local p = S.newInst("ProximityPrompt", S.hrp)
 	p._p.Name = "NewPrompt"
@@ -120,7 +128,7 @@ try("秒互动", function()
 	need(p._p.HoldDuration == 0, "秒互动没把 HoldDuration 改成 0")
 end)
 
--- ── 11. plane: 扫到飞机 + 报告写盘 ──
+-- ── 12. plane: 扫到飞机 + 报告写盘 ──
 try("飞机扫描", function()
 	for _, b in ipairs(buttons) do
 		if b._p.Text == "重扫" then b.Activated:Fire() end
@@ -134,17 +142,17 @@ if nMods == 7 then
 	need(S.FILES["plane_debug.txt"] and S.FILES["plane_debug.txt"]:find("FighterJet", 1, true) ~= nil, "报告里没找到 FighterJet")
 end
 
--- ── 12. brick: 刷砖循环至少跑了几轮 ──
+-- ── 13. brick: 刷砖循环至少跑了几轮 ──
 try("刷砖循环", function() S.run(60, 80000) end)
 if nMods == 7 then need((S.spawnBit._sent or 0) > 0, "刷砖一次 SpawnBit:FireServer 都没发出去") end
 
--- ── 13. log: 录制写盘 ──
+-- ── 14. log: 录制写盘 ──
 if nMods == 7 then
 	need(S.FILES["Selfblox_log.txt"] ~= nil and #S.FILES["Selfblox_log.txt"] > 0, "log 模块开了录制却没写出东西")
 	need(S.FILES["Selfblox_log.txt"] and S.FILES["Selfblox_log.txt"]:find("moc:", 1, true) ~= nil, "日志里没有 moc 的状态行")
 end
 
--- ── 14. 卸载 ──
+-- ── 15. 卸载 ──
 try("卸载", function() _G.SB_UNLOAD() end)
 need(_G.SB_UNLOAD == nil, "_G.SB_UNLOAD 卸载后没清掉")
 need(gui._dead == true, "gui 卸载后没被 Destroy")
