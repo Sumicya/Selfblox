@@ -1,4 +1,4 @@
--- Selfblox v13.1 · 单文件 · 一次 loadstring · 一个面板 · 七个模块
+-- Selfblox v13.2 · 单文件 · 一次 loadstring · 一个面板 · 七个模块
 -- 用法:  loadstring(game:HttpGet("https://raw.githubusercontent.com/Sumicya/Selfblox/main/selfblox.lua"))()
 -- 覆盖:  执行前 _G.SB = { spd = 50, flyspd = 80, only = {"moc", "sibs"} }
 -- 优先级: _G.SB > Selfblox.json(面板里改过的值) > 默认值
@@ -48,11 +48,15 @@ local function nn(v) return tonumber(v) or 0 end -- 诊断/日志里的引擎数
 -- ───────── UI: 一个 ScreenGui, 标题条(原生 UIDragDetector 拖) + 页签 + 每模块一页 ─────────
 local FONT, WHITE = Enum.Font.GothamBold, Color3.new(1, 1, 1)
 local BG, ON, OFF = Color3.fromRGB(20, 22, 28), Color3.fromRGB(38, 125, 85), Color3.fromRGB(48, 50, 60)
+local LIT, CLEAR = Color3.fromRGB(150, 235, 170), 0.9 -- CLEAR = 面板底色透明度
+local function lit(b, on) b.BackgroundColor3 = on and ON or OFF; b.TextColor3 = on and LIT or WHITE end -- 开着/按着/当前页: 底色只剩 10%, 看不出颜色了, 状态靠字色
+local NUDGE = opt("nudge", 1) -- 文字整体上移+左移的像素: GothamBold 行高偏上, 中文又走回退字体, 文字会略微偏右下 (官方建议用 UIPadding 补偿). ponytail: 没在真机量过, 还偏就调大 (_G.SB = { nudge = 2 }), 0 = 不补偿
+local function nudge(i) if NUDGE ~= 0 then mk("UIPadding", { PaddingRight = UDim.new(0, NUDGE * 2), PaddingBottom = UDim.new(0, NUDGE * 2) }, i) end; return i end -- 内边距 = 位移 × 2 (文字居中, 中心只移内边距的一半)
 local W, ROW = 200, 26
 local gui = mk("ScreenGui", { Name = "Selfblox", ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = 99999 }, ROOT)
 local FX = mk("Folder", { Name = "Selfblox_FX" }, ROOT) -- Highlight / BillboardGui 放这里, 卸载一起删
 
-local BASE = { BackgroundColor3 = OFF, BackgroundTransparency = 0.3, BorderSizePixel = 0, Font = FONT, TextSize = 12, TextColor3 = WHITE, TextXAlignment = Enum.TextXAlignment.Center, TextYAlignment = Enum.TextYAlignment.Center }
+local BASE = { BackgroundColor3 = OFF, BackgroundTransparency = CLEAR, BorderSizePixel = 0, Font = FONT, TextSize = 12, TextColor3 = WHITE, TextStrokeTransparency = 0.5, TextXAlignment = Enum.TextXAlignment.Center, TextYAlignment = Enum.TextYAlignment.Center }
 local ORD = 0
 local function ord() ORD = ORD + 1; return ORD end -- UIListLayout 按创建顺序排
 local function ui(cls, parent, w, props) -- w=nil 整行, w=0.5 半行
@@ -60,6 +64,7 @@ local function ui(cls, parent, w, props) -- w=nil 整行, w=0.5 半行
 	for k, v in pairs(BASE) do i[k] = v end
 	i.Size, i.LayoutOrder = w and UDim2.new(w, 0, 1, 0) or UDim2.new(1, 0, 0, ROW), ord()
 	for k, v in pairs(props or {}) do i[k] = v end
+	nudge(i)
 	i.Parent = parent
 	return i
 end
@@ -76,20 +81,21 @@ local function btn(parent, s, fn, w)
 end
 local function toggle(parent, s, init, fn, w) -- 返回 set(v): 代码里也能翻状态
 	local b, st = ui("TextButton", parent, w), nil
-	local function set(v, quiet) st = v; b.Text = s .. (v and " 开" or " 关"); b.BackgroundColor3 = v and ON or OFF; if not quiet then fn(v) end end
+	local function set(v, quiet) st = v; b.Text = s .. (v and " 开" or " 关"); lit(b, v); if not quiet then fn(v) end end
 	set(init, true)
 	on(b.Activated, function() set(not st) end)
 	return set
 end
 local function hold(parent, s, fn, w) -- 按住 fn(true) 松开 fn(false)
 	local b = ui("TextButton", parent, w, { Text = s, AutoButtonColor = false })
-	on(b.InputBegan, function(i) if tap(i) then b.BackgroundColor3 = ON; fn(true) end end)
-	on(b.InputEnded, function(i) if tap(i) then b.BackgroundColor3 = OFF; fn(false) end end)
+	on(b.InputBegan, function(i) if tap(i) then lit(b, true); fn(true) end end)
+	on(b.InputEnded, function(i) if tap(i) then lit(b, false); fn(false) end end)
 end
 local function num(parent, s, S, k, w, savek) -- 直接绑 S[k], 改完自动存盘; savek 缺省 = k
-	local f = mk("Frame", { Size = w and UDim2.new(w, 0, 1, 0) or UDim2.new(1, 0, 0, ROW), LayoutOrder = ord(), BackgroundColor3 = OFF, BackgroundTransparency = 0.3, BorderSizePixel = 0 }, parent) -- 一行分两半: 左半标签, 右半输入框, 文字各在自己那半格里居中 (原来标签靠左 + 前面垫个空格, 和居中的按钮/输入框对不齐)
+	local f = mk("Frame", { Size = w and UDim2.new(w, 0, 1, 0) or UDim2.new(1, 0, 0, ROW), LayoutOrder = ord(), BackgroundColor3 = OFF, BackgroundTransparency = CLEAR, BorderSizePixel = 0 }, parent) -- 一行分两半: 左半标签, 右半输入框, 文字各在自己那半格里居中 (原来标签靠左 + 前面垫个空格, 和居中的按钮/输入框对不齐)
 	if s then ui("TextLabel", f, nil, { Text = s, BackgroundTransparency = 1, Size = UDim2.fromScale(0.5, 1) }) end
-	local tb = mk("TextBox", { Size = UDim2.fromScale(s and 0.5 or 1, 1), Position = UDim2.fromScale(s and 0.5 or 0, 0), BackgroundTransparency = 1, Font = FONT, TextSize = 12, TextColor3 = Color3.fromRGB(255, 225, 140), Text = tostring(S[k]), TextXAlignment = Enum.TextXAlignment.Center, TextYAlignment = Enum.TextYAlignment.Center, ClearTextOnFocus = false }, f)
+	local tb = mk("TextBox", { Size = UDim2.fromScale(s and 0.5 or 1, 1), Position = UDim2.fromScale(s and 0.5 or 0, 0), BackgroundTransparency = 1, Font = FONT, TextSize = 12, TextColor3 = Color3.fromRGB(255, 225, 140), TextStrokeTransparency = 0.5, Text = tostring(S[k]), TextXAlignment = Enum.TextXAlignment.Center, TextYAlignment = Enum.TextYAlignment.Center, ClearTextOnFocus = false }, f)
+	nudge(tb)
 	on(tb.FocusLost, function() local v = tonumber(tb.Text); if v then S[k] = v; save(savek or k, v) end; tb.Text = tostring(S[k]) end)
 end
 
@@ -117,11 +123,13 @@ end)
 
 local vp = workspace.CurrentCamera.ViewportSize
 local pos = opt("pos", { vp.X / 2 - W / 2, vp.Y * 0.3 })
-local title = mk("TextLabel", { Name = "SB_Title", Size = UDim2.fromOffset(W, ROW), Position = UDim2.fromOffset(math.clamp(pos[1], 0, math.max(vp.X - W, 0)), math.clamp(pos[2], 0, math.max(vp.Y - ROW, 0))), BackgroundColor3 = BG, BackgroundTransparency = 0.15, BorderSizePixel = 0, Font = FONT, TextSize = 13, TextColor3 = WHITE, Text = "Selfblox v13.1" }, gui)
-local body = mk("Frame", { Name = "SB_Body", Size = UDim2.new(0, W, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Position = title.Position + UDim2.fromOffset(0, ROW), BackgroundColor3 = BG, BackgroundTransparency = 0.35, BorderSizePixel = 0 }, gui)
+local title = mk("TextLabel", { Name = "SB_Title", Size = UDim2.fromOffset(W, ROW), Position = UDim2.fromOffset(math.clamp(pos[1], 0, math.max(vp.X - W, 0)), math.clamp(pos[2], 0, math.max(vp.Y - ROW, 0))), BackgroundColor3 = BG, BackgroundTransparency = CLEAR, BorderSizePixel = 0, Font = FONT, TextSize = 13, TextColor3 = WHITE, TextStrokeTransparency = 0.5, Text = "Selfblox v13.2" }, gui)
+nudge(title)
+local body = mk("Frame", { Name = "SB_Body", Size = UDim2.new(0, W, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Position = title.Position + UDim2.fromOffset(0, ROW), BackgroundColor3 = BG, BackgroundTransparency = CLEAR, BorderSizePixel = 0 }, gui)
 mk("UIListLayout", { Padding = UDim.new(0, 0) }, body)
 on(title:GetPropertyChangedSignal("Position"), function() body.Position = title.Position + UDim2.fromOffset(0, ROW) end)
-local fold = mk("TextButton", { Size = UDim2.fromOffset(ROW, ROW), Position = UDim2.new(1, -ROW, 0, 0), BackgroundTransparency = 1, Font = FONT, TextSize = 16, TextColor3 = WHITE, Text = "–" }, title)
+local fold = mk("TextButton", { Size = UDim2.fromOffset(ROW, ROW), Position = UDim2.new(1, -ROW, 0, 0), BackgroundTransparency = 1, Font = FONT, TextSize = 16, TextColor3 = WHITE, TextStrokeTransparency = 0.5, Text = "–" }, title)
+nudge(fold)
 local foldHooks = {} -- 想知道"面板是折着还是开着"的模块挂这里
 local function setFold(v) body.Visible = v; fold.Text = v and "–" or "+"; for _, f in ipairs(foldHooks) do f(v) end end
 local drag = mk("UIDragDetector", { BoundingUI = gui }, title)
@@ -147,7 +155,7 @@ end)
 local tabs = row(body)
 
 local toastL = mk("TextLabel", { Name = "SB_Toast", AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 22), Size = UDim2.fromOffset(0, 24), AutomaticSize = Enum.AutomaticSize.X, BackgroundColor3 = BG, BackgroundTransparency = 0.2, BorderSizePixel = 0, Font = FONT, TextSize = 13, TextColor3 = WHITE, Visible = false }, gui)
-mk("UIPadding", { PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10) }, toastL)
+mk("UIPadding", { PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10 + NUDGE * 2), PaddingBottom = UDim.new(0, NUDGE * 2) }, toastL)
 local toastN = 0
 local function toast(s) toastN = toastN + 1; local n = toastN; toastL.Text, toastL.Visible = s, true; task.delay(2, function() if toastN == n then toastL.Visible = false end end) end
 local dumpNow -- 启动完再赋值; 模块里的按钮闭包先引用这个局部变量
@@ -261,7 +269,7 @@ MODS[#MODS + 1] = { name = "moc", tab = "动", fn = function(page)
 	local r6 = row(page)
 	toggle(r6, "夜视", false, function(v) nv = v; if v then nvOn() else nvOff() end end, 0.5)
 	local NEXT, CN = { off = "normal", normal = "force", force = "off" }, { off = "秒互动 关", normal = "秒互动 普通", force = "秒互动 强制" }
-	btn(r6, CN.off, function(b) setNocd(NEXT[nocd]); b.Text = CN[nocd]; b.BackgroundColor3 = nocd ~= "off" and ON or OFF end, 0.5)
+	btn(r6, CN.off, function(b) setNocd(NEXT[nocd]); b.Text = CN[nocd]; lit(b, nocd ~= "off") end, 0.5)
 	local r7 = row(page, 36)
 	hold(r7, "▲ 上升", function(v) up = v end, 0.5)
 	hold(r7, "▼ 下降", function(v) down = v end, 0.5)
@@ -544,7 +552,7 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 		local gst, thr, st = 0, 0, steer()
 		if sp and sp:IsA("VehicleSeat") then gst, thr, st = sp.Steer, sp.Throttle, math.clamp(st + sp.Steer, -1, 1) end -- 游戏自带的手机油门/方向盘也吃
 		local acc, dec = accel or thr > 0, decel or thr < 0
-		if os.clock() - statT > 0.2 then statT = os.clock(); status.Text = (m and m.Name or p.Name) .. " · " .. math.floor(spd + 0.5) .. " sps" .. (s and "" or " · 准星锁定") .. (anch and " · 锚定(等游戏解锁)" or "") end
+		if os.clock() - statT > 0.2 then statT = os.clock(); status.Text = (m and m.Name or p.Name) .. " · " .. math.floor(spd + 0.5) .. (s and "" or " · 准星锁定") .. (anch and " · 锚定(等游戏解锁)" or "") end
 		if clip then noclip(p, m) elseif clipModel then reclip() end
 		if flying then -- 飞车: 摇杆(前后左右) + 面板按钮都吃; 松手悬停
 			if not lv then lv = mk("LinearVelocity", { Attachment0 = att, MaxForce = math.huge, VectorVelocity = Vector3.zero, RelativeTo = Enum.ActuatorRelativeTo.World }, att) end
@@ -665,11 +673,7 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 	toggle(page, "滑条常可拖", steerOpen, function(v) steerOpen = v; save("steeropen", v); setLive(v or not body.Visible) end)
 	toggle(page, "自动绑车", autoOn, function(v) autoOn = v; save("carauto", v) end)
 	local rb = row(page)
-	btn(rb, "选油门", function() pickBtn(1) end, 0.5)
-	btn(rb, "选刹车", function() pickBtn(2) end, 0.5)
-	local rb2 = row(page)
-	btn(rb2, "选左", function() pickBtn(3) end, 0.5)
-	btn(rb2, "选右", function() pickBtn(4) end, 0.5)
+	for n = 1, 4 do btn(rb, "绑" .. gname[n], function() pickBtn(n) end, 0.25) end -- 绑游戏自己的按钮: 点一下 → 再点游戏画面上对应的那个键 (服务器驱动、推力不管用的车才需要)
 	local r6 = row(page)
 	toggle(r6, "常声(" .. S.horn .. ")", false, horn, 0.5)
 	hold(r6, "声", horn, 0.5)
@@ -700,11 +704,11 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 	return function() for i = 1, 4 do gameHold(i, false) end; detach(); reclip(); dropLamps(); horn(false); if curSeat and curMax then curSeat.MaxSpeed = curMax end end
 end }
 
--- ═════════ drift: 人物推进 (自动找踏板; 找不到就自己点选; 都没有就用面板按钮) ═════════
+-- ═════════ drift: 人物推进 (自动找踏板; 找不到就用面板按钮) ═════════
 MODS[#MODS + 1] = { name = "drift", tab = "漂", fn = function(page)
 	local S = { acc = opt("dacc", 5), brake = opt("dbrake", 10) }
 	local enabled, w, s, att, vf, status = opt("drift", true), false, false, nil, nil, nil
-	local slots, manual, pedalRoot = {}, {}, nil -- slots[1]=刹车 slots[2]=油门; manual[n]=这是我自己点选的, 自动找别覆盖
+	local slots, pedalRoot = {}, nil -- slots[1]=刹车 slots[2]=油门
 	local function pedalLines() -- 踏板的真实结构: 绑不上时能直接看出它长啥样
 		local pg = me:FindFirstChild("PlayerGui")
 		local f = pg and pg:FindFirstChild("MobilePedals")
@@ -721,45 +725,38 @@ MODS[#MODS + 1] = { name = "drift", tab = "漂", fn = function(page)
 		return L
 	end
 	DUMP.pedals = pedalLines
-	local function slotName(n) return slots[n] and (slots[n].btn.Name .. (manual[n] and "(点选)" or "")) or "未绑" end
+	local function slotName(n) return slots[n] and slots[n].btn.Name or "未绑" end
 	local function setSlot(n, v) if n == 1 then s = v else w = v end end
 	local function clearSlot(n) local sl = slots[n]; if sl then for _, c in ipairs(sl.conns) do c:Disconnect() end end; slots[n] = nil; w, s = w or false, s or false end
-	local function bindSlot(n, g, mine) -- 按住 g 就当踩着第 n 个踏板
+	local function bindSlot(n, g) -- 按住 g 就当踩着第 n 个踏板
 		clearSlot(n)
 		local conns = {}
 		conns[#conns + 1] = g.InputBegan:Connect(function(i) if tap(i) then setSlot(n, true) end end)
 		conns[#conns + 1] = g.InputEnded:Connect(function(i) if tap(i) then setSlot(n, false) end end)
 		slots[n] = { btn = g, conns = conns }
-		if mine then manual[n] = true end
 	end
 	local function slotsText() return "踏板 刹=" .. slotName(1) .. " 油=" .. slotName(2) end
 	local function slotLive(n) local sl = slots[n]; return (sl and sl.btn and sl.btn.Parent) and true or false end
 	local function prune() -- 游戏重建 UI 时旧按钮会消失, 留着就是按不动的死连接
-		for n = 1, 2 do if slots[n] and not slots[n].btn.Parent then clearSlot(n); manual[n] = nil end end
+		for n = 1, 2 do if slots[n] and not slots[n].btn.Parent then clearSlot(n) end end
 	end
-	local function autoBind(force) -- force = 手动点了「自动找踏板」(清掉手动点选重来); 平时(重试循环)只补没手动绑的那几个
-		if force then clearSlot(1); clearSlot(2); manual[1], manual[2] = nil, nil end
+	local function autoBind(force) -- force = 手动点了「重绑踏板」(清掉重来)
+		if force then clearSlot(1); clearSlot(2) end
 		pedalRoot = nil
 		local pg = me:FindFirstChild("PlayerGui")
 		local f = pg and pg:FindFirstChild("MobilePedals")
 		if not f then
-			if not slotLive(1) and not slotLive(2) then status.Text = "无 MobilePedals → 用「选刹车/选油门」自己点游戏里的踏板" end
+			if not slotLive(1) and not slotLive(2) then status.Text = "无 MobilePedals → 用下面的 ▲ 油门 / ▼ 刹车" end
 			return
 		end
 		local b = {}
 		for _, c in ipairs(f:GetDescendants()) do if c:IsA("GuiButton") then b[#b + 1] = c end end -- 框名/嵌套深度每个游戏不一样, 整个子树找按钮
 		table.sort(b, function(x, y) return (x.AbsolutePosition or Vector2.zero).X < (y.AbsolutePosition or Vector2.zero).X end)
-		if #b < 2 then if force then status.Text = "MobilePedals 里只找到 " .. #b .. " 个按钮 → 用「选刹车/选油门」" end; return end
-		if not manual[1] then bindSlot(1, b[1]) else bindSlot(1, slots[1].btn) end
-		if not manual[2] then bindSlot(2, b[2]) else bindSlot(2, slots[2].btn) end
+		if #b < 2 then if force then status.Text = "MobilePedals 里只找到 " .. #b .. " 个按钮 → 用下面的 ▲ 油门 / ▼ 刹车" end; return end
+		bindSlot(1, b[1])
+		bindSlot(2, b[2])
 		pedalRoot = f
-		status.Text = "自动找踏板: " .. slotsText()
-	end
-	local function pick(n) -- 点游戏画面里那个踏板: 不猜名字, 不猜层级
-		pickButton(n == 1 and "刹车" or "油门", function(hit)
-			bindSlot(n, hit, true)
-			status.Text = (n == 1 and "刹车" or "油门") .. " = " .. hit:GetFullName() .. " · " .. slotsText()
-		end, function(t) status.Text = t end)
+		status.Text = slotsText()
 	end
 
 	on(RunService.PreSimulation, function()
@@ -785,10 +782,7 @@ MODS[#MODS + 1] = { name = "drift", tab = "漂", fn = function(page)
 	num(r1, "刹车", S, "brake", 0.5, "dbrake")
 	local r2 = row(page)
 	toggle(r2, "推进", enabled, function(v) enabled = v; save("drift", v) end, 0.5)
-	btn(r2, "自动找踏板", function() autoBind(true) end, 0.5)
-	local r3 = row(page)
-	btn(r3, "选刹车", function() pick(1) end, 0.5)
-	btn(r3, "选油门", function() pick(2) end, 0.5)
+	btn(r2, "重绑踏板", function() autoBind(true) end, 0.5)
 	local r4 = row(page, 36)
 	hold(r4, "▲ 油门", function(v) w = v end, 0.5)
 	hold(r4, "▼ 刹车", function(v) s = v end, 0.5)
@@ -853,8 +847,8 @@ MODS[#MODS + 1] = { name = "hud", tab = "显", fn = function(page)
 		bar.Visible = showBar
 		if showBar then
 			local pos = r and string.format("%.0f %.0f %.0f", r.Position.X, r.Position.Y, r.Position.Z) or "-"
-			bar.Text = string.format("<font color='#89dceb'>%.0fms</font>  <font color='%s'>%.0ffps</font>  <font color='#c8b4eb'>%.0fMB</font>  <font color='#ebc896'>%s</font>  <font color='#eb96aa'>%d/%d</font>  <font color='#d2d4de'>%s</font>",
-				me:GetNetworkPing() * 1000, fps >= 50 and "#aae696" or "#eb7878", fps, Stats:GetTotalMemoryUsageMb(), clock(), #Players:GetPlayers(), Players.MaxPlayers, pos)
+			bar.Text = string.format("<font color='#89dceb'>%.0f</font>  <font color='%s'>%.0f</font>  <font color='#c8b4eb'>%.0f</font>  <font color='#ebc896'>%s</font>  <font color='#eb96aa'>%d/%d</font>  <font color='#d2d4de'>%s</font>",
+				me:GetNetworkPing() * 1000, fps >= 50 and "#aae696" or "#eb7878", fps, Stats:GetTotalMemoryUsageMb(), clock(), #Players:GetPlayers(), Players.MaxPlayers, pos) -- 数字后面不带单位, 靠颜色认: 青=延迟 绿/红=帧率 紫=内存 黄=时间 粉=人数 灰=坐标
 		end
 		for pl, e in pairs(esp) do
 			local c = pl.Character
@@ -1116,7 +1110,7 @@ end }
 local only, active, pages, tabBtns = opt("only", nil), {}, {}, {}
 for _, m in ipairs(MODS) do if type(only) ~= "table" or table.find(only, m.name) then active[#active + 1] = m end end
 local function show(name)
-	for n, pg in pairs(pages) do pg.Visible = n == name; tabBtns[n].BackgroundColor3 = n == name and ON or OFF end
+	for n, pg in pairs(pages) do pg.Visible = n == name; lit(tabBtns[n], n == name) end
 	save("tab", name)
 end
 for _, m in ipairs(active) do
@@ -1131,7 +1125,7 @@ if #active > 0 then show(pages[opt("tab", "moc")] and opt("tab", "moc") or activ
 
 local function dumpLines()
 	local L = { "==== SELFblox 诊断 " .. os.date("%Y-%m-%d ") .. clock(true) .. " ====",
-		"脚本=v13.1 页签=" .. tostring(saved.tab) .. " place=" .. game.PlaceId .. " 地图=" .. tostring(game.Name),
+		"脚本=v13.2 页签=" .. tostring(saved.tab) .. " place=" .. game.PlaceId .. " 地图=" .. tostring(game.Name),
 		"配置 " .. Http:JSONEncode(saved),
 		"执行器 isfile=" .. tostring(isfile ~= nil) .. " writefile=" .. tostring(writefile ~= nil) .. " appendfile=" .. tostring(appendfile ~= nil) .. " setclipboard=" .. tostring(setclipboard ~= nil) .. " gethui=" .. tostring(gethui ~= nil) .. " hookmetamethod=" .. tostring(hookmetamethod ~= nil) .. " newcclosure=" .. tostring(newcclosure ~= nil) .. " getnamecallmethod=" .. tostring(getnamecallmethod ~= nil),
 		"角色 " .. tostring(me.Name) .. " 队=" .. tostring(me.Team and me.Team.Name) .. " 坐=" .. tostring(hum() and hum().SeatPart and (hum().SeatPart:GetFullName())) .. " 根=" .. tostring(root() and root().Anchored) }
@@ -1174,4 +1168,4 @@ _G.SB_UNLOAD = function()
 	FX:Destroy()
 	_G.SB_UNLOAD = nil
 end
-print("[Selfblox] v13.1 · " .. #active .. " 模块 · _G.SB_UNLOAD() 卸载")
+print("[Selfblox] v13.2 · " .. #active .. " 模块 · _G.SB_UNLOAD() 卸载")

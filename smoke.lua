@@ -41,10 +41,10 @@ local VERIFIED = {
 	Camera = words("CFrame ViewportSize WorldToViewportPoint"),
 	ColorCorrectionEffect = words("Brightness Contrast Saturation"),
 	Folder = words(""),
-	Frame = words("AbsolutePosition Active AnchorPoint AutomaticSize BackgroundColor3 BackgroundTransparency BorderSizePixel LayoutOrder Position Rotation Size Visible ZIndex"),
+	Frame = words("AbsolutePosition AbsoluteSize Active AnchorPoint AutomaticSize BackgroundColor3 BackgroundTransparency BorderSizePixel LayoutOrder Position Rotation Size Visible ZIndex"),
 	HttpService = words("JSONDecode JSONEncode"),
 	Humanoid = words("ChangeState Health JumpHeight JumpPower MoveDirection PlatformStand SeatPart UseJumpPower WalkSpeed"),
-	ImageButton = words("AbsolutePosition AbsoluteSize InputBegan InputEnded Visible"),
+	ImageButton = words("AbsolutePosition AbsoluteSize Active InputBegan InputEnded Visible"),
 	Lighting = words("Ambient Brightness FogEnd GlobalShadows OutdoorAmbient"),
 	LinearVelocity = words("Attachment0 MaxForce RelativeTo VectorVelocity"),
 	Model = words("GetExtentsSize"),
@@ -58,13 +58,13 @@ local VERIFIED = {
 	Seat = words("Anchored AssemblyLinearVelocity AssemblyMass AssemblyRootPart CFrame Occupant Position"),
 	SpotLight = words("Angle Brightness Color Enabled Face Range"),
 	Stats = words("GetTotalMemoryUsageMb"),
-	TextBox = words("BackgroundTransparency ClearTextOnFocus FocusLost Font Position Size Text TextColor3 TextSize TextXAlignment TextYAlignment"),
-	TextButton = words("AbsolutePosition AbsoluteSize Activated AutoButtonColor BackgroundColor3 BackgroundTransparency BorderSizePixel Font InputBegan InputEnded LayoutOrder Position Size Text TextColor3 TextSize TextXAlignment TextYAlignment Visible"),
+	TextBox = words("BackgroundTransparency ClearTextOnFocus FocusLost Font Position Size Text TextColor3 TextSize TextStrokeTransparency TextXAlignment TextYAlignment"),
+	TextButton = words("AbsolutePosition AbsoluteSize Activated AutoButtonColor BackgroundColor3 BackgroundTransparency BorderSizePixel Font InputBegan InputEnded LayoutOrder Position Size Text TextColor3 TextSize TextStrokeTransparency TextXAlignment TextYAlignment Visible"),
 	TextLabel = words("AbsolutePosition AnchorPoint AutomaticSize BackgroundColor3 BackgroundTransparency BorderSizePixel Font InputBegan InputEnded LayoutOrder Position RichText Size Text TextColor3 TextSize TextStrokeTransparency TextWrapped TextXAlignment TextYAlignment Visible"),
 	UICorner = words("CornerRadius"),
 	UIDragDetector = words("BoundingUI DragAxis DragContinue DragEnd DragStart DragStyle"),
 	UIListLayout = words("FillDirection Padding"),
-	UIPadding = words("PaddingLeft PaddingRight"),
+	UIPadding = words("PaddingBottom PaddingLeft PaddingRight"),
 	UserInputService = words("InputBegan JumpRequest"),
 	VectorForce = words("ApplyAtCenterOfMass Attachment0 Force RelativeTo"),
 	VehicleSeat = words("Anchored AssemblyLinearVelocity AssemblyMass AssemblyRootPart CFrame CanCollide GetConnectedParts MaxSpeed Occupant Position Size Steer Throttle Torque"),
@@ -537,11 +537,6 @@ local function tabs() return _G.__SVC.CoreGui:FindFirstChild("Selfblox") end
 local function all() local g = tabs(); return g and g:GetDescendants() or {} end
 local function buttons() local o = {}; for _, d in ipairs(all()) do if d:IsA("TextButton") and d.Text ~= "–" and d.Text ~= "+" then o[#o + 1] = d end end; return o end
 local function findBtn(prefix) for _, b in ipairs(buttons()) do if b.Text:sub(1, #prefix) == prefix then return b end end end
-local function findBtnLast(prefix) -- 「选油门」在车页和漂页都有, 要能指定拿哪个
-	local last
-	for _, b in ipairs(buttons()) do if b.Text:sub(1, #prefix) == prefix then last = b end end
-	return last
-end
 local function toastText() local t = tabs() and tabs():FindFirstChild("SB_Toast"); return t and t.Text or "" end
 local function input(kind) return { UserInputType = Enum.UserInputType[kind] } end
 local function ends(s, suf) return #s >= #suf and s:sub(-#suf) == suf end
@@ -603,28 +598,23 @@ step(1 / 60, 130)
 local rebound
 for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" and d.Text:find("刹=Brake", 1, true) then rebound = d.Text end end
 ok(rebound ~= nil, "踏板重建后自动重绑 (" .. tostring(rebound) .. ")")
-pedals2:Destroy() -- 这套假踏板是测试自己造的, 用完自己收, 不然算漏实例
-
-local fakePedal = inst("ImageButton", { Name = "某游戏的油门键" })
-fakePedal.Parent = pgui
-_G.__guiHit = { fakePedal }
-click(findBtnLast("选油门")) -- 漂页那个 (车页也有个同名的)
-local hintTxt
-for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" and d.Text:find("点游戏画面上的", 1, true) then hintTxt = d.Text end end
-ok(hintTxt ~= nil, "点「选油门」会告诉你点哪儿 (" .. tostring(hintTxt) .. ")")
-_G.__SVC.UserInputService.InputBegan:Fire({ UserInputType = Enum.UserInputType.Touch, Position = Vector3.new(500, 900, 0) })
-local pickedTxt
-for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" and d.Text:find("油门 = ", 1, true) then pickedTxt = d.Text end end
-ok(pickedTxt ~= nil, "点一下游戏按钮就绑上油门 (" .. tostring(pickedTxt) .. ")")
-fakePedal.InputBegan:Fire(input("Touch"))
+-- 自动绑上的踏板: 按住真的生效 (原来这条是靠手动点选的那套测的; 用重建后的 b2)
+b2.InputBegan:Fire(input("Touch"))
 step(1 / 60, 3)
 if _G.SB_DUMP then _G.SB_DUMP() end
 local dumpP = VFS["selfblox_dump.txt"]
-ok(dumpP and dumpP:find("油门=true", 1, true) ~= nil, "按住这个键 → 油门状态真的变真")
-fakePedal.InputEnded:Fire(input("Touch"))
+ok(dumpP and dumpP:find("油门=true", 1, true) ~= nil, "按住自动绑上的油门键 → 油门状态真的变真")
+b2.InputEnded:Fire(input("Touch"))
 step(1 / 60, 3)
-fakePedal:Destroy()
-_G.__guiHit = nil
+if _G.SB_DUMP then _G.SB_DUMP() end
+ok(VFS["selfblox_dump.txt"]:find("油门=true", 1, true) == nil, "松手 → 油门状态回假")
+pedals2:Destroy() -- 这套假踏板是测试自己造的, 用完自己收, 不然算漏实例
+
+-- 漂移页只剩原来的: 重绑踏板 / ▲ 油门 / ▼ 刹车 (v13 多出来的「选刹车」「选油门」整套删了)
+ok(findBtn("重绑踏板") ~= nil and findBtn("▲ 油门") ~= nil and findBtn("▼ 刹车") ~= nil, "漂页有 重绑踏板 / ▲ 油门 / ▼ 刹车")
+local oldBtns = 0
+for _, d in ipairs(all()) do if d:IsA("TextButton") and (starts(d.Text, "选") or starts(d.Text, "自动找踏板")) then oldBtns = oldBtns + 1 end end
+ok(oldBtns == 0, "面板里没有任何「选…」按钮, 也没有「自动找踏板」 (剩 " .. oldBtns .. " 个)")
 
 print("\n[3b] 点标题条 = 折叠 (+/- 也还能用)")
 local tl, bd = tabs():FindFirstChild("SB_Title"), tabs():FindFirstChild("SB_Body")
@@ -694,6 +684,39 @@ for _, d in ipairs(all()) do
 end
 ok(left == 0, "面板里没有靠左的文字 (靠左 " .. left .. " 个)")
 ok(boxes > 0 and good == boxes, "输入框: 左半标签 + 右半输入框, 文字水平垂直都居中, 标签前面不垫空格 (" .. good .. "/" .. boxes .. ")")
+end
+
+do
+print("\n[3d] 底色透明度 0.9 · 状态靠字色 · 文字补偿")
+local tl2, bd2 = tabs():FindFirstChild("SB_Title"), tabs():FindFirstChild("SB_Body")
+ok(tl2.BackgroundTransparency == 0.9 and bd2.BackgroundTransparency == 0.9, "标题条 / 页面体底色透明度 0.9")
+local opaque, cells = 0, 0
+for _, d in ipairs(bd2:GetDescendants()) do
+	if d:IsA("GuiObject") then
+		cells = cells + 1
+		if d.BackgroundTransparency < 0.9 then opaque = opaque + 1 end
+	end
+end
+ok(cells > 0 and opaque == 0, "页面里所有按钮 / 数值格 / 标签底色都 ≥ 0.9 透明 (" .. cells .. " 个控件, 不够透明的 " .. opaque .. " 个)")
+local esp = findBtn("玩家 ESP")
+click(esp)
+ok(esp.TextColor3.R == 1 and esp.TextColor3.G == 1, "开关关着 → 字是白的 (" .. esp.Text .. ")")
+click(esp)
+ok(esp.TextColor3.G > esp.TextColor3.R, "开关开着 → 字变亮绿 (底色只剩 10%, 开/关靠字色) (" .. esp.Text .. ")")
+local lit = 0
+for _, t in ipairs({ "动", "车", "漂", "显", "志", "机", "砖" }) do local b = findBtn(t); if b and b.TextColor3.G > b.TextColor3.R then lit = lit + 1 end end
+ok(lit == 1, "页签里正好一个是亮的 = 当前页 (" .. lit .. " 个)")
+local texts, nudged = 0, 0
+local function nudgeOf(d) local pad = d:FindFirstChildOfClass("UIPadding"); return pad ~= nil and pad.PaddingRight.Offset == 2 and pad.PaddingBottom.Offset == 2 end
+texts, nudged = 1, nudgeOf(tl2) and 1 or 0
+for _, root in ipairs({ tl2, bd2 }) do
+	for _, d in ipairs(root:GetDescendants()) do
+		if d:IsA("TextLabel") or d:IsA("TextButton") or d:IsA("TextBox") then texts = texts + 1; if nudgeOf(d) then nudged = nudged + 1 end end
+	end
+end
+ok(nudged == texts, "每段文字都往上、往左让了 1px (UIPadding 右/下 2px) (" .. nudged .. "/" .. texts .. ")")
+local tp = tabs():FindFirstChild("SB_Toast"):FindFirstChildOfClass("UIPadding")
+ok(tp ~= nil and tp.PaddingBottom ~= nil and tp.PaddingBottom.Offset == 2 and tp.PaddingRight.Offset == 12 and tp.PaddingLeft.Offset == 10, "提示条也补偿了 (右 10+2, 下 2, 左 10 不变)")
 end
 
 print("\n[4] 角色模块: 开速度 → 真的动")
@@ -904,8 +927,12 @@ click(alwaysBtn)
 ok(handle and handle.Visible == false, "关掉 → 回到「折叠才能拖」")
 
 print("\n[6d2] 绑游戏自己的按钮 (服务器驱动的车只能这么开)")
-local gb = findBtn("选油门") -- 第一个 = 车页那个 (漂页也有同名按钮)
-ok(gb ~= nil, "车页有「选油门」")
+local gb = findBtn("绑油门")
+ok(gb ~= nil and findBtn("绑刹车") ~= nil and findBtn("绑左") ~= nil and findBtn("绑右") ~= nil, "车页有「绑油门 / 绑刹车 / 绑左 / 绑右」")
+local bindRow = gb.Parent
+local quarters = 0
+for _, d in ipairs(bindRow:GetChildren()) do if d:IsA("TextButton") and d.Size.X.Scale == 0.25 then quarters = quarters + 1 end end
+ok(quarters == 4, "四个绑定按钮并成一行, 各占四分之一 (" .. quarters .. " 个)")
 _G.__guiHit = { gameGas } -- 你在游戏画面上点哪, 就绑哪
 gb.Activated:Fire()
 _G.__SVC.UserInputService.InputBegan:Fire({ UserInputType = Enum.UserInputType.Touch, Position = Vector3.new(860, 2230, 0) })
@@ -917,15 +944,17 @@ for _, d in ipairs(all()) do if d:IsA("TextButton") and d.Text == "▲ 加速" t
 local before = #(_G.__SVC.VirtualInputManager.props.mouse or {})
 btnGas.InputBegan:Fire(input("Touch"))
 step(1 / 60, 3)
+ok(btnGas.TextColor3.G > btnGas.TextColor3.R, "按住时字变亮 (底色只剩 10%, 按下状态靠字色)")
 local ev = _G.__SVC.VirtualInputManager.props.mouse or {}
 ok(#ev > before, "按住「▲ 加速」→ 发了虚拟鼠标事件 (" .. tostring(#ev - before) .. " 个)")
 ok(ev[#ev] and ev[#ev].down == true and math.abs(ev[#ev].x - 860) < 2 and math.abs(ev[#ev].y - 2230) < 2, "按的正是游戏按钮中心 (" .. string.format("%.0f,%.0f", ev[#ev] and ev[#ev].x or -1, ev[#ev] and ev[#ev].y or -1) .. ")")
 btnGas.InputEnded:Fire(input("Touch"))
 step(1 / 60, 3)
+ok(btnGas.TextColor3.R == 1 and btnGas.TextColor3.G == 1, "松手后字变回白色")
 ev = _G.__SVC.VirtualInputManager.props.mouse or {}
 ok(ev[#ev] and ev[#ev].down == false, "松手 → 松开事件")
 _G.__guiHit = { gameLeft }
-for _, d in ipairs(all()) do if d:IsA("TextButton") and d.Text == "选左" then d.Activated:Fire() end end
+for _, d in ipairs(all()) do if d:IsA("TextButton") and d.Text == "绑左" then d.Activated:Fire() end end
 _G.__SVC.UserInputService.InputBegan:Fire({ UserInputType = Enum.UserInputType.Touch, Position = Vector3.new(80, 2240, 0) })
 tapTitle() -- 折面板 → 滑条可用
 kd.DragContinue:Fire(Vector2.new(-999, 0))
@@ -1000,8 +1029,9 @@ for _, hit in ipairs({ CP.sur, CP.wheelL, carBody, seat }) do
 	ok(toastText():find("座位 Seat", 1, true) ~= nil, "提示说明是按座位锁的 (" .. toastText() .. ")")
 end
 local st
-for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" and d.Text:find(" sps", 1, true) then st = d.Text end end
-ok(st ~= nil and st:sub(1, 3) == "Car", "状态行显示整辆车的名字 Car, 不是某个零件/子模型 (" .. tostring(st) .. ")")
+for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" and starts(d.Text, "Car · ") then st = d.Text end end
+ok(st ~= nil, "状态行显示整辆车的名字 Car, 不是某个零件/子模型 (" .. tostring(st) .. ")")
+ok(st ~= nil and not st:find("sps", 1, true), "状态行速度后面不带 sps 单位")
 _G.__rayHit = nil
 end
 
@@ -1027,8 +1057,9 @@ ok(type(_G.SB_DUMP) == "function", "也可以用 _G.SB_DUMP() 手动打")
 print("\n[8] 写盘 / 剪贴板")
 ok(VFS["Selfblox.json"] ~= nil, "改过的值写进了 Selfblox.json")
 local barLbl
-for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" and d.Text:find("fps</font>", 1, true) then barLbl = d end end
+for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" and d.RichText == true and d.Text:find("<font", 1, true) then barLbl = d end end
 ok(barLbl and barLbl.Text:find("02:37", 1, true) ~= nil, "数据条是 12 小时制 (现在该显示 02:37)")
+ok(barLbl and not (barLbl.Text:find("ms", 1, true) or barLbl.Text:find("fps", 1, true) or barLbl.Text:find("MB", 1, true)), "数据条数字后面不带 ms / fps / MB 单位 (" .. tostring(barLbl and barLbl.Text) .. ")")
 local LOGTXT = VFS["Selfblox_log.txt"]
 ok(LOGTXT == nil or not LOGTXT:find("fps"), "日志里没有 fps/ms 那种备注")
 ok(CLIP == nil or true, "剪贴板接口在")
@@ -1062,7 +1093,7 @@ local box = nil
 for _, d in ipairs(all()) do if d:IsA("TextBox") then box = d; break end end
 ok(box and box.Text == "99", "_G.SB.spd=99 顶掉了默认 16")
 local bar2
-for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" and d.Text:find("fps</font>", 1, true) then bar2 = d end end
+for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" and d.RichText == true and d.Text:find("<font", 1, true) then bar2 = d end end
 ok(bar2 and bar2.Text:find("14:37", 1, true) ~= nil, "clock=\"24\" 切回 24 小时制 (14:37)")
 _G.SB_UNLOAD()
 step(1 / 60, 5)
@@ -1188,6 +1219,15 @@ ok(late.CanCollide == false, "重生期间新冒出来的零件也照常穿墙")
 late:Destroy()
 player.props.Character = charSaved
 step(1 / 60, 5)
+
+-- nudge = 0 → 不补偿: 一个 UIPadding 都不加
+if _G.SB_UNLOAD then _G.SB_UNLOAD() end
+VFS["Selfblox.json"] = nil
+_G.SB = { nudge = 0, only = { "hud" } }
+ok(pcall(assert(load_chunk(SRC, "selfblox13"))), "nudge=0 能起")
+local padN = 0
+for _, d in ipairs(tabs():FindFirstChild("SB_Body"):GetDescendants()) do if d.ClassName == "UIPadding" then padN = padN + 1 end end
+ok(padN == 0, "nudge = 0 → 页面里一个 UIPadding 都没加 (" .. padN .. " 个)")
 
 _G.SB_UNLOAD()
 step(1 / 60, 3)
