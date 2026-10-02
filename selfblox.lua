@@ -855,14 +855,14 @@ do -- ═════════ 志: 周期记录 / 诊断打包 ════�
 end
 
 -- ═════════ plane: 飞机侦察 (找飞机/判队伍/列 Remote/收发侦听/写报告) ═════════
-feature{ kind = "legacy", id = "plane", tab = "机", fn = function(page)
+do -- ═════════ 机: 飞机侦察 (找飞机 / 判队伍 / 列 Remote / 收发侦听 / 写报告) ═════════
 	local HINT = { "plane", "jet", "aircraft", "fighter", "bomber", "heli", "glider", "warbird", "biplane", "gunship", "blimp" }
 	local WING = { "wing", "aileron", "rudder", "elevator", "propeller", "rotor", "flap", "stabilizer", "tailfin" }
 	local TEAMK = { "team", "faction", "side", "country", "nation" }
 	local RHINT = { "fire", "shoot", "shot", "bullet", "gun", "weapon", "attack", "damage", "hit", "kill", "launch", "missile", "rocket", "bomb", "plane", "spawn", "team", "seat", "pilot" }
 	local function hint(name, list) name = name:lower(); for _, h in ipairs(list) do if name:find(h, 1, true) then return h end end end
 	local planes, remotes, sent, got, hls, watch = {}, {}, {}, {}, {}, {}
-	local spyOn, watchOn, hlOn, autoOn, all, oldNC, status = false, false, false, false, opt("pall", false), nil, nil
+	local oldNC
 	local function fmt(v, depth)
 		local t = typeof(v)
 		if t == "Instance" then return v:GetFullName()
@@ -920,14 +920,13 @@ feature{ kind = "legacy", id = "plane", tab = "机", fn = function(page)
 	local function highlight()
 		for _, h in ipairs(hls) do h:Destroy() end
 		table.clear(hls)
-		if not hlOn then return end
+		if not F.hl then return end
 		for _, p in ipairs(planes) do
 			local c = p.mine and Color3.fromRGB(80, 255, 80) or (p.teamObj and me.Team and (p.teamObj == me.Team and Color3.fromRGB(80, 140, 255) or Color3.fromRGB(255, 70, 70))) or Color3.fromRGB(170, 170, 170)
 			hls[#hls + 1] = mk("Highlight", { Adornee = p.model, FillColor = c, OutlineColor = c, FillTransparency = 0.75 }, FX)
 		end
 	end
 	local function setWatch(v)
-		watchOn = v
 		for _, c in ipairs(watch) do c:Disconnect() end
 		table.clear(watch)
 		if not v then return end
@@ -941,21 +940,20 @@ feature{ kind = "legacy", id = "plane", tab = "机", fn = function(page)
 		if v and not oldNC then
 			oldNC = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
 				local m = getnamecallmethod()
-				if spyOn and (m == "FireServer" or m == "InvokeServer") then
+				if F.spy and (m == "FireServer" or m == "InvokeServer") then
 					local a = table.pack(...)
-					pcall(function() local path = self:GetFullName(); if all or hint(path, RHINT) then push(sent, path .. ":" .. m .. " " .. args(a)) end end) -- 记录失败不能拦住游戏自己的调用
+					pcall(function() local path = self:GetFullName(); if F.pall or hint(path, RHINT) then push(sent, path .. ":" .. m .. " " .. args(a)) end end) -- 记录失败不能拦住游戏自己的调用
 				end
 				return oldNC(self, ...)
 			end))
 		end
-		spyOn = v
 		return true
 	end
 	local function scan()
 		table.clear(planes)
 		table.clear(remotes)
 		local seen = {}
-		local function remote(d) if isRemote(d) and (all or hint(d:GetFullName(), RHINT)) then remotes[#remotes + 1] = d end end
+		local function remote(d) if isRemote(d) and (F.pall or hint(d:GetFullName(), RHINT)) then remotes[#remotes + 1] = d end end
 		for _, d in ipairs(workspace:GetDescendants()) do
 			remote(d)
 			if d:IsA("Seat") or d:IsA("VehicleSeat") then -- 有座位的最外层 Model 才是候选
@@ -970,9 +968,9 @@ feature{ kind = "legacy", id = "plane", tab = "机", fn = function(page)
 		end
 		for _, d in ipairs(RS:GetDescendants()) do remote(d) end
 		table.sort(planes, function(a, b) return a.score > b.score end)
-		if watchOn then setWatch(true) end
+		if F.watch then setWatch(true) end
 		highlight()
-		status.Text = "飞机 " .. #planes .. " · Remote " .. #remotes .. " · 发 " .. #sent .. " 收 " .. #got
+		say("plane_status", "飞机 " .. #planes .. " · Remote " .. #remotes .. " · 发 " .. #sent .. " 收 " .. #got)
 	end
 	local function report()
 		local L = { "==== PLANE " .. os.date("%Y-%m-%d ") .. clock(true) .. " place=" .. game.PlaceId .. " me=" .. me.Name .. " team=" .. (me.Team and me.Team.Name or "-") .. " ====", "-- 飞机 " .. #planes }
@@ -993,26 +991,19 @@ feature{ kind = "legacy", id = "plane", tab = "机", fn = function(page)
 		toast("报告 " .. #L .. " 行 → plane_debug.txt / 剪贴板")
 	end
 
-	local r1 = row(page)
-	btn(r1, "重扫", scan, 0.5)
-	btn(r1, "写报告", report, 0.5)
-	local r2 = row(page)
-	toggle(r2, "发侦听", false, setSpy, 0.5)
-	toggle(r2, "收侦听", false, setWatch, 0.5)
-	local r3 = row(page)
-	toggle(r3, "高亮", false, function(v) hlOn = v; highlight() end, 0.5)
-	toggle(r3, "自动 5s", false, function(v) autoOn = v end, 0.5)
-	local r4 = row(page)
-	toggle(r4, "全录", all, function(v) all = v; save("pall", v) end, 0.5)
-	btn(r4, "清空记录", function() table.clear(sent); table.clear(got) end, 0.5)
-	status = text(page, "上机 → 发侦听 → 开几枪 → 写报告")
-	task.spawn(function() while alive do task.wait(5); if autoOn and alive then scan(); report() end end end)
+	feature{ kind = "page", id = "plane", tab = "机", info = function() return "飞机=" .. #planes .. " Remote=" .. #remotes .. " 发=" .. #sent .. " 收=" .. #got .. " 侦听=" .. tostring(F.spy) end }
+	feature{ kind = "btn", label = "重扫", fn = scan }
+	feature{ kind = "btn", label = "写报告", fn = report }
+	feature{ key = "spy", label = "发侦听", set = setSpy }
+	feature{ key = "watch", label = "收侦听", set = setWatch, off = function() setWatch(false) end }
+	feature{ key = "hl", label = "高亮", set = highlight, off = function() F.hl = false; highlight() end }
+	feature{ key = "autoscan", label = "自动 5s", loop = function() scan(); report() end, every = 5 }
+	feature{ key = "pall", save = "pall", label = "全录" }
+	feature{ kind = "btn", label = "清空记录", fn = function() table.clear(sent); table.clear(got) end }
+	feature{ kind = "text", key = "plane_status", label = "上机 → 发侦听 → 开几枪 → 写报告" }
+	feature{ kind = "tick", off = function() if oldNC then hookmetamethod(game, "__namecall", oldNC) end end } -- 只在卸载时: 发侦听装的钩子还原 (关开关只停记录, 钩子留着照常放行)
+end
 
-	INFO.plane = function() return "飞机=" .. #planes .. " Remote=" .. #remotes .. " 发=" .. #sent .. " 收=" .. #got .. " 侦听=" .. tostring(spyOn) end
-	return function() setWatch(false); hlOn = false; highlight(); if oldNC then hookmetamethod(game, "__namecall", oldNC) end end
-end }
-
--- ═════════ brick: BitFarmer 刷砖 ═════════
 do -- ═════════ 砖: BitFarmer 刷砖 (单游戏专用) ═════════
 	local st = { cycles = 0, earned = 0, sent = 0, got = 0, rate = 0 }
 	S.bmult, S.blevel = opt("bmult", 99999), opt("blevel", 9999) -- 只读配置 (没有面板控件)
