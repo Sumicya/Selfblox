@@ -767,10 +767,11 @@ step(1 / 60, 10)
 ok(seat.MaxSpeed == math.huge, "上车后座位限速抬到无穷")
 local clipOn = 0
 for _, b in ipairs(buttons()) do if starts(b.Text, "穿墙") and ends(b.Text, " 开") then clipOn = clipOn + 1 end end
-ok(seat.CanCollide == false and carBody.CanCollide == false and CP.sur.CanCollide == false, "穿墙开着: 座位 / 车身 / 装饰件都穿 (穿墙开着 " .. clipOn .. " 个 · 座=" .. tostring(seat.CanCollide) .. " 身=" .. tostring(carBody.CanCollide) .. " 饰=" .. tostring(CP.sur.CanCollide) .. ")")
+ok(seat.CanCollide == false and carBody.CanCollide == false, "穿墙开着: 座位 / 车身都穿 (穿墙开着 " .. clipOn .. " 个 · 座=" .. tostring(seat.CanCollide) .. " 身=" .. tostring(carBody.CanCollide) .. ")")
+ok(CP.sur.CanCollide == true, "穿墙范围只有本车装配体: 同 Model 里另一个装配体的装饰件 Sur 不再被穿掉 (" .. tostring(CP.sur.CanCollide) .. ")")
 ok(CP.wheelL.CanCollide == true and CP.wheelR.CanCollide == true, "穿墙开着: 只有轮胎底(整车最低的)保留碰撞, 车才不会掉下去 (左=" .. tostring(CP.wheelL.CanCollide) .. " 右=" .. tostring(CP.wheelR.CanCollide) .. ")")
 ok(CP.wheelUp.CanCollide == true, "悬挂抬高、不在最低那圈的轮子, 名字带 wheel 仍然保留")
-ok(CP.hubL.CanCollide == true and CP.hubR.CanCollide == true, "名字里没有 wheel 的低位零件, 也按\"整车最低\"判成轮胎保留 (停车台比它们还低, 但锚定的不参与; 影子不碰撞也不参与)")
+ok(CP.hubL.CanCollide == false and CP.hubR.CanCollide == false, "认到轮子名以后只留轮胎: 名字里没有 wheel/tire 的低位零件 RL/RR 也穿掉 (兜底只在整车一个轮子名都认不到时才用)")
 ok(CP.pad.CanCollide == true and CP.fence.CanCollide == true, "穿墙不碰同一个 Model 里锚定的停车台 / 栏杆 (地面/平台不是车)")
 seat.props.AssemblyLinearVelocity = Vector3.new(0, -5, 0)
 _G.__rayHit = { Instance = CP.fence, Distance = 1.2 } -- 老逻辑: 离地只剩 0.7 → 把竖直速度顶到 +3 (上浮); 新逻辑根本不探地
@@ -779,6 +780,46 @@ ok(seat.props.AssemblyLinearVelocity.Y == -5, "穿墙不再探地推起, 开启�
 _G.__rayHit = nil
 seat.props.AssemblyLinearVelocity = Vector3.zero
 ok(seat:FindFirstChild("SB_SIBS") ~= nil, "车约束挂在座位装配体上")
+
+do local function noWheelCar() -- 包进函数: 主函数的局部变量已经快到 200 个上限了
+	print("\n[6a2] 穿墙兜底: 整车一个轮子名都认不到时按最低块保留; 轮子晚一批才出现就整车重判")
+	local seatWas = humanoid.props.SeatPart
+	humanoid.props.SeatPart = nil -- 走准星锁定这条路, 不然 part() 优先用座位
+	local nw = inst("Model", { Name = "NoWheel" })
+	local nwSeat = inst("VehicleSeat", { Name = "Driver", CanCollide = true, Anchored = false, Size = Vector3.new(2, 1, 2), CFrame = CFrame.new(Vector3.new(200, 5, 0)), Position = Vector3.new(200, 5, 0), AssemblyLinearVelocity = Vector3.zero, AssemblyAngularVelocity = Vector3.zero, AssemblyMass = 20, Throttle = 0, Steer = 0, MaxSpeed = 100 })
+	nwSeat.props.AssemblyRootPart = nwSeat
+	nwSeat.Parent = nw
+	local function nwPart(name, size, pos)
+		local d = inst("Part", { Name = name, CanCollide = true, Anchored = false, Size = size, CFrame = CFrame.new(pos), Position = pos, AssemblyLinearVelocity = Vector3.zero, AssemblyMass = 2 })
+		d.props.AssemblyRootPart = nwSeat
+		d.Parent = nw
+		return d
+	end
+	local nwBody = nwPart("Body", Vector3.new(6, 2, 12), Vector3.new(200, 5, 0)) -- 底 y=4
+	local nwLowL = nwPart("RL", Vector3.new(1, 3, 3), Vector3.new(197, 1.5, 3)) -- 底 y=0
+	local nwLowR = nwPart("RR", Vector3.new(1, 3, 3), Vector3.new(203, 1.5, 3)) -- 底 y=0
+	local nwRoof = nwPart("Roof", Vector3.new(4, 1, 4), Vector3.new(200, 8, 0)) -- 底 y=7.5
+	nw.Parent = workspace
+	local function status() for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" and starts(d.Text, "NoWheel · ") then return d.Text end end end
+	_G.__rayHit = { Instance = nwSeat }
+	click(findBtn("换车"))
+	step(1 / 60, 40) -- 0.67 秒: 跨过 noclip 的 0.5 秒批处理窗口
+	ok(nwSeat:FindFirstChild("SB_SIBS") ~= nil, "换到一辆零件全都不叫 wheel/tire 的车上")
+	ok(nwLowL.CanCollide == true and nwLowR.CanCollide == true, "一个轮子名都认不到 → 按整车最低兜底保留碰撞, 车不会掉出世界")
+	ok(nwBody.CanCollide == false and nwRoof.CanCollide == false, "兜底也只留最低那圈: 车身 / 车顶照样穿")
+	ok(status() ~= nil and status():find("没认到轮子", 1, true) ~= nil, "状态行如实说明在用兜底 (" .. tostring(status()) .. ")")
+	local nwWheel = nwPart("Wheel_Late", Vector3.new(1, 3, 3), Vector3.new(197, 1.5, -3)) -- 轮子晚一批才出现
+	step(1 / 60, 40)
+	ok(nwWheel.CanCollide == true, "晚出现的轮子按名字保留碰撞")
+	ok(nwLowL.CanCollide == false and nwLowR.CanCollide == false, "认到轮子后整车重判: 之前靠兜底留下的 RL/RR 也穿掉 (只留轮胎)")
+	ok(status() ~= nil and not status():find("没认到轮子", 1, true), "认到轮子后状态行不再报兜底")
+	nw:Destroy()
+	_G.__rayHit = { Instance = seat } -- 锁回原来那辆, 后面的测试要用
+	click(findBtn("换车"))
+	step(1 / 60, 5)
+	_G.__rayHit = nil
+	humanoid.props.SeatPart = seatWas
+end noWheelCar() end
 click(findBtn("常亮"))
 step(1 / 60, 3)
 local lamps, onBody, onSeat = 0, 0, 0
@@ -960,6 +1001,17 @@ ok(dumpCar and dumpCar:find("座位: -", 1, true) ~= nil, "快照里座位一栏
 ok(dumpCar and dumpCar:find("准星射线", 1, true) ~= nil and dumpCar:find("祖先: ", 1, true) ~= nil, "快照里有准星射线 + 祖先链")
 ok(dumpCar and dumpCar:find("周围的座位", 1, true) ~= nil, "快照里有周围座位(半径扫描)")
 ok(dumpCar and dumpCar:find("车周围 25 格里的部件", 1, true) ~= nil, "快照里有周围部件")
+do local function mapGuard() -- 打中街区里的一件(祖先 Model 只有 Street, 尺寸远超 carmaxstuds): 不能当成车
+	local mp = inst("Part", { Name = "Surface", CanCollide = true, Anchored = false, Size = Vector3.new(20, 1, 20), Position = Vector3.new(500, 0, 0), CFrame = CFrame.new(Vector3.new(500, 0, 0)), AssemblyLinearVelocity = Vector3.zero, AssemblyMass = 900 })
+	mp.props.AssemblyRootPart = mp
+	mp.Parent = street
+	_G.__rayHit = { Instance = mp }
+	click(findBtn("换车"))
+	step(1 / 60, 5)
+	ok(mp:FindFirstChild("SB_SIBS") == nil, "打中街区里的地面件 Surface → 不绑 (祖先 Model 全都超过 carmaxstuds)")
+	ok(toastText():find("地图", 1, true) ~= nil, "提示说清是地图/大容器, 不是笼统的「没座位」(" .. toastText() .. ")")
+	mp:Destroy()
+end mapGuard() end
 _G.__rayHit = { Instance = seat } -- 换回真车: 带座位的那种
 click(findBtn("换车"))
 step(1 / 60, 5)
@@ -1223,8 +1275,10 @@ VFS["Selfblox_log.txt"] = nil
 click(findBtn("录制 "))
 step(1 / 60, 250)
 local logTxt = VFS["Selfblox_log.txt"]
-ok(logTxt ~= nil and logTxt:sub(1, 13) == "---- Selfblox", "录制 → 写了带表头的日志")
-ok(logTxt and logTxt:find("] #0", 1, true) and logTxt:find("] #1", 1, true) and logTxt:find("配置 {", 1, true) and logTxt:find("moc 速度=", 1, true), "每条有序号 / 配置 / 各模块状态")
+ok(logTxt ~= nil and #logTxt > 0, "录制 → 日志文件在写")
+ok(logTxt and logTxt:match("%] #%d+") ~= nil, "每条带序号 (序号接着之前的数往下走, 不从 0 重来)")
+ok(logTxt and logTxt:find("配置 {", 1, true) ~= nil, "每条带整份配置")
+ok(logTxt and logTxt:find("moc 速度=", 1, true) ~= nil, "每条带各模块状态")
 ok(labelHas("KB / ") ~= nil, "状态行显示写了多少 KB")
 local limitBox
 for _, d in ipairs(all()) do if d:IsA("TextBox") and d.Text == "512" then limitBox = d end end
@@ -1232,6 +1286,7 @@ limitBox.Text = "0.001"; limitBox.FocusLost:Fire()
 step(1 / 60, 250)
 local _, entries = (VFS["Selfblox_log.txt"] or ""):gsub("%] #%d+", "")
 ok(entries == 1, "超过上限 → 直接重写, 文件里只剩最新一条 (" .. entries .. " 条)")
+ok((VFS["Selfblox_log.txt"] or ""):sub(1, 13) == "---- Selfblox", "重写时补上表头")
 limitBox.Text = "512"; limitBox.FocusLost:Fire()
 -- 循环里任何一步抛错, 记录循环都不能永久死掉
 local HS = _G.__SVC.HttpService

@@ -290,7 +290,7 @@ end
 
 do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配体; 没坐 = 准星"换车"锁定 / 自动绑最近的空座位) ═════════
 	S.turncap, S.hornkey, S.carmaxstuds, S.carswap = opt("turncap", 1), opt("hornkey", "H"), opt("carmaxstuds", 150), opt("carswap", true) -- 只读配置 (没有面板控件) -- maxstuds: 多大的 Model 还算"一辆车"(超过就不当成载具容器)
-	local picked, pickSeat, pickPath, autoPick, curSeat, curMax, att, vf, lv, clipModel, lastCar, lastAnch
+	local picked, pickSeat, pickPath, autoPick, curSeat, curMax, att, vf, lv, clipCar, lastCar, lastAnch
 	local target, statT, autoT = 0, 0, 0
 	local lamps, lampSaved, col = {}, setmetatable({}, { __mode = "k" }), setmetatable({}, { __mode = "k" })
 	local rp = RaycastParams.new()
@@ -354,29 +354,34 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 		lv = nil
 	end
 	local function detach() if att then att:Destroy(); att, vf, lv = nil, nil, nil end end
-	local clipList, clipSeen, clipKeep, clipLow, clipT = {}, {}, {}, nil, -1
-	local function reclip() reclipAll(col); clipModel, clipList, clipSeen, clipKeep, clipLow, clipT = nil, {}, {}, {}, nil, -1 end
+	local clipList, clipSeen, clipKeep, clipBottom, clipLow, clipT, clipWheels = {}, {}, {}, {}, nil, -1, false
+	local function wheelish(d) local nm = d.Name:lower(); return (nm:find("wheel") or nm:find("tire") or nm:find("tyre") or nm:find("轮")) ~= nil end
+	local function reclip() reclipAll(col); clipCar, clipList, clipSeen, clipKeep, clipBottom, clipLow, clipT, clipWheels = nil, {}, {}, {}, {}, nil, -1, false end
 	local function bottomY(d) -- 零件在世界坐标里的最低点 (按旋转后的包围盒算)
 		local c, z = d.CFrame, d.Size
 		return d.Position.Y - 0.5 * (math.abs(c.RightVector.Y) * z.X + math.abs(c.UpVector.Y) * z.Y + math.abs(c.LookVector.Y) * z.Z)
 	end
-	local function noclip(p, m) -- 穿墙: 只有"轮胎底"留碰撞 (名字带 wheel/tire/tyre/轮, 或整车最低的那几块), 其余全穿; 锚定的(地面/平台)和人不碰. 不再悬浮: 原来的探地推起把车托高, 轮子反而悬空 = "开启上浮"
-		local scope = m or p
-		if scope ~= clipModel then reclip(); clipModel = scope end
-		if os.clock() - clipT > 0.5 then -- 清单半秒补一次, 只判断新出现的零件; 判过的不再变 (悬挂压缩时轮子会抬高, 不能因此被穿掉掉下去). ponytail: 车翻着开启时"最低"会判成车顶; 起伏地形上, 比最低的高出 0.5 以上又不叫 wheel/tire 的轮子会被穿掉 — 要更稳就按尺寸放宽容差
+	local function keepRule(d) -- 只留轮胎碰撞; 一个轮子名都认不到时才退回"整车最低 0.5 格内"兜底, 不然车直接掉出世界
+		if clipWheels then return wheelish(d) end
+		return (clipBottom[d] or math.huge) <= (clipLow or math.huge) + 0.5
+	end
+	local function rejudge() for _, d in ipairs(clipList) do clipKeep[d] = keepRule(d) or nil end end -- 高度用第一次看到时的值: 悬挂压缩 / 车翻身都不改判, 不然轮子会被自己穿掉
+	local function noclip(p) -- 穿墙: 范围只有本车装配体(不是整个 Model 容器, 免得穿掉同容器里别的车和地图件); 锚定的(地面/平台)和人物的不碰. 不悬浮: 探地推起会把车托高、轮子悬空 = "开启上浮"
+		if p ~= clipCar then reclip(); clipCar = p end
+		if os.clock() - clipT > 0.5 then -- 半秒补一批新零件
 			clipT = os.clock()
 			local fresh = {}
-			for _, d in ipairs(m and m:GetDescendants() or p:GetConnectedParts(true)) do
-				if d:IsA("BasePart") and not clipSeen[d] and not d.Anchored and not mine(d) then fresh[#fresh + 1] = d end
+			for _, d in ipairs(p:GetConnectedParts(true)) do
+				if d:IsA("BasePart") and not clipSeen[d] and not d.Anchored and not mine(d) then
+					clipSeen[d] = true; clipList[#clipList + 1] = d; fresh[#fresh + 1] = d
+					clipBottom[d] = bottomY(d)
+					if d.CanCollide then clipLow = math.min(clipLow or math.huge, clipBottom[d]) end -- 本来就不碰撞的(影子/玻璃)不参与"最低"
+					if wheelish(d) then clipWheels = true end -- 轮子可能晚一批才出现: 认到就整车重判一次
+				end
 			end
-			if not clipLow then for _, d in ipairs(fresh) do if d.CanCollide then clipLow = math.min(clipLow or math.huge, bottomY(d)) end end end -- 本来就不碰撞的(影子/玻璃)不参与"最低"
-			for _, d in ipairs(fresh) do
-				clipSeen[d] = true; clipList[#clipList + 1] = d
-				local nm = d.Name:lower()
-				if d.CanCollide and (bottomY(d) <= (clipLow or math.huge) + 0.5 or nm:find("wheel") or nm:find("tire") or nm:find("tyre") or nm:find("轮")) then clipKeep[d] = true end
-			end
+			if #fresh > 0 then rejudge() end
 		end
-		for _, d in ipairs(clipList) do if d.CanCollide and not clipKeep[d] then col[d] = true; d.CanCollide = false end end
+		for _, d in ipairs(clipList) do if d.Parent and d.CanCollide and not clipKeep[d] then col[d] = true; d.CanCollide = false end end
 	end
 	local function dropLamps() for _, l in ipairs(lamps) do if lampSaved[l] ~= nil then l.Enabled = lampSaved[l] else l:Destroy() end end; table.clear(lamps) end
 	local function asm(p) return p:GetConnectedParts(true) end -- 本车装配体的所有部件 (不是整个 Model 容器, 免得动到别人的车)
@@ -426,6 +431,7 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 		end
 		local r = (s or inst).AssemblyRootPart
 		if inst:FindFirstAncestorOfClass("Model") and inst:FindFirstAncestorOfClass("Model"):FindFirstChildOfClass("Humanoid") then toast("打中的是人, 不是车"); return end
+		if not s and inst:FindFirstAncestorOfClass("Model") and not scopeOf(inst) then toast("打中的是地图/大容器, 不是车 (超过 carmaxstuds=" .. S.carmaxstuds .. ")"); return end
 		if r.Anchored then toast("这个还锁着(锚定), 等游戏解锁"); return end
 		picked, pickSeat, pickPath, autoPick = r, s, r:GetFullName(), false
 		dropLamps()
@@ -514,7 +520,7 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 			end
 		end
 		track.Visible = p ~= nil
-		if not p then detach(); if clipModel then reclip() end; return end
+		if not p then detach(); if clipCar then reclip() end; return end
 		attach(p) -- 锚定的车照样绑: 早先的实现一锚定就直接 return, 所以"要动一会(等游戏解锁)才能绑上"
 		local anch = p.Anchored -- 锚定 = 引擎不让推, 只能等游戏自己解锁; 滑条转向走 CFrame 照样有效
 		if anch ~= lastAnch then
@@ -529,8 +535,8 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 		local gst, thr, st = 0, 0, steer()
 		if sp and sp:IsA("VehicleSeat") then gst, thr, st = sp.Steer, sp.Throttle, math.clamp(st + sp.Steer, -1, 1) end -- 游戏自带的手机油门/方向盘也吃
 		local acc, dec = F.accel or thr > 0, F.decel or thr < 0
-		if os.clock() - statT > 0.2 then statT = os.clock(); say("car_status", (m and m.Name or p.Name) .. " · " .. math.floor(spd + 0.5) .. (s and "" or " · 准星锁定") .. (anch and " · 锚定(等游戏解锁)" or "")) end
-		if F.carclip then noclip(p, m) elseif clipModel then reclip() end
+		if os.clock() - statT > 0.2 then statT = os.clock(); say("car_status", (m and m.Name or p.Name) .. " · " .. math.floor(spd + 0.5) .. (s and "" or " · 准星锁定") .. (anch and " · 锚定(等游戏解锁)" or "") .. (F.carclip and #clipList > 0 and not clipWheels and " · 穿墙没认到轮子(按最低块兜底)" or "")) end
+		if F.carclip then noclip(p) elseif clipCar then reclip() end
 		if F.cfly then -- 飞车: 摇杆(前后左右) + 面板按钮都吃; 松手悬停
 			if not lv then lv = mk("LinearVelocity", { Attachment0 = att, MaxForce = math.huge, VectorVelocity = Vector3.zero, RelativeTo = Enum.ActuatorRelativeTo.World }, att) end
 			local mv = moveVec() -- 摇杆: 前推 Z=-1, 右推 X=1
@@ -573,6 +579,11 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 			string.format("根部件 质量=%.0f 锚定=%s 速度=%.1f 尺寸=(%.0f,%.0f,%.0f)", p.AssemblyMass, tostring(p.Anchored), p.AssemblyLinearVelocity.Magnitude, p.Size.X, p.Size.Y, p.Size.Z) }
 		if s and s:IsA("VehicleSeat") then
 			L[#L + 1] = string.format("座位: MaxSpeed=%s Torque=%.0f Throttle=%.2f Steer=%.2f 乘员=%s", tostring(s.MaxSpeed), nn(s.Torque), nn(s.Throttle), nn(s.Steer), s.Occupant and (s.Occupant.Parent and s.Occupant.Parent.Name or "?") or "无")
+		end
+		if clipCar then
+			local kept, off = 0, 0
+			for _, d in ipairs(clipList) do if clipKeep[d] then kept = kept + 1 elseif d.Parent and not d.CanCollide then off = off + 1 end end
+			L[#L + 1] = string.format("穿墙: 认到轮子=%s 保留碰撞=%d 块 已穿=%d 块 (范围=本车装配体, 不是整个 Model 容器)", tostring(clipWheels), kept, off)
 		end
 		L[#L + 1] = "-- 装配体部件 (含游戏自己的约束/灯/脚本钩子)"
 		for _, d in ipairs(p:GetConnectedParts(true)) do
