@@ -34,7 +34,7 @@ local CLOCK12 = opt("clock", "12") ~= "24" -- 12 小时制默认; _G.SB = { cloc
 local function clock(sec) return os.date((CLOCK12 and "%I" or "%H") .. (sec and ":%M:%S" or ":%M")) end
 
 -- ───────── 公共 ─────────
-local alive, conns, INFO, MODS, stops, DUMP = true, {}, {}, {}, {}, {}
+local alive, conns, INFO, stops, DUMP = true, {}, {}, {}, {}
 local function on(sig, fn) local c = sig:Connect(fn); conns[#conns + 1] = c; return c end
 local function mk(cls, props, parent) local i = Instance.new(cls); for k, v in pairs(props) do i[k] = v end; i.Parent = parent; return i end
 local function tap(i) return i.UserInputType == Enum.UserInputType.Touch or i.UserInputType == Enum.UserInputType.MouseButton1 end
@@ -132,8 +132,59 @@ local toastN = 0
 local function toast(s) toastN = toastN + 1; local n = toastN; toastL.Text, toastL.Visible = s, true; task.delay(2, function() if toastN == n then toastL.Visible = false end end) end
 local dumpNow -- 启动完再赋值; 模块里的按钮闭包先引用这个局部变量
 
+-- ═════════ 注册表 (表驱动): 一个功能 = 一个顶层函数 + 这里追加一行 feature{...} ═════════
+-- 建页 / 存盘 / 每帧连接 / 卸载 / 诊断全从这张表生成, 核心不为新功能改一个字. 清单顺序 = 页内控件顺序.
+-- 行字段 (按 kind 取用): id 页名 · kind 控件种类 (KIND 表, 缺省 toggle) · key 状态键 · label 文字 · w 宽 (缺省半行) · h 行高
+--   save 存盘键 · def 默认值 · num={键, 默认} 紧跟的数字框 · set(v) 变了调 · tick(dt) 开着每帧调 (sig="render" 走 PreRender) · off() 关掉/卸载调
+--   init(page) 建好后调一次 (接事件) · fn 按钮回调 · build(p) 自定义控件 · dump 诊断提供者 · info() 页状态追加
+local F, S, W, FEATURES, ACTIVE = {}, {}, {}, {}, {} -- F 开关 / S 数值 / W 控件 (开关存 set(v) 句柄, 文字行存 TextLabel) / 清单 / 装上的页
+local pageInfos -- 启动完再赋值 (日志模块先引用)
+local function say(key, s) local w = W[key]; if w then w.Text = s end end
+local function feature(e)
+	local k = e.kind or "toggle"
+	if k == "toggle" or k == "cycle" then
+		local v = e.def
+		if e.save then v = opt(e.save, e.def) end
+		if v == nil then if k == "toggle" then v = false else v = e.cycle[1] end end
+		F[e.key] = v
+	elseif k == "num" then S[e.key] = opt(e.key, e.def) end
+	local n = e.num
+	e.num = nil
+	FEATURES[#FEATURES + 1] = e
+	if n then feature({ kind = "num", key = n[1], def = n[2], label = n.label }) end
+end
+local KIND = {
+	toggle = function(e, p, w)
+		W[e.key] = toggle(p, e.label, F[e.key], function(v)
+			F[e.key] = v
+			if e.save then save(e.save, v) end
+			if e.set then e.set(v) end
+			if not v and e.off then e.off() end
+		end, w)
+	end,
+	hold = function(e, p, w) hold(p, e.label, function(v) if e.key then F[e.key] = v end; if e.set then e.set(v) end end, w) end,
+	btn = function(e, p, w) btn(p, e.label, e.fn, w) end,
+	cycle = function(e, p, w) -- 一个按钮循环 e.cycle 里的值; e.text 是 值→文字 的表或函数; e.lit = 不在第一个值时亮
+		local list = e.cycle
+		local function txt(v) if type(e.text) == "function" then return e.text(v) end; return e.text[v] end
+		btn(p, txt(F[e.key]), function(b)
+			local v = list[(table.find(list, F[e.key]) or 0) % #list + 1]
+			F[e.key] = v
+			if e.save then save(e.save, v) end
+			if e.set then e.set(v) end
+			b.Text = txt(v)
+			if e.lit then lit(b, v ~= list[1]) end
+		end, w)
+	end,
+	num = function(e, p, w) num(p, e.label, S, e.key, w, e.key) end,
+	text = function(e, p, w) W[e.key] = text(p, e.label, w) end,
+	custom = function(e, p) e.build(p) end,
+	tick = function() end, dump = function() end, -- 没有控件的行: 只挂每帧 / 诊断
+}
+local NOUI = { tick = true, dump = true }
+
 -- ═════════ moc: 角色 ═════════
-MODS[#MODS + 1] = { name = "moc", tab = "动", fn = function(page)
+feature{ kind = "legacy", id = "moc", tab = "动", fn = function(page)
 	local S = { spd = opt("spd", 16), mode = opt("spdmode", "root"), fly = opt("flyspd", 50), jump = opt("jump", 50), spin = opt("spin", 50), dist = opt("promptdist", 1000) }
 	local speedOn, flyOn, jumpOn, spinOn, infJump, clip, nv, nocd = false, false, false, false, false, false, false, "off"
 	local up, down, moving, nvT, setFly = false, false, false, 0, nil
@@ -252,7 +303,7 @@ MODS[#MODS + 1] = { name = "moc", tab = "动", fn = function(page)
 end }
 
 -- ═════════ sibs: 载具 (坐着 = 控制座位所在装配体; 没坐 = 准星"换车"锁定) ═════════
-MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
+feature{ kind = "legacy", id = "sibs", tab = "车", fn = function(page)
 	local S = { acc = opt("acc", 500), grip = opt("grip", 5), turn = opt("turn", 2.2), cap = opt("turncap", 1), fly = opt("carfly", 60), horn = opt("hornkey", "H"), maxstuds = opt("carmaxstuds", 150), swap = opt("carswap", true) } -- maxstuds: 多大的 Model 还算"一辆车"(超过就不当成载具容器)
 	local picked, pickSeat, pickPath, autoPick, curSeat, curMax, att, vf, lv, status, clipModel, setBrake, lastCar, lastAnch
 	local accel, decel, up, down, cruise, brake, flying, lampOn, target, statT = false, false, false, false, false, false, false, false, 0, 0
@@ -637,7 +688,7 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 end }
 
 -- ═════════ drift: 人物推进 (自动找踏板; 找不到就用面板按钮) ═════════
-MODS[#MODS + 1] = { name = "drift", tab = "漂", fn = function(page)
+feature{ kind = "legacy", id = "drift", tab = "漂", fn = function(page)
 	local S = { acc = opt("dacc", 5), brake = opt("dbrake", 10) }
 	local enabled, w, s, att, vf, status = opt("drift", true), false, false, nil, nil, nil
 	local slots, pedalRoot = {}, nil -- slots[1]=刹车 slots[2]=油门
@@ -736,7 +787,7 @@ end }
 
 
 -- ═════════ hud: 数据条 / 速度箭头 / 玩家 ESP (原生 Highlight + BillboardGui) ═════════
-MODS[#MODS + 1] = { name = "hud", tab = "显", fn = function(page)
+feature{ kind = "legacy", id = "hud", tab = "显", fn = function(page)
 	local showBar, showArrow, showEsp = opt("stats", true), opt("arrow", true), opt("esp", true)
 	local bar = mk("TextLabel", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 2), Size = UDim2.fromOffset(0, 16), AutomaticSize = Enum.AutomaticSize.X, BackgroundTransparency = 1, RichText = true, Font = Enum.Font.Gotham, TextSize = 14, TextColor3 = WHITE, TextStrokeTransparency = 0.6 }, gui)
 	local arrow = mk("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromOffset(0, 3), BackgroundColor3 = Color3.fromRGB(150, 225, 200), BackgroundTransparency = 0.3, BorderSizePixel = 0, Visible = false }, gui)
@@ -806,7 +857,7 @@ MODS[#MODS + 1] = { name = "hud", tab = "显", fn = function(page)
 end }
 
 -- ═════════ log: 配置 + 各模块状态定时追加到 Selfblox_log.txt ═════════
-MODS[#MODS + 1] = { name = "log", tab = "志", fn = function(page)
+feature{ kind = "legacy", id = "log", tab = "志", fn = function(page)
 	local S = { int = opt("logint", 2), max = opt("logmax", 512) }
 	local F, run, n, written = "Selfblox_log.txt", false, 0, 0
 	local status = text(page, "开 录制 后写 " .. F)
@@ -817,7 +868,7 @@ MODS[#MODS + 1] = { name = "log", tab = "志", fn = function(page)
 			if run then
 				local ok, err = pcall(function() -- 一轮里 INFO / 序列化 / 写盘任何一步抛错, 记录循环都不能永久死掉 (task.spawn 里的错不会自己恢复)
 					local L = { "[" .. clock(true) .. "] #" .. n, "配置 " .. Http:JSONEncode(saved) } -- 数值不用各模块自己拼, 这里全有
-					for _, m in ipairs(MODS) do if INFO[m.name] then L[#L + 1] = m.name .. " " .. INFO[m.name]() end end
+					for _, line in ipairs(pageInfos()) do L[#L + 1] = line end
 					local txt = table.concat(L, "\n") .. "\n"
 					if written == 0 or written + #txt > S.max * 1024 then head() end -- ponytail: 超限直接重写, 不归档; 要历史自己复制文件
 					appendfile(F, txt)
@@ -836,7 +887,7 @@ MODS[#MODS + 1] = { name = "log", tab = "志", fn = function(page)
 end }
 
 -- ═════════ plane: 飞机侦察 (找飞机/判队伍/列 Remote/收发侦听/写报告) ═════════
-MODS[#MODS + 1] = { name = "plane", tab = "机", fn = function(page)
+feature{ kind = "legacy", id = "plane", tab = "机", fn = function(page)
 	local HINT = { "plane", "jet", "aircraft", "fighter", "bomber", "heli", "glider", "warbird", "biplane", "gunship", "blimp" }
 	local WING = { "wing", "aileron", "rudder", "elevator", "propeller", "rotor", "flap", "stabilizer", "tailfin" }
 	local TEAMK = { "team", "faction", "side", "country", "nation" }
@@ -994,7 +1045,7 @@ MODS[#MODS + 1] = { name = "plane", tab = "机", fn = function(page)
 end }
 
 -- ═════════ brick: BitFarmer 刷砖 ═════════
-MODS[#MODS + 1] = { name = "brick", tab = "砖", fn = function(page)
+feature{ kind = "legacy", id = "brick", tab = "砖", fn = function(page)
 	local S = { batch = opt("bbatch", 4), int = opt("bint", 0.08), drain = opt("bdrain", 0.6), mult = opt("bmult", 99999), lvl = opt("blevel", 9999) }
 	local run, setRun, status = false, nil, nil
 	local st = { cycles = 0, earned = 0, sent = 0, got = 0, rate = 0 }
@@ -1046,22 +1097,80 @@ MODS[#MODS + 1] = { name = "brick", tab = "砖", fn = function(page)
 	return function() run = false end
 end }
 
--- ───────── 启动: 建页签 + 各模块页; _G.SB.only = {"moc","sibs"} 只装一部分 ─────────
-local only, active, pages, tabBtns = opt("only", nil), {}, {}, {}
-for _, m in ipairs(MODS) do if type(only) ~= "table" or table.find(only, m.name) then active[#active + 1] = m end end
+-- ───────── 启动: 按清单建页 / 控件 / 每帧连接; 一个功能装不上不拖累别的 (记下来, 页里写一行) ─────────
+local only = opt("only", nil) -- _G.SB.only = {"moc","sibs"} 只装一部分
+local function wanted(id) return type(only) ~= "table" or table.find(only, id) ~= nil end
+for _, e in ipairs(FEATURES) do if (e.kind == "page" or e.kind == "legacy") and wanted(e.id) then ACTIVE[#ACTIVE + 1] = e end end
+local pages, tabBtns, BUILT, FAILED = {}, {}, {}, {}
 local function show(name)
 	for n, pg in pairs(pages) do pg.Visible = n == name; lit(tabBtns[n], n == name) end
 	save("tab", name)
 end
-for _, m in ipairs(active) do
-	local page = mk("Frame", { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1, Visible = false, LayoutOrder = ord() }, body)
-	mk("UIListLayout", { Padding = UDim.new(0, 0) }, page)
-	pages[m.name] = page
-	tabBtns[m.name] = btn(tabs, m.tab, function() show(m.name) end, 1 / #active)
-	local ok, stop = pcall(m.fn, page) -- 一个模块炸了不拖死其他模块
-	if ok then stops[#stops + 1] = stop else warn("[Selfblox] " .. m.name .. ": " .. tostring(stop)); text(page, "出错: " .. tostring(stop)) end
+do
+	local page, pid, cur, used, curH
+	for _, e in ipairs(FEATURES) do
+		local k = e.kind or "toggle"
+		if k == "page" or k == "legacy" then
+			page, pid, cur = nil, e.id, nil
+			if wanted(e.id) then
+				page = mk("Frame", { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1, Visible = false, LayoutOrder = ord() }, body)
+				mk("UIListLayout", { Padding = UDim.new(0, 0) }, page)
+				pages[e.id] = page
+				tabBtns[e.id] = btn(tabs, e.tab, function() show(e.id) end, 1 / #ACTIVE)
+				if k == "legacy" then -- 迁移脚手架: 旧模块整块照跑, 迁完删
+					local ok, stop = pcall(e.fn, page)
+					if ok then stops[#stops + 1] = stop else warn("[Selfblox] " .. e.id .. ": " .. tostring(stop)); text(page, "出错: " .. tostring(stop)) end
+				end
+			end
+		elseif page then
+			local parent, w = page, e.w or (k == "text" and 1 or 0.5)
+			if NOUI[k] then w = 1
+			elseif w < 1 then -- 半行控件两两并一行; 行高变了或装不下就另起一行
+				local h = e.h or ROW
+				if not cur or used + w > 1.001 or curH ~= h then cur, used, curH = row(page, e.h), 0, h end
+				used, parent = used + w, cur
+			else cur = nil end
+			local ok, err = pcall(function()
+				KIND[k](e, parent, w < 1 and w or nil)
+				if e.init then e.init(page) end
+			end)
+			if ok then
+				e._page = pid
+				BUILT[#BUILT + 1] = e
+				if e.dump then DUMP[e.key] = e.dump end
+				if e.tick then on(e.sig == "render" and RunService.PreRender or RunService.PreSimulation, function(dt) if not e.key or F[e.key] then e.tick(dt) end end) end
+			else
+				local what = e.label or e.key or k
+				FAILED[#FAILED + 1] = pid .. " " .. what .. ": " .. tostring(err)
+				warn("[Selfblox] " .. FAILED[#FAILED])
+				text(page, "✗ " .. what)
+			end
+		end
+	end
 end
-if #active > 0 then show(pages[opt("tab", "moc")] and opt("tab", "moc") or active[1].name) end
+if #ACTIVE > 0 then show(pages[opt("tab", "moc")] and opt("tab", "moc") or ACTIVE[1].id) end
+
+pageInfos = function() -- 各页状态, 一页一行 (给日志 / 诊断快照用): 旧模块用自己的 INFO, 清单行按 开关=值 生成
+	local o = {}
+	for _, p in ipairs(ACTIVE) do
+		local ok, v = pcall(function()
+			if INFO[p.id] then return INFO[p.id]() end
+			local t = {}
+			for _, e in ipairs(BUILT) do
+				if e._page == p.id then
+					local k = e.kind or "toggle"
+					if k == "toggle" then t[#t + 1] = e.label .. "=" .. tostring(F[e.key])
+					elseif k == "num" then t[#t + 1] = e.key .. "=" .. tostring(S[e.key])
+					elseif k == "cycle" then t[#t + 1] = e.key .. "=" .. tostring(F[e.key]) end
+				end
+			end
+			if p.info then t[#t + 1] = p.info() end
+			return table.concat(t, " ")
+		end)
+		o[#o + 1] = p.id .. " " .. (ok and tostring(v) or ("INFO 报错: " .. tostring(v)))
+	end
+	return o
+end
 
 local function dumpLines()
 	local L = { "==== SELFblox 诊断 " .. os.date("%Y-%m-%d ") .. clock(true) .. " ====",
@@ -1072,7 +1181,8 @@ local function dumpLines()
 	local r = root()
 	if r then L[#L + 1] = string.format("角色 位置=(%.0f,%.0f,%.0f) 速度=%.0f 血=%s", r.Position.X, r.Position.Y, r.Position.Z, r.AssemblyLinearVelocity.Magnitude, tostring(hum() and hum().Health)) end
 	L[#L + 1] = "-- 模块状态"
-	for _, m in ipairs(MODS) do if INFO[m.name] then local o, v = pcall(INFO[m.name]); L[#L + 1] = "  " .. m.name .. " " .. (o and tostring(v) or ("INFO 报错: " .. tostring(v))) end end
+	for _, line in ipairs(pageInfos()) do L[#L + 1] = "  " .. line end
+	for _, f in ipairs(FAILED) do L[#L + 1] = "  ✗ " .. f end
 	for k, f in pairs(DUMP) do local o, lines = pcall(f); L[#L + 1] = "-- " .. k .. " dump"; if o then for _, x in ipairs(lines) do L[#L + 1] = "  " .. tostring(x) end else L[#L + 1] = "  dump 报错: " .. tostring(lines) end end
 	if isfile("Selfblox_log.txt") then local t = readfile("Selfblox_log.txt") or ""; L[#L + 1] = "-- 日志尾部"; L[#L + 1] = t:sub(-1500) end
 	return L
@@ -1087,10 +1197,11 @@ _G.SB_DUMP = dumpNow
 
 _G.SB_UNLOAD = function()
 	alive = false
-	for _, s in ipairs(stops) do pcall(s) end -- 一个模块清理炸了不能拦住其他的
+	for _, e in ipairs(BUILT) do if e.off then pcall(e.off) end end -- 一个功能清理炸了不能拦住其他的
+	for _, s in ipairs(stops) do pcall(s) end
 	for _, c in ipairs(conns) do c:Disconnect() end
 	gui:Destroy()
 	FX:Destroy()
 	_G.SB_UNLOAD = nil
 end
-print("[Selfblox] v13.3 · " .. #active .. " 模块 · _G.SB_UNLOAD() 卸载")
+print("[Selfblox] v13.3 · " .. #ACTIVE .. " 模块 · _G.SB_UNLOAD() 卸载")
