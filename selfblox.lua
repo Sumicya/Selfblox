@@ -787,11 +787,8 @@ end }
 
 
 -- ═════════ hud: 数据条 / 速度箭头 / 玩家 ESP (原生 Highlight + BillboardGui) ═════════
-feature{ kind = "legacy", id = "hud", tab = "显", fn = function(page)
-	local showBar, showArrow, showEsp = opt("stats", true), opt("arrow", true), opt("esp", true)
-	local bar = mk("TextLabel", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 2), Size = UDim2.fromOffset(0, 16), AutomaticSize = Enum.AutomaticSize.X, BackgroundTransparency = 1, RichText = true, Font = Enum.Font.Gotham, TextSize = 14, TextColor3 = WHITE, TextStrokeTransparency = 0.6 }, gui)
-	local arrow = mk("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromOffset(0, 3), BackgroundColor3 = Color3.fromRGB(150, 225, 200), BackgroundTransparency = 0.3, BorderSizePixel = 0, Visible = false }, gui)
-	local arrowTxt = mk("TextLabel", { AnchorPoint = Vector2.new(0.5, 1), Size = UDim2.fromOffset(90, 14), BackgroundTransparency = 1, Font = FONT, TextSize = 12, TextColor3 = Color3.fromRGB(150, 225, 200), TextStrokeTransparency = 0.5, Visible = false }, gui)
+do -- ═════════ 显: 数据条 / 速度箭头 / 玩家 ESP (原生 Highlight + BillboardGui) ═════════
+	local bar, arrow, arrowTxt
 	local esp, frames, fps, tick = {}, 0, 0, os.clock()
 	local function espAdd(pl)
 		if pl == me or esp[pl] then return end
@@ -800,15 +797,19 @@ feature{ kind = "legacy", id = "hud", tab = "显", fn = function(page)
 		esp[pl] = { hl, bb, mk("TextLabel", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Font = FONT, TextSize = 12, TextStrokeTransparency = 0.5 }, bb) }
 	end
 	local function espDrop(pl) local e = esp[pl]; if e then e[1]:Destroy(); e[2]:Destroy(); esp[pl] = nil end end
-	for _, pl in ipairs(Players:GetPlayers()) do espAdd(pl) end
-	on(Players.PlayerAdded, espAdd)
-	on(Players.PlayerRemoving, espDrop)
-
-	on(RunService.PreRender, function()
+	local function hudInit() -- 建好页之后: 盖在游戏画面上的三个控件 + 接玩家进出 (有副作用, 不能放块级: _G.SB.only 没装的页不该建)
+		bar = mk("TextLabel", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 2), Size = UDim2.fromOffset(0, 16), AutomaticSize = Enum.AutomaticSize.X, BackgroundTransparency = 1, RichText = true, Font = Enum.Font.Gotham, TextSize = 14, TextColor3 = WHITE, TextStrokeTransparency = 0.6 }, gui)
+		arrow = mk("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromOffset(0, 3), BackgroundColor3 = Color3.fromRGB(150, 225, 200), BackgroundTransparency = 0.3, BorderSizePixel = 0, Visible = false }, gui)
+		arrowTxt = mk("TextLabel", { AnchorPoint = Vector2.new(0.5, 1), Size = UDim2.fromOffset(90, 14), BackgroundTransparency = 1, Font = FONT, TextSize = 12, TextColor3 = Color3.fromRGB(150, 225, 200), TextStrokeTransparency = 0.5, Visible = false }, gui)
+		for _, pl in ipairs(Players:GetPlayers()) do espAdd(pl) end
+		on(Players.PlayerAdded, espAdd)
+		on(Players.PlayerRemoving, espDrop)
+	end
+	local function hudRender()
 		frames = frames + 1
 		local cam, r, now = workspace.CurrentCamera, root(), os.clock()
 		local shown = false
-		if showArrow and cam then
+		if F.arrow and cam then
 			local h = hum()
 			local a = h and h.SeatPart and h.SeatPart.AssemblyRootPart or r
 			local v = a and a.AssemblyLinearVelocity
@@ -827,8 +828,8 @@ feature{ kind = "legacy", id = "hud", tab = "显", fn = function(page)
 		arrow.Visible, arrowTxt.Visible = shown, shown
 		if now - tick < 0.2 then return end
 		fps, frames, tick = frames / (now - tick), 0, now
-		bar.Visible = showBar
-		if showBar then
+		bar.Visible = F.stats
+		if F.stats then
 			local pos = r and string.format("%.0f %.0f %.0f", r.Position.X, r.Position.Y, r.Position.Z) or "-"
 			bar.Text = string.format("<font color='#89dceb'>%.0f</font>  <font color='%s'>%.0f</font>  <font color='#c8b4eb'>%.0f</font>  <font color='#ebc896'>%s</font>  <font color='#eb96aa'>%d/%d</font>  <font color='#d2d4de'>%s</font>",
 				me:GetNetworkPing() * 1000, fps >= 50 and "#aae696" or "#eb7878", fps, Stats:GetTotalMemoryUsageMb(), clock(), #Players:GetPlayers(), Players.MaxPlayers, pos) -- 数字后面不带单位, 靠颜色认: 青=延迟 绿/红=帧率 紫=内存 黄=时间 粉=人数 灰=坐标
@@ -836,7 +837,7 @@ feature{ kind = "legacy", id = "hud", tab = "显", fn = function(page)
 		for pl, e in pairs(esp) do
 			local c = pl.Character
 			local h, hr = c and c:FindFirstChildOfClass("Humanoid"), c and c:FindFirstChild("HumanoidRootPart")
-			local show = showEsp and h ~= nil and hr ~= nil and h.Health > 0
+			local show = F.esp and h ~= nil and hr ~= nil and h.Health > 0
 			e[1].Enabled, e[2].Enabled = show, show
 			if show then
 				local colr = pl.Team and pl.TeamColor.Color or Color3.fromHSV((pl.UserId * 0.618) % 1, 0.65, 1)
@@ -845,46 +846,35 @@ feature{ kind = "legacy", id = "hud", tab = "显", fn = function(page)
 				e[3].Text = pl.DisplayName .. (r and string.format(" %.0f", (hr.Position - r.Position).Magnitude) or "")
 			end
 		end
-	end)
-
-	local r1 = row(page)
-	toggle(r1, "数据条", showBar, function(v) showBar = v; save("stats", v) end, 0.5)
-	toggle(r1, "速度箭头", showArrow, function(v) showArrow = v; save("arrow", v) end, 0.5)
-	toggle(page, "玩家 ESP", showEsp, function(v) showEsp = v; save("esp", v) end)
-
-	INFO.hud = function() return string.format("数据条=%s 箭头=%s ESP=%s", tostring(showBar), tostring(showArrow), tostring(showEsp)) end
-	return function() for pl in pairs(esp) do espDrop(pl) end end
-end }
+	end
+	feature{ kind = "page", id = "hud", tab = "显" }
+	feature{ kind = "tick", sig = "render", tick = hudRender, init = hudInit, off = function() for pl in pairs(esp) do espDrop(pl) end end }
+	feature{ key = "stats", save = "stats", def = true, label = "数据条" }
+	feature{ key = "arrow", save = "arrow", def = true, label = "速度箭头" }
+	feature{ key = "esp", save = "esp", def = true, label = "玩家 ESP", w = 1 }
+end
 
 -- ═════════ log: 配置 + 各模块状态定时追加到 Selfblox_log.txt ═════════
-feature{ kind = "legacy", id = "log", tab = "志", fn = function(page)
-	local S = { int = opt("logint", 2), max = opt("logmax", 512) }
-	local F, run, n, written = "Selfblox_log.txt", false, 0, 0
-	local status = text(page, "开 录制 后写 " .. F)
-	local function head() local h = "---- Selfblox " .. os.date("%Y-%m-%d ") .. clock(true) .. " ----\n"; writefile(F, h); written = #h end
-	task.spawn(function()
-		while alive do
-			task.wait(S.int)
-			if run then
-				local ok, err = pcall(function() -- 一轮里 INFO / 序列化 / 写盘任何一步抛错, 记录循环都不能永久死掉 (task.spawn 里的错不会自己恢复)
-					local L = { "[" .. clock(true) .. "] #" .. n, "配置 " .. Http:JSONEncode(saved) } -- 数值不用各模块自己拼, 这里全有
-					for _, line in ipairs(pageInfos()) do L[#L + 1] = line end
-					local txt = table.concat(L, "\n") .. "\n"
-					if written == 0 or written + #txt > S.max * 1024 then head() end -- ponytail: 超限直接重写, 不归档; 要历史自己复制文件
-					appendfile(F, txt)
-					n, written = n + 1, written + #txt
-					status.Text = "#" .. n .. " · " .. math.floor(written / 1024) .. "KB / " .. S.max .. "KB"
-				end)
-				if not ok then status.Text = "记录出错 (下一轮再试): " .. tostring(err) end
-			end
-		end
-	end)
-	btn(page, "诊断打包 (整机快照 → 剪贴板)", function() if dumpNow then dumpNow() end end)
-	local r1 = row(page)
-	num(r1, "间隔s", S, "int", 0.5, "logint")
-	num(r1, "上限KB", S, "max", 0.5, "logmax")
-	toggle(page, "录制", false, function(v) run = v end)
-end }
+do -- ═════════ 志: 周期记录 / 诊断打包 ═════════
+	local LOGFILE, count, written = "Selfblox_log.txt", 0, 0
+	local function head() local h = "---- Selfblox " .. os.date("%Y-%m-%d ") .. clock(true) .. " ----\n"; writefile(LOGFILE, h); written = #h end
+	local function logTick() -- 每 S.logint 秒一轮 (清单的 loop 每轮 pcall: 某个页的状态函数 / 序列化 / 写盘抛错, 记录也不会永久停)
+		local L = { "[" .. clock(true) .. "] #" .. count, "配置 " .. Http:JSONEncode(saved) } -- 数值不用各模块自己拼, 这里全有
+		for _, line in ipairs(pageInfos()) do L[#L + 1] = line end
+		local txt = table.concat(L, "\n") .. "\n"
+		if written == 0 or written + #txt > S.logmax * 1024 then head() end -- ponytail: 超限直接重写, 不归档; 要历史自己复制文件
+		appendfile(LOGFILE, txt)
+		count, written = count + 1, written + #txt
+		say("log_status", "#" .. count .. " · " .. math.floor(written / 1024) .. "KB / " .. S.logmax .. "KB")
+	end
+	feature{ kind = "page", id = "log", tab = "志" }
+	feature{ kind = "text", key = "log_status", label = "开 录制 后写 " .. LOGFILE }
+	feature{ kind = "btn", label = "诊断打包 (整机快照 → 剪贴板)", w = 1, fn = function() if dumpNow then dumpNow() end end }
+	feature{ kind = "num", key = "logint", def = 2, label = "间隔s" }
+	feature{ kind = "num", key = "logmax", def = 512, label = "上限KB" }
+	feature{ key = "rec", label = "录制", w = 1, loop = logTick, every = function() return S.logint end,
+		onerr = function(err) say("log_status", "记录出错 (下一轮再试): " .. tostring(err)) end }
+end
 
 -- ═════════ plane: 飞机侦察 (找飞机/判队伍/列 Remote/收发侦听/写报告) ═════════
 feature{ kind = "legacy", id = "plane", tab = "机", fn = function(page)
@@ -1045,33 +1035,32 @@ feature{ kind = "legacy", id = "plane", tab = "机", fn = function(page)
 end }
 
 -- ═════════ brick: BitFarmer 刷砖 ═════════
-feature{ kind = "legacy", id = "brick", tab = "砖", fn = function(page)
-	local S = { batch = opt("bbatch", 4), int = opt("bint", 0.08), drain = opt("bdrain", 0.6), mult = opt("bmult", 99999), lvl = opt("blevel", 9999) }
-	local run, setRun, status = false, nil, nil
+do -- ═════════ 砖: BitFarmer 刷砖 (单游戏专用) ═════════
 	local st = { cycles = 0, earned = 0, sent = 0, got = 0, rate = 0 }
-	local function mine(c) return c:IsA("BasePart") and not c.Anchored and c:GetAttribute("Owner") == me.UserId end
+	S.bmult, S.blevel = opt("bmult", 99999), opt("blevel", 9999) -- 只读配置 (没有面板控件)
+	local function ownBrick(c) return c:IsA("BasePart") and not c.Anchored and c:GetAttribute("Owner") == me.UserId end
 	local function ingest(b, col) b.CFrame = col.CFrame + Vector3.new(math.random(-3, 3), 1.5, math.random(-3, 3)); b.AssemblyLinearVelocity = Vector3.new(0, -35, 0) end
 	local function loop()
 		local ls = me:FindFirstChild("leaderstats")
 		local col, spawnBit = workspace:FindFirstChild("Collector"), RS:FindFirstChild("SpawnBit")
 		local bits, mult = ls and ls:FindFirstChild("Bits"), ls and ls:FindFirstChild("Multiplier")
-		if not (col and bits) then setRun(false); toast("没找到 workspace.Collector / leaderstats.Bits"); return end
+		if not (col and bits) then W.brick(false); toast("没找到 workspace.Collector / leaderstats.Bits"); return end
 		local mult0, lvl0 = mult and mult.Value, me:GetAttribute("MultiplierUpgradeLevel")
 		local last, lastT, seen = bits.Value, os.clock(), bits.Value -- seen = 上次记账时的 Bits: 按它算增量, 周期之间到账的也不丢
-		local conn = workspace.ChildAdded:Connect(function(c) task.defer(function() if run and mine(c) then ingest(c, col); st.got = st.got + 1 end end) end)
-		local function drain() for _, c in ipairs(workspace:GetChildren()) do if mine(c) then ingest(c, col) end end end
-		while run and alive do
+		local conn = workspace.ChildAdded:Connect(function(c) task.defer(function() if F.brick and ownBrick(c) then ingest(c, col); st.got = st.got + 1 end end) end)
+		local function drain() for _, c in ipairs(workspace:GetChildren()) do if ownBrick(c) then ingest(c, col) end end end
+		while F.brick and alive do
 			st.cycles = st.cycles + 1
 			drain()
-			if spawnBit then for _ = 1, S.batch do if not run then break end; spawnBit:FireServer(); st.sent = st.sent + 1; task.wait(S.int) end end
-			task.wait(S.drain)
+			if spawnBit then for _ = 1, S.bbatch do if not F.brick then break end; spawnBit:FireServer(); st.sent = st.sent + 1; task.wait(S.bint) end end
+			task.wait(S.bdrain)
 			drain()
 			st.earned, seen = st.earned + math.max(bits.Value - seen, 0), bits.Value
 			local t = os.clock()
 			if t - lastT >= 1 then st.rate = (bits.Value - last) / (t - lastT); last, lastT = bits.Value, t end
-			if mult and mult.Value < S.mult then mult.Value = S.mult end
-			me:SetAttribute("MultiplierUpgradeLevel", S.lvl)
-			status.Text = string.format("周期 %d · +%.0f · %.1f/s · 发 %d 收 %d", st.cycles, st.earned, st.rate, st.sent, st.got)
+			if mult and mult.Value < S.bmult then mult.Value = S.bmult end
+			me:SetAttribute("MultiplierUpgradeLevel", S.blevel)
+			say("brick_status", string.format("周期 %d · +%.0f · %.1f/s · 发 %d 收 %d", st.cycles, st.earned, st.rate, st.sent, st.got))
 			task.wait(0.15)
 		end
 		conn:Disconnect()
@@ -1079,23 +1068,19 @@ feature{ kind = "legacy", id = "brick", tab = "砖", fn = function(page)
 		me:SetAttribute("MultiplierUpgradeLevel", lvl0)
 	end
 	local looping = false -- 关了立刻又开时旧循环还没退出: 只认一条, 不然两条同时跑 (请求翻倍, 还原值也乱)
-	setRun = toggle(page, "刷砖", false, function(v)
-		run = v
+	local function brickSet(v)
 		if v and not looping then
 			looping = true
-			task.spawn(function() local ok, err = pcall(loop); looping = false; if not ok then setRun(false); toast("刷砖出错: " .. tostring(err)) end end)
+			task.spawn(function() local ok, err = pcall(loop); looping = false; if not ok then W.brick(false); toast("刷砖出错: " .. tostring(err)) end end)
 		end
-	end)
-	local r1 = row(page)
-	num(r1, "批次", S, "batch", 0.5, "bbatch")
-	num(r1, "间隔", S, "int", 0.5, "bint")
-	local r2 = row(page)
-	num(r2, "排空间隔", S, "drain", nil, "bdrain")
-	status = text(page, "BitFarmer 专用")
-
-	INFO.brick = function() return string.format("刷=%s 周期=%d 已刷=%.0f 速率=%.1f/s", tostring(run), st.cycles, st.earned, st.rate) end
-	return function() run = false end
-end }
+	end
+	feature{ kind = "page", id = "brick", tab = "砖", info = function() return string.format("刷=%s 周期=%d 已刷=%.0f 速率=%.1f/s", tostring(F.brick), st.cycles, st.earned, st.rate) end }
+	feature{ key = "brick", label = "刷砖", w = 1, set = brickSet, off = function() F.brick = false end }
+	feature{ kind = "num", key = "bbatch", def = 4, label = "批次" }
+	feature{ kind = "num", key = "bint", def = 0.08, label = "间隔" }
+	feature{ kind = "num", key = "bdrain", def = 0.6, label = "排空间隔", w = 1 }
+	feature{ kind = "text", key = "brick_status", label = "BitFarmer 专用" }
+end
 
 -- ───────── 启动: 按清单建页 / 控件 / 每帧连接; 一个功能装不上不拖累别的 (记下来, 页里写一行) ─────────
 local only = opt("only", nil) -- _G.SB.only = {"moc","sibs"} 只装一部分
@@ -1139,6 +1124,15 @@ do
 				BUILT[#BUILT + 1] = e
 				if e.dump then DUMP[e.key] = e.dump end
 				if e.tick then on(e.sig == "render" and RunService.PreRender or RunService.PreSimulation, function(dt) if not e.key or F[e.key] then e.tick(dt) end end) end
+				if e.loop then task.spawn(function() -- 慢循环: 每 every 秒一轮, 开关开着才跑; 每一轮 pcall (task.spawn 里的错不会自己恢复, 一次出错不能让它永久死掉)
+					while alive do
+						task.wait(type(e.every) == "function" and e.every() or e.every or 1)
+						if alive and (not e.key or F[e.key]) then
+							local ok2, err2 = pcall(e.loop)
+							if not ok2 then if e.onerr then e.onerr(err2) else warn("[Selfblox] " .. (e.label or e.key) .. ": " .. tostring(err2)) end end
+						end
+					end
+				end) end
 			else
 				local what = e.label or e.key or k
 				FAILED[#FAILED + 1] = pid .. " " .. what .. ": " .. tostring(err)
