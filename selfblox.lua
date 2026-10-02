@@ -1,4 +1,4 @@
--- Selfblox v13.2 · 单文件 · 一次 loadstring · 一个面板 · 七个模块
+-- Selfblox v13.3 · 单文件 · 一次 loadstring · 一个面板 · 七个模块
 -- 用法:  loadstring(game:HttpGet("https://raw.githubusercontent.com/Sumicya/Selfblox/main/selfblox.lua"))()
 -- 覆盖:  执行前 _G.SB = { spd = 50, flyspd = 80, only = {"moc", "sibs"} }
 -- 优先级: _G.SB > Selfblox.json(面板里改过的值) > 默认值
@@ -50,13 +50,11 @@ local FONT, WHITE = Enum.Font.GothamBold, Color3.new(1, 1, 1)
 local BG, ON, OFF = Color3.fromRGB(20, 22, 28), Color3.fromRGB(38, 125, 85), Color3.fromRGB(48, 50, 60)
 local LIT, CLEAR = Color3.fromRGB(150, 235, 170), 0.9 -- CLEAR = 面板底色透明度
 local function lit(b, on) b.BackgroundColor3 = on and ON or OFF; b.TextColor3 = on and LIT or WHITE end -- 开着/按着/当前页: 底色只剩 10%, 看不出颜色了, 状态靠字色
-local NUDGE = opt("nudge", 1) -- 文字整体上移+左移的像素: GothamBold 行高偏上, 中文又走回退字体, 文字会略微偏右下 (官方建议用 UIPadding 补偿). ponytail: 没在真机量过, 还偏就调大 (_G.SB = { nudge = 2 }), 0 = 不补偿
-local function nudge(i) if NUDGE ~= 0 then mk("UIPadding", { PaddingRight = UDim.new(0, NUDGE * 2), PaddingBottom = UDim.new(0, NUDGE * 2) }, i) end; return i end -- 内边距 = 位移 × 2 (文字居中, 中心只移内边距的一半)
 local W, ROW = 200, 26
 local gui = mk("ScreenGui", { Name = "Selfblox", ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = 99999 }, ROOT)
 local FX = mk("Folder", { Name = "Selfblox_FX" }, ROOT) -- Highlight / BillboardGui 放这里, 卸载一起删
 
-local BASE = { BackgroundColor3 = OFF, BackgroundTransparency = CLEAR, BorderSizePixel = 0, Font = FONT, TextSize = 12, TextColor3 = WHITE, TextStrokeTransparency = 0.5, TextXAlignment = Enum.TextXAlignment.Center, TextYAlignment = Enum.TextYAlignment.Center }
+local BASE = { BackgroundColor3 = OFF, BackgroundTransparency = CLEAR, BorderSizePixel = 0, Font = FONT, TextSize = 12, TextColor3 = WHITE, TextXAlignment = Enum.TextXAlignment.Center, TextYAlignment = Enum.TextYAlignment.Center }
 local ORD = 0
 local function ord() ORD = ORD + 1; return ORD end -- UIListLayout 按创建顺序排
 local function ui(cls, parent, w, props) -- w=nil 整行, w=0.5 半行
@@ -64,7 +62,6 @@ local function ui(cls, parent, w, props) -- w=nil 整行, w=0.5 半行
 	for k, v in pairs(BASE) do i[k] = v end
 	i.Size, i.LayoutOrder = w and UDim2.new(w, 0, 1, 0) or UDim2.new(1, 0, 0, ROW), ord()
 	for k, v in pairs(props or {}) do i[k] = v end
-	nudge(i)
 	i.Parent = parent
 	return i
 end
@@ -94,42 +91,17 @@ end
 local function num(parent, s, S, k, w, savek) -- 直接绑 S[k], 改完自动存盘; savek 缺省 = k
 	local f = mk("Frame", { Size = w and UDim2.new(w, 0, 1, 0) or UDim2.new(1, 0, 0, ROW), LayoutOrder = ord(), BackgroundColor3 = OFF, BackgroundTransparency = CLEAR, BorderSizePixel = 0 }, parent) -- 一行分两半: 左半标签, 右半输入框, 文字各在自己那半格里居中 (原来标签靠左 + 前面垫个空格, 和居中的按钮/输入框对不齐)
 	if s then ui("TextLabel", f, nil, { Text = s, BackgroundTransparency = 1, Size = UDim2.fromScale(0.5, 1) }) end
-	local tb = mk("TextBox", { Size = UDim2.fromScale(s and 0.5 or 1, 1), Position = UDim2.fromScale(s and 0.5 or 0, 0), BackgroundTransparency = 1, Font = FONT, TextSize = 12, TextColor3 = Color3.fromRGB(255, 225, 140), TextStrokeTransparency = 0.5, Text = tostring(S[k]), TextXAlignment = Enum.TextXAlignment.Center, TextYAlignment = Enum.TextYAlignment.Center, ClearTextOnFocus = false }, f)
-	nudge(tb)
+	local tb = mk("TextBox", { Size = UDim2.fromScale(s and 0.5 or 1, 1), Position = UDim2.fromScale(s and 0.5 or 0, 0), BackgroundTransparency = 1, Font = FONT, TextSize = 12, TextColor3 = Color3.fromRGB(255, 225, 140), Text = tostring(S[k]), TextXAlignment = Enum.TextXAlignment.Center, TextYAlignment = Enum.TextYAlignment.Center, ClearTextOnFocus = false }, f)
 	on(tb.FocusLost, function() local v = tonumber(tb.Text); if v then S[k] = v; save(savek or k, v) end; tb.Text = tostring(S[k]) end)
 end
 
--- 点选游戏自己的按钮: 模块调 pickButton("油门", cb, tell); 玩家点游戏画面那一下, cb(按钮) 就被调到
-local pickCB
-local function pickButton(label, cb, tell)
-	pickCB = cb
-	if tell then tell("点游戏画面上的【" .. label .. "】") end
-end
-local function pressGame(btn, down) -- 用虚拟鼠标按住游戏按钮 (Delta 的 VIM 可用; 静默失败 = 游戏收不到, 不会崩)
-	local p, sz = btn.AbsolutePosition, btn.AbsoluteSize
-	VIM:SendMouseMoveEvent(p.X + sz.X / 2, p.Y + sz.Y / 2, game) -- 官方 API 清单: (x, y, layerCollector) 只有 3 个参数; 原来多塞的 0 顶掉了 layerCollector 的位置
-	VIM:SendMouseButtonEvent(p.X + sz.X / 2, p.Y + sz.Y / 2, 0, down, game, 0)
-end
-on(UIS.InputBegan, function(i)
-	if not pickCB or not tap(i) then return end
-	local cb, pos = pickCB, i.Position
-	local hit
-	local pg = me:FindFirstChild("PlayerGui")
-	if pg and pos then
-		for _, o in ipairs(pg:GetGuiObjectsAtPosition(pos.X, pos.Y)) do if o:IsA("GuiButton") then hit = o; break end end
-	end
-	if hit then pickCB = nil; cb(hit) end -- 没点中按钮就不清, 再点一次就行
-end)
-
 local vp = workspace.CurrentCamera.ViewportSize
 local pos = opt("pos", { vp.X / 2 - W / 2, vp.Y * 0.3 })
-local title = mk("TextLabel", { Name = "SB_Title", Size = UDim2.fromOffset(W, ROW), Position = UDim2.fromOffset(math.clamp(pos[1], 0, math.max(vp.X - W, 0)), math.clamp(pos[2], 0, math.max(vp.Y - ROW, 0))), BackgroundColor3 = BG, BackgroundTransparency = CLEAR, BorderSizePixel = 0, Font = FONT, TextSize = 13, TextColor3 = WHITE, TextStrokeTransparency = 0.5, Text = "Selfblox v13.2" }, gui)
-nudge(title)
+local title = mk("TextLabel", { Name = "SB_Title", Size = UDim2.fromOffset(W, ROW), Position = UDim2.fromOffset(math.clamp(pos[1], 0, math.max(vp.X - W, 0)), math.clamp(pos[2], 0, math.max(vp.Y - ROW, 0))), BackgroundColor3 = BG, BackgroundTransparency = CLEAR, BorderSizePixel = 0, Font = FONT, TextSize = 13, TextColor3 = WHITE, Text = "Selfblox v13.3" }, gui)
 local body = mk("Frame", { Name = "SB_Body", Size = UDim2.new(0, W, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Position = title.Position + UDim2.fromOffset(0, ROW), BackgroundColor3 = BG, BackgroundTransparency = CLEAR, BorderSizePixel = 0 }, gui)
 mk("UIListLayout", { Padding = UDim.new(0, 0) }, body)
 on(title:GetPropertyChangedSignal("Position"), function() body.Position = title.Position + UDim2.fromOffset(0, ROW) end)
-local fold = mk("TextButton", { Size = UDim2.fromOffset(ROW, ROW), Position = UDim2.new(1, -ROW, 0, 0), BackgroundTransparency = 1, Font = FONT, TextSize = 16, TextColor3 = WHITE, TextStrokeTransparency = 0.5, Text = "–" }, title)
-nudge(fold)
+local fold = mk("TextButton", { Size = UDim2.fromOffset(ROW, ROW), Position = UDim2.new(1, -ROW, 0, 0), BackgroundTransparency = 1, Font = FONT, TextSize = 16, TextColor3 = WHITE, Text = "–" }, title)
 local foldHooks = {} -- 想知道"面板是折着还是开着"的模块挂这里
 local function setFold(v) body.Visible = v; fold.Text = v and "–" or "+"; for _, f in ipairs(foldHooks) do f(v) end end
 local drag = mk("UIDragDetector", { BoundingUI = gui }, title)
@@ -155,7 +127,7 @@ end)
 local tabs = row(body)
 
 local toastL = mk("TextLabel", { Name = "SB_Toast", AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 22), Size = UDim2.fromOffset(0, 24), AutomaticSize = Enum.AutomaticSize.X, BackgroundColor3 = BG, BackgroundTransparency = 0.2, BorderSizePixel = 0, Font = FONT, TextSize = 13, TextColor3 = WHITE, Visible = false }, gui)
-mk("UIPadding", { PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10 + NUDGE * 2), PaddingBottom = UDim.new(0, NUDGE * 2) }, toastL)
+mk("UIPadding", { PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10) }, toastL)
 local toastN = 0
 local function toast(s) toastN = toastN + 1; local n = toastN; toastL.Text, toastL.Visible = s, true; task.delay(2, function() if toastN == n then toastL.Visible = false end end) end
 local dumpNow -- 启动完再赋值; 模块里的按钮闭包先引用这个局部变量
@@ -283,7 +255,6 @@ end }
 MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 	local S = { acc = opt("acc", 500), grip = opt("grip", 5), turn = opt("turn", 2.2), cap = opt("turncap", 1), fly = opt("carfly", 60), horn = opt("hornkey", "H"), maxstuds = opt("carmaxstuds", 150), swap = opt("carswap", true) } -- maxstuds: 多大的 Model 还算"一辆车"(超过就不当成载具容器)
 	local picked, pickSeat, pickPath, autoPick, curSeat, curMax, att, vf, lv, status, clipModel, setBrake, lastCar, lastAnch
-	local gbtn, held = {}, {} -- 游戏自己的按钮 [1]油 [2]刹 [3]左 [4]右; 按不动力的游戏(服务器驱动)就靠按它的按钮开
 	local accel, decel, up, down, cruise, brake, flying, lampOn, target, statT = false, false, false, false, false, false, false, false, 0, 0
 	local clip = opt("carclip", false)
 	local lamps, lampSaved, col = {}, setmetatable({}, { __mode = "k" }), setmetatable({}, { __mode = "k" })
@@ -404,26 +375,6 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 		for _, l in ipairs(lamps) do l.Enabled = v end
 	end
 	local function horn(v) VIM:SendKeyEvent(v, Enum.KeyCode[S.horn], false, game) end
-	local gname = { "油门", "刹车", "左", "右" }
-	local function slotsInfo()
-		local o = {}
-		for i = 1, 4 do if gbtn[i] then o[#o + 1] = gname[i] .. "=" .. gbtn[i].Name end end
-		return #o > 0 and table.concat(o, " ") or "游戏按钮未绑"
-	end
-	local function gameHold(n, v) -- n 号槽跟着 v 按下/松开游戏按钮, 状态没变就不重复发
-		local b = gbtn[n]
-		if not b or held[n] == v then return end
-		held[n] = v
-		pressGame(b, v)
-	end
-	local function bindGame(n, btn)
-		gameHold(n, false)
-		gbtn[n] = btn
-		status.Text = gname[n] .. " = " .. btn:GetFullName() .. " · " .. slotsInfo()
-	end
-	local function pickBtn(n)
-		pickButton(gname[n], function(hit) bindGame(n, hit) end, function(t) status.Text = t end)
-	end
 	local function pick()
 		local cam = workspace.CurrentCamera
 		rp.FilterDescendantsInstances = { me.Character }
@@ -485,12 +436,6 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 	on(kd.DragEnd, function() dragX = nil; handle.Position = HOME end)
 	local steerOpen = opt("steeropen", false) -- true = 面板开着也能拖滑条 (默认: 折起来才能拖)
 	local live = false
-	local function steerButtons(st) -- 绑了左/右游戏按钮就用按钮转, 没绑才用 CFrame 硬转
-		if not (gbtn[3] or gbtn[4]) then return false end
-		gameHold(3, st < -0.25)
-		gameHold(4, st > 0.25)
-		return true
-	end
 	local function setLive(v)
 		live = v
 		handle.Visible = v
@@ -564,7 +509,6 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 			return
 		elseif lv then lv:Destroy(); lv = nil end
 		-- 转向: 游戏自己的 Steer 那部分让它自己转, 我们只转滑条多出来的部分, 不重复
-		if not steerButtons(st) then
 		local mine = st - gst
 		if math.abs(mine) > 0.02 then -- 停着也能转(原地打方向), 不再等车动起来
 			p.CFrame = CFrame.fromAxisAngle(Vector3.yAxis, -mine * S.turn * math.clamp(spd / 25, 0.2, S.cap) * dt) * p.CFrame.Rotation + p.Position -- turncap = 转向速率随速度放大的上限
@@ -572,7 +516,6 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 				local dir = hv:Dot(fwd) < 0 and -fwd or fwd
 				p.AssemblyLinearVelocity = hv.Unit:Lerp(dir, math.min(dt * S.grip, 1)).Unit * spd + Vector3.yAxis * v.Y
 			end
-		end
 		end
 		local f, F = mass * S.acc, Vector3.zero
 		if brake then -- 急刹: 刹到停, 再踩油门自动解除
@@ -643,14 +586,6 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 		return L
 	end
 	DUMP.car = carLines
-	local function scanCar()
-		local L = carLines()
-		if #L == 1 and L[1] == "没有载具" then toast("没有载具"); return end
-		local txt = table.concat(L, "\n")
-		writefile("selfblox_car.txt", txt)
-		setclipboard(txt)
-		toast("车结构 " .. #L .. " 行 → selfblox_car.txt / 剪贴板")
-	end
 
 	local r1 = row(page)
 	num(r1, "加速", S, "acc", 0.5)
@@ -672,15 +607,12 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 	btn(r5, "闪 ×3", function() task.spawn(function() for _ = 1, 3 do setLamps(true); task.wait(0.12); setLamps(false); task.wait(0.12) end; if lampOn then setLamps(true) else dropLamps() end end) end, 0.5)
 	toggle(page, "滑条常可拖", steerOpen, function(v) steerOpen = v; save("steeropen", v); setLive(v or not body.Visible) end)
 	toggle(page, "自动绑车", autoOn, function(v) autoOn = v; save("carauto", v) end)
-	local rb = row(page)
-	for n = 1, 4 do btn(rb, "绑" .. gname[n], function() pickBtn(n) end, 0.25) end -- 绑游戏自己的按钮: 点一下 → 再点游戏画面上对应的那个键 (服务器驱动、推力不管用的车才需要)
 	local r6 = row(page)
 	toggle(r6, "常声(" .. S.horn .. ")", false, horn, 0.5)
 	hold(r6, "声", horn, 0.5)
-	btn(page, "扫车 (结构进日志/剪贴板)", scanCar)
 	local r7 = row(page, 36)
-	hold(r7, "▲ 加速", function(v) accel = v; gameHold(1, v) end, 0.5)
-	hold(r7, "▼ 减速", function(v) decel = v; gameHold(2, v) end, 0.5)
+	hold(r7, "▲ 加速", function(v) accel = v end, 0.5)
+	hold(r7, "▼ 减速", function(v) decel = v end, 0.5)
 	local r8 = row(page, 36)
 	hold(r8, "飞 ↑", function(v) up = v end, 0.5)
 	hold(r8, "飞 ↓", function(v) down = v end, 0.5)
@@ -697,11 +629,11 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 		if p and vf then
 			return string.format("抓地=%s/转向=%s/过弯上限=%s 部件=%s%s 推力=%.0f(%.1f/kg) 质量=%.0f 速度=%.0f%s 定速=%s@%.0f 飞车=%s 穿墙=%s 急刹=%s%s",
 				S.grip, S.turn, S.cap, p:GetFullName(), seatInfo(s), vf.Force.Magnitude, vf.Force.Magnitude / math.max(p.AssemblyMass, 1), p.AssemblyMass,
-				p.AssemblyLinearVelocity.Magnitude, p.Anchored and " 锚定(引擎不让推)" or "", tostring(cruise), target, tostring(flying), tostring(clip), tostring(brake), holdInfo()) .. " " .. slotsInfo()
+				p.AssemblyLinearVelocity.Magnitude, p.Anchored and " 锚定(引擎不让推)" or "", tostring(cruise), target, tostring(flying), tostring(clip), tostring(brake), holdInfo())
 		end
-		return "抓地=" .. S.grip .. "/转向=" .. S.turn .. "/过弯上限=" .. S.cap .. " 部件=-" .. seatInfo(nil) .. " " .. slotsInfo() .. " 定速=" .. tostring(cruise) .. "@" .. math.floor(target) .. " 飞车=" .. tostring(flying) .. " 穿墙=" .. tostring(clip) .. " 急刹=" .. tostring(brake) .. holdInfo()
+		return "抓地=" .. S.grip .. "/转向=" .. S.turn .. "/过弯上限=" .. S.cap .. " 部件=-" .. seatInfo(nil) .. " 定速=" .. tostring(cruise) .. "@" .. math.floor(target) .. " 飞车=" .. tostring(flying) .. " 穿墙=" .. tostring(clip) .. " 急刹=" .. tostring(brake) .. holdInfo()
 	end
-	return function() for i = 1, 4 do gameHold(i, false) end; detach(); reclip(); dropLamps(); horn(false); if curSeat and curMax then curSeat.MaxSpeed = curMax end end
+	return function() detach(); reclip(); dropLamps(); horn(false); if curSeat and curMax then curSeat.MaxSpeed = curMax end end
 end }
 
 -- ═════════ drift: 人物推进 (自动找踏板; 找不到就用面板按钮) ═════════
@@ -868,7 +800,6 @@ MODS[#MODS + 1] = { name = "hud", tab = "显", fn = function(page)
 	toggle(r1, "数据条", showBar, function(v) showBar = v; save("stats", v) end, 0.5)
 	toggle(r1, "速度箭头", showArrow, function(v) showArrow = v; save("arrow", v) end, 0.5)
 	toggle(page, "玩家 ESP", showEsp, function(v) showEsp = v; save("esp", v) end)
-	btn(page, "复制状态", function() setclipboard(Http:JSONEncode(saved)); toast("配置已复制") end)
 
 	INFO.hud = function() return string.format("数据条=%s 箭头=%s ESP=%s", tostring(showBar), tostring(showArrow), tostring(showEsp)) end
 	return function() for pl in pairs(esp) do espDrop(pl) end end
@@ -1125,7 +1056,7 @@ if #active > 0 then show(pages[opt("tab", "moc")] and opt("tab", "moc") or activ
 
 local function dumpLines()
 	local L = { "==== SELFblox 诊断 " .. os.date("%Y-%m-%d ") .. clock(true) .. " ====",
-		"脚本=v13.2 页签=" .. tostring(saved.tab) .. " place=" .. game.PlaceId .. " 地图=" .. tostring(game.Name),
+		"脚本=v13.3 页签=" .. tostring(saved.tab) .. " place=" .. game.PlaceId .. " 地图=" .. tostring(game.Name),
 		"配置 " .. Http:JSONEncode(saved),
 		"执行器 isfile=" .. tostring(isfile ~= nil) .. " writefile=" .. tostring(writefile ~= nil) .. " appendfile=" .. tostring(appendfile ~= nil) .. " setclipboard=" .. tostring(setclipboard ~= nil) .. " gethui=" .. tostring(gethui ~= nil) .. " hookmetamethod=" .. tostring(hookmetamethod ~= nil) .. " newcclosure=" .. tostring(newcclosure ~= nil) .. " getnamecallmethod=" .. tostring(getnamecallmethod ~= nil),
 		"角色 " .. tostring(me.Name) .. " 队=" .. tostring(me.Team and me.Team.Name) .. " 坐=" .. tostring(hum() and hum().SeatPart and (hum().SeatPart:GetFullName())) .. " 根=" .. tostring(root() and root().Anchored) }
@@ -1134,21 +1065,6 @@ local function dumpLines()
 	L[#L + 1] = "-- 模块状态"
 	for _, m in ipairs(MODS) do if INFO[m.name] then local o, v = pcall(INFO[m.name]); L[#L + 1] = "  " .. m.name .. " " .. (o and tostring(v) or ("INFO 报错: " .. tostring(v))) end end
 	for k, f in pairs(DUMP) do local o, lines = pcall(f); L[#L + 1] = "-- " .. k .. " dump"; if o then for _, x in ipairs(lines) do L[#L + 1] = "  " .. tostring(x) end else L[#L + 1] = "  dump 报错: " .. tostring(lines) end end
-	local pg = me:FindFirstChild("PlayerGui")
-	if pg then
-		L[#L + 1] = "-- PlayerGui 树 (可见的按钮/文本, 最多 120 条)"
-		local n = 0
-		for _, d in ipairs(pg:GetDescendants()) do
-			if d:IsA("GuiObject") and d.Visible and n < 120 then
-				local txt = (d:IsA("TextButton") or d:IsA("TextLabel") or d:IsA("TextBox")) and d.Text or ""
-				if d:IsA("GuiButton") or txt ~= "" then
-					n = n + 1
-					L[#L + 1] = string.format("  %-38s %-12s 位置=(%.0f,%.0f) 尺寸=(%.0f,%.0f)%s", d:GetFullName(), d.ClassName, nn(d.AbsolutePosition.X), nn(d.AbsolutePosition.Y), nn(d.AbsoluteSize.X), nn(d.AbsoluteSize.Y), txt ~= "" and ("  文本=" .. tostring(txt):sub(1, 24)) or "")
-				end
-			end
-		end
-		if n == 0 then L[#L + 1] = "  (没有可见的 GUI 按钮)" end
-	end
 	if isfile("Selfblox_log.txt") then local t = readfile("Selfblox_log.txt") or ""; L[#L + 1] = "-- 日志尾部"; L[#L + 1] = t:sub(-1500) end
 	return L
 end
@@ -1168,4 +1084,4 @@ _G.SB_UNLOAD = function()
 	FX:Destroy()
 	_G.SB_UNLOAD = nil
 end
-print("[Selfblox] v13.2 · " .. #active .. " 模块 · _G.SB_UNLOAD() 卸载")
+print("[Selfblox] v13.3 · " .. #active .. " 模块 · _G.SB_UNLOAD() 卸载")
