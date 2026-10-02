@@ -284,15 +284,15 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 end
 
 -- ═════════ sibs: 载具 (坐着 = 控制座位所在装配体; 没坐 = 准星"换车"锁定) ═════════
-feature{ kind = "legacy", id = "sibs", tab = "车", fn = function(page)
-	local S = { acc = opt("acc", 500), grip = opt("grip", 5), turn = opt("turn", 2.2), cap = opt("turncap", 1), fly = opt("carfly", 60), horn = opt("hornkey", "H"), maxstuds = opt("carmaxstuds", 150), swap = opt("carswap", true) } -- maxstuds: 多大的 Model 还算"一辆车"(超过就不当成载具容器)
-	local picked, pickSeat, pickPath, autoPick, curSeat, curMax, att, vf, lv, status, clipModel, setBrake, lastCar, lastAnch
-	local accel, decel, up, down, cruise, brake, flying, lampOn, target, statT = false, false, false, false, false, false, false, false, 0, 0
-	local clip = opt("carclip", false)
+do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配体; 没坐 = 准星"换车"锁定 / 自动绑最近的空座位) ═════════
+	S.turncap, S.hornkey, S.carmaxstuds, S.carswap = opt("turncap", 1), opt("hornkey", "H"), opt("carmaxstuds", 150), opt("carswap", true) -- 只读配置 (没有面板控件) -- maxstuds: 多大的 Model 还算"一辆车"(超过就不当成载具容器)
+	local picked, pickSeat, pickPath, autoPick, curSeat, curMax, att, vf, lv, clipModel, lastCar, lastAnch
+	local target, statT, autoT = 0, 0, 0
 	local lamps, lampSaved, col = {}, setmetatable({}, { __mode = "k" }), setmetatable({}, { __mode = "k" })
 	local rp = RaycastParams.new()
 	rp.FilterType = Enum.RaycastFilterType.Exclude
-
+	local track, knob, handle, kd, dragX -- 方向盘控件 (init 里建)
+	local live = false
 	local function seat() local h = hum(); return h and h.SeatPart end
 	local function seatIn(m) return m:FindFirstChildWhichIsA("VehicleSeat", true) or m:FindFirstChildWhichIsA("Seat", true) end -- 官方继承链: VehicleSeat 和 Seat 互不相干 (都挂在 BasePart 下), 只查 "Seat" 会把带 VehicleSeat 的车当成"没座位"
 	local function findByPath(path) -- 锁的那件被游戏换掉后按路径捞回来 (只在 workspace 底下找)
@@ -329,7 +329,7 @@ feature{ kind = "legacy", id = "sibs", tab = "车", fn = function(page)
 			if seatIn(node) then return node end
 			if not best then
 				local sz = node:GetExtentsSize()
-				if math.max(sz.X, sz.Y, sz.Z) <= S.maxstuds then best = node end
+				if math.max(sz.X, sz.Y, sz.Z) <= S.carmaxstuds then best = node end
 			end
 			node = node:FindFirstAncestorOfClass("Model")
 		end
@@ -406,7 +406,7 @@ feature{ kind = "legacy", id = "sibs", tab = "车", fn = function(page)
 		end
 		for _, l in ipairs(lamps) do l.Enabled = v end
 	end
-	local function horn(v) VIM:SendKeyEvent(v, Enum.KeyCode[S.horn], false, game) end
+	local function horn(v) VIM:SendKeyEvent(v, Enum.KeyCode[S.hornkey], false, game) end
 	local function pick()
 		local cam = workspace.CurrentCamera
 		rp.FilterDescendantsInstances = { me.Character }
@@ -428,7 +428,6 @@ feature{ kind = "legacy", id = "sibs", tab = "车", fn = function(page)
 		if s then toast("锁定 " .. seatM.Name .. " · 座位 " .. s.Name)
 		else toast("锁定 " .. inst.Name .. " · 没座位(只能推/飞/翻转, 没油门)") end
 	end
-	local autoOn, autoT = opt("carauto", true), 0
 	local function autoBind() -- 没坐没锁: 找最近的"空载具座位"绑上. ponytail: 每秒一次 150 格球查询; 极稠密的地图可改成 DescendantAdded 注册表
 		local r = root()
 		if not r then return end
@@ -446,7 +445,7 @@ feature{ kind = "legacy", id = "sibs", tab = "车", fn = function(page)
 		dropLamps()
 		toast("自动绑定 " .. (best:FindFirstAncestorOfClass("Model") or best).Name .. " · 座位 " .. best.Name)
 	end
-	local function flip()
+	local function flipCar()
 		local p, m = part(), model()
 		if not p then toast("没有载具"); return end
 		local cf = CFrame.new(p.Position + Vector3.yAxis * 2) * CFrame.fromAxisAngle(p.CFrame.LookVector, math.pi)
@@ -455,19 +454,6 @@ feature{ kind = "legacy", id = "sibs", tab = "车", fn = function(page)
 	end
 	local function brakeNow(p, v) p.AssemblyLinearVelocity = Vector3.yAxis * v.Y end -- 急刹: 水平速度直接归零, 比推力快且不吃质量
 
-	-- 方向盘: 钉在屏幕底部不动; ZIndex 压过面板, 面板开着也点得到; 整条背景都能拖 (拖的是全宽透明手柄, 圆点跟着手指), 松手回中
-	local track = mk("Frame", { Name = "SB_Steer", AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -10), Size = UDim2.fromOffset(200, 36), BackgroundColor3 = BG, BackgroundTransparency = 0.4, BorderSizePixel = 0, Visible = false, ZIndex = 10 }, gui)
-	mk("UICorner", { CornerRadius = UDim.new(1, 0) }, track)
-	local knob = mk("Frame", { Name = "SB_Knob", AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(36, 36), BackgroundColor3 = Color3.fromRGB(95, 65, 135), BorderSizePixel = 0, ZIndex = 11 }, track)
-	mk("UICorner", { CornerRadius = UDim.new(1, 0) }, knob)
-	local HOME = UDim2.new(0, 0, 0, 0) -- 手柄的家: 全宽 + 锚点(0,0). 松手要回到这里; 原来照抄圆点的 fromScale(0.5,0.5), 一松手整条手柄被推到右下半格, 左半条就按不到了
-	local handle = mk("Frame", { Name = "SB_Handle", Position = HOME, Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Active = true, ZIndex = 12 }, track) -- 看不见的手柄盖在最上面, 整条都能按
-	local kd = mk("UIDragDetector", { DragStyle = Enum.UIDragDetectorDragStyle.TranslateLine, DragAxis = Vector2.new(1, 0), BoundingUI = track }, handle)
-	local dragX
-	on(kd.DragContinue, function(p) dragX = p.X end) -- 官方文档: DragContinue 给的是 inputPosition: Vector2 (屏幕坐标), 不是 InputObject; 原来按 i.Position 读, 在 Vector2 上会直接抛错
-	on(kd.DragEnd, function() dragX = nil; handle.Position = HOME end)
-	local steerOpen = opt("steeropen", false) -- true = 面板开着也能拖滑条 (默认: 折起来才能拖)
-	local live = false
 	local function setLive(v)
 		live = v
 		handle.Visible = v
@@ -475,8 +461,6 @@ feature{ kind = "legacy", id = "sibs", tab = "车", fn = function(page)
 		track.BackgroundTransparency, knob.BackgroundTransparency = v and 0.4 or 0.75, v and 0 or 0.55
 		if not v then dragX = nil; knob.Position = UDim2.fromScale(0.5, 0.5) end
 	end
-	foldHooks[#foldHooks + 1] = function(open) setLive(steerOpen or not open) end -- 钩子收到的是"面板开着吗", 滑条要的是"能不能拖"
-	setLive(not body.Visible)
 	local function steer() -- 轨道宽 200 / 圆点半径 18 → 圆心能走 ±82
 		if not live then return 0 end
 		local cx = track.AbsolutePosition.X + 100
@@ -484,7 +468,6 @@ feature{ kind = "legacy", id = "sibs", tab = "车", fn = function(page)
 		knob.Position = UDim2.new(0.5, s, 0.5, 0) -- 圆点是纯显示, 只跟手指
 		return s / 82
 	end
-
 	local function moveVec() -- 摇杆原始输入 (前推 Z=-1, 右推 X=1). 官方 UserInputService 没有 GetMoveVector (那是 PlayerModule.ControlModule 的方法), 真引擎里一调就抛错; 这里把 Humanoid.MoveDirection (相机相对的世界方向) 换回相机坐标
 		local h, md = hum(), nil
 		md = h and h.MoveDirection
@@ -492,20 +475,33 @@ feature{ kind = "legacy", id = "sibs", tab = "车", fn = function(page)
 		local r = flat(workspace.CurrentCamera.CFrame.RightVector) or Vector3.xAxis
 		return Vector3.new(md:Dot(r), 0, -md:Dot(Vector3.yAxis:Cross(r)))
 	end
+	local function wheelInit() -- 建好页之后: 钉在屏幕底部的方向盘 (有副作用, 不能放块级)
+		track = mk("Frame", { Name = "SB_Steer", AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -10), Size = UDim2.fromOffset(200, 36), BackgroundColor3 = BG, BackgroundTransparency = 0.4, BorderSizePixel = 0, Visible = false, ZIndex = 10 }, gui)
+		mk("UICorner", { CornerRadius = UDim.new(1, 0) }, track)
+		knob = mk("Frame", { Name = "SB_Knob", AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(36, 36), BackgroundColor3 = Color3.fromRGB(95, 65, 135), BorderSizePixel = 0, ZIndex = 11 }, track)
+		mk("UICorner", { CornerRadius = UDim.new(1, 0) }, knob)
+		local HOME = UDim2.new(0, 0, 0, 0) -- 手柄的家: 全宽 + 锚点(0,0). 松手要回到这里; 原来照抄圆点的 fromScale(0.5,0.5), 一松手整条手柄被推到右下半格, 左半条就按不到了
+		handle = mk("Frame", { Name = "SB_Handle", Position = HOME, Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Active = true, ZIndex = 12 }, track) -- 看不见的手柄盖在最上面, 整条都能按
+		kd = mk("UIDragDetector", { DragStyle = Enum.UIDragDetectorDragStyle.TranslateLine, DragAxis = Vector2.new(1, 0), BoundingUI = track }, handle)
+		on(kd.DragContinue, function(p) dragX = p.X end) -- 官方文档: DragContinue 给的是 inputPosition: Vector2 (屏幕坐标), 不是 InputObject; 原来按 i.Position 读, 在 Vector2 上会直接抛错
+		on(kd.DragEnd, function() dragX = nil; handle.Position = HOME end)
+		foldHooks[#foldHooks + 1] = function(open) setLive(F.steeropen or not open) end -- 钩子收到的是"面板开着吗", 滑条要的是"能不能拖"
+		setLive(not body.Visible)
+	end
 
-	on(RunService.PreSimulation, function(dt)
+	local function carTick(dt)
 		local s = seat()
 		if s ~= curSeat then -- 换座: 还原旧座限速, 新座解限速, 灯重挂
 			if curSeat and curMax then curSeat.MaxSpeed = curMax end
 			curSeat, curMax = s, s and s:IsA("VehicleSeat") and s.MaxSpeed or nil
 			if curMax then s.MaxSpeed = math.huge end
 			dropLamps()
-			if lampOn then setLamps(true) end
+			if F.lamp then setLamps(true) end
 		end
 		if s and autoPick then picked, pickSeat, pickPath, autoPick = nil, nil, nil, false end -- 坐下了: 座位优先, 自动绑的作废; 下车后再找最近的
 		local p, sp = part()
-		if not p and not s and autoOn and os.clock() - autoT > 1 then autoT = os.clock(); autoBind(); p, sp = part() end -- 一进游戏就绑: 没坐没锁时每秒找一次
-		if p and not sp and p.Anchored and S.swap then -- 没座位的锚定件(还没解锁/装饰件): 就近改绑到能推的那件. 有座位的车不改绑: 座位所在装配体就是车, 锚着就等游戏解锁
+		if not p and not s and F.carauto and os.clock() - autoT > 1 then autoT = os.clock(); autoBind(); p, sp = part() end -- 一进游戏就绑: 没坐没锁时每秒找一次
+		if p and not sp and p.Anchored and S.carswap then -- 没座位的锚定件(还没解锁/装饰件): 就近改绑到能推的那件. 有座位的车不改绑: 座位所在装配体就是车, 锚着就等游戏解锁
 			local cand = heavyNear(p)
 			if cand and cand ~= p then
 				picked, pickSeat, pickPath = cand, nil, cand:GetFullName()
@@ -528,37 +524,37 @@ feature{ kind = "legacy", id = "sibs", tab = "车", fn = function(page)
 		local spd, mass, fwd = hv.Magnitude, p.AssemblyMass, facing()
 		local gst, thr, st = 0, 0, steer()
 		if sp and sp:IsA("VehicleSeat") then gst, thr, st = sp.Steer, sp.Throttle, math.clamp(st + sp.Steer, -1, 1) end -- 游戏自带的手机油门/方向盘也吃
-		local acc, dec = accel or thr > 0, decel or thr < 0
-		if os.clock() - statT > 0.2 then statT = os.clock(); status.Text = (m and m.Name or p.Name) .. " · " .. math.floor(spd + 0.5) .. (s and "" or " · 准星锁定") .. (anch and " · 锚定(等游戏解锁)" or "") end
-		if clip then noclip(p, m) elseif clipModel then reclip() end
-		if flying then -- 飞车: 摇杆(前后左右) + 面板按钮都吃; 松手悬停
+		local acc, dec = F.accel or thr > 0, F.decel or thr < 0
+		if os.clock() - statT > 0.2 then statT = os.clock(); say("car_status", (m and m.Name or p.Name) .. " · " .. math.floor(spd + 0.5) .. (s and "" or " · 准星锁定") .. (anch and " · 锚定(等游戏解锁)" or "")) end
+		if F.carclip then noclip(p, m) elseif clipModel then reclip() end
+		if F.cfly then -- 飞车: 摇杆(前后左右) + 面板按钮都吃; 松手悬停
 			if not lv then lv = mk("LinearVelocity", { Attachment0 = att, MaxForce = math.huge, VectorVelocity = Vector3.zero, RelativeTo = Enum.ActuatorRelativeTo.World }, att) end
 			local mv = moveVec() -- 摇杆: 前推 Z=-1, 右推 X=1
 			local dir = fwd * math.clamp(-mv.Z + (acc and 1 or 0) - (dec and 1 or 0), -1, 1) + (flat(p.CFrame.RightVector) or Vector3.xAxis) * math.clamp(mv.X, -1, 1)
 			if dir.Magnitude > 1 then dir = dir.Unit end
-			lv.VectorVelocity = anch and Vector3.zero or (dir * S.fly + Vector3.yAxis * (S.fly * ((up and 1 or 0) - (down and 1 or 0))))
+			lv.VectorVelocity = anch and Vector3.zero or (dir * S.carfly + Vector3.yAxis * (S.carfly * ((F.cup and 1 or 0) - (F.cdown and 1 or 0))))
 			vf.Force = Vector3.zero
 			return
 		elseif lv then lv:Destroy(); lv = nil end
 		-- 转向: 游戏自己的 Steer 那部分让它自己转, 我们只转滑条多出来的部分, 不重复
 		local mine = st - gst
 		if math.abs(mine) > 0.02 then -- 停着也能转(原地打方向), 不再等车动起来
-			p.CFrame = CFrame.fromAxisAngle(Vector3.yAxis, -mine * S.turn * math.clamp(spd / 25, 0.2, S.cap) * dt) * p.CFrame.Rotation + p.Position -- turncap = 转向速率随速度放大的上限
+			p.CFrame = CFrame.fromAxisAngle(Vector3.yAxis, -mine * S.turn * math.clamp(spd / 25, 0.2, S.turncap) * dt) * p.CFrame.Rotation + p.Position -- turncap = 转向速率随速度放大的上限
 			if spd > 1 then
 				local dir = hv:Dot(fwd) < 0 and -fwd or fwd
 				p.AssemblyLinearVelocity = hv.Unit:Lerp(dir, math.min(dt * S.grip, 1)).Unit * spd + Vector3.yAxis * v.Y
 			end
 		end
-		local f, F = mass * S.acc, Vector3.zero
-		if brake then -- 急刹: 刹到停, 再踩油门自动解除
-			if acc then setBrake(false) else brakeNow(p, v) end
+		local f, push = mass * S.acc, Vector3.zero
+		if F.brake then -- 急刹: 刹到停, 再踩油门自动解除
+			if acc then W.brake(false) else brakeNow(p, v) end
 		elseif acc and dec then brakeNow(p, v)
-		elseif acc then F = fwd * f
-		elseif dec then F = -fwd * (f * (hv:Dot(fwd) > 3 and 2 or 1)) -- 前进中双倍刹, 停了就倒车
-		elseif cruise then F = fwd * math.clamp((target - hv:Dot(fwd)) * mass * 2, -f, f) end
-		if not cruise then target = hv:Dot(fwd) end -- 定速一开就锁当前车速
-		if anch then vf.Force = Vector3.zero else vf.Force = F end -- 锚定: 力无效, 清零等着
-	end)
+		elseif acc then push = fwd * f
+		elseif dec then push = -fwd * (f * (hv:Dot(fwd) > 3 and 2 or 1)) -- 前进中双倍刹, 停了就倒车
+		elseif F.cruise then push = fwd * math.clamp((target - hv:Dot(fwd)) * mass * 2, -f, f) end
+		if not F.cruise then target = hv:Dot(fwd) end -- 定速一开就锁当前车速
+		if anch then vf.Force = Vector3.zero else vf.Force = push end -- 锚定: 力无效, 清零等着
+	end
 
 	local function carLines()
 		local p, s, cached = part()
@@ -617,56 +613,47 @@ feature{ kind = "legacy", id = "sibs", tab = "车", fn = function(page)
 		end
 		return L
 	end
-	DUMP.car = carLines
-
-	local r1 = row(page)
-	num(r1, "加速", S, "acc", 0.5)
-	num(r1, "飞速", S, "fly", 0.5, "carfly")
-	local rg = row(page)
-	num(rg, "抓地", S, "grip", 0.5)
-	num(rg, "转向", S, "turn", 0.5)
-	local r2 = row(page)
-	btn(r2, "换车(准星)", pick, 0.5)
-	toggle(r2, "穿墙", clip, function(v) clip = v; save("carclip", v) end, 0.5)
-	local r3 = row(page)
-	toggle(r3, "定速", false, function(v) cruise = v end, 0.5)
-	toggle(r3, "飞车", false, function(v) flying = v end, 0.5)
-	local r4 = row(page)
-	btn(r4, "翻转 180°", flip, 0.5)
-	setBrake = toggle(r4, "急刹", false, function(v) brake = v end, 0.5)
-	local r5 = row(page)
-	toggle(r5, "常亮", false, function(v) lampOn = v; if v then setLamps(true) else dropLamps() end end, 0.5)
-	btn(r5, "闪 ×3", function() task.spawn(function() for _ = 1, 3 do setLamps(true); task.wait(0.12); setLamps(false); task.wait(0.12) end; if lampOn then setLamps(true) else dropLamps() end end) end, 0.5)
-	toggle(page, "滑条常可拖", steerOpen, function(v) steerOpen = v; save("steeropen", v); setLive(v or not body.Visible) end)
-	toggle(page, "自动绑车", autoOn, function(v) autoOn = v; save("carauto", v) end)
-	local r6 = row(page)
-	toggle(r6, "常声(" .. S.horn .. ")", false, horn, 0.5)
-	hold(r6, "声", horn, 0.5)
-	local r7 = row(page, 36)
-	hold(r7, "▲ 加速", function(v) accel = v end, 0.5)
-	hold(r7, "▼ 减速", function(v) decel = v end, 0.5)
-	local r8 = row(page, 36)
-	hold(r8, "飞 ↑", function(v) up = v end, 0.5)
-	hold(r8, "飞 ↓", function(v) down = v end, 0.5)
-	status = text(page, "上车即控; 没车就对准它按 换车")
-
 	local function seatInfo(s)
 		if not s then return " 没坐(准星锁定)"
 		elseif s:IsA("VehicleSeat") then return string.format(" 座=%s 油门=%.2f 方向=%.2f", s.Name, nn(s.Throttle), nn(s.Steer))
 		else return " 座=" .. s.Name .. "(普通座, 无油门/方向)" end
 	end
-	local function holdInfo() return (accel and " 按加速" or "") .. (decel and " 按减速" or "") .. (up and " 按升" or "") .. (down and " 按降" or "") end
-	INFO.sibs = function()
+	local function holdInfo() return (F.accel and " 按加速" or "") .. (F.decel and " 按减速" or "") .. (F.cup and " 按升" or "") .. (F.cdown and " 按降" or "") end
+	local function carInfo()
 		local p, s = part()
 		if p and vf then
 			return string.format("抓地=%s/转向=%s/过弯上限=%s 部件=%s%s 推力=%.0f(%.1f/kg) 质量=%.0f 速度=%.0f%s 定速=%s@%.0f 飞车=%s 穿墙=%s 急刹=%s%s",
-				S.grip, S.turn, S.cap, p:GetFullName(), seatInfo(s), vf.Force.Magnitude, vf.Force.Magnitude / math.max(p.AssemblyMass, 1), p.AssemblyMass,
-				p.AssemblyLinearVelocity.Magnitude, p.Anchored and " 锚定(引擎不让推)" or "", tostring(cruise), target, tostring(flying), tostring(clip), tostring(brake), holdInfo())
+				S.grip, S.turn, S.turncap, p:GetFullName(), seatInfo(s), vf.Force.Magnitude, vf.Force.Magnitude / math.max(p.AssemblyMass, 1), p.AssemblyMass,
+				p.AssemblyLinearVelocity.Magnitude, p.Anchored and " 锚定(引擎不让推)" or "", tostring(F.cruise), target, tostring(F.cfly), tostring(F.carclip), tostring(F.brake), holdInfo())
 		end
-		return "抓地=" .. S.grip .. "/转向=" .. S.turn .. "/过弯上限=" .. S.cap .. " 部件=-" .. seatInfo(nil) .. " 定速=" .. tostring(cruise) .. "@" .. math.floor(target) .. " 飞车=" .. tostring(flying) .. " 穿墙=" .. tostring(clip) .. " 急刹=" .. tostring(brake) .. holdInfo()
+		return "抓地=" .. S.grip .. "/转向=" .. S.turn .. "/过弯上限=" .. S.turncap .. " 部件=-" .. seatInfo(nil) .. " 定速=" .. tostring(F.cruise) .. "@" .. math.floor(target) .. " 飞车=" .. tostring(F.cfly) .. " 穿墙=" .. tostring(F.carclip) .. " 急刹=" .. tostring(F.brake) .. holdInfo()
 	end
-	return function() detach(); reclip(); dropLamps(); horn(false); if curSeat and curMax then curSeat.MaxSpeed = curMax end end
-end }
+	local function carStop() detach(); reclip(); dropLamps(); horn(false); if curSeat and curMax then curSeat.MaxSpeed = curMax end end
+	feature{ kind = "page", id = "sibs", tab = "车", info = carInfo }
+	feature{ kind = "num", key = "acc", def = 500, label = "加速" }
+	feature{ kind = "num", key = "carfly", def = 60, label = "飞速" }
+	feature{ kind = "num", key = "grip", def = 5, label = "抓地" }
+	feature{ kind = "num", key = "turn", def = 2.2, label = "转向" }
+	feature{ kind = "btn", label = "换车(准星)", fn = pick }
+	feature{ key = "carclip", save = "carclip", label = "穿墙" }
+	feature{ key = "cruise", label = "定速" }
+	feature{ key = "cfly", label = "飞车" }
+	feature{ kind = "btn", label = "翻转 180°", fn = flipCar }
+	feature{ key = "brake", label = "急刹" }
+	feature{ key = "lamp", label = "常亮", set = function(v) if v then setLamps(true) else dropLamps() end end }
+	feature{ kind = "btn", label = "闪 ×3", fn = function() task.spawn(function() for _ = 1, 3 do setLamps(true); task.wait(0.12); setLamps(false); task.wait(0.12) end; if F.lamp then setLamps(true) else dropLamps() end end) end }
+	feature{ key = "steeropen", save = "steeropen", label = "滑条常可拖", w = 1, set = function(v) setLive(v or not body.Visible) end } -- true = 面板开着也能拖滑条 (默认: 折起来才能拖)
+	feature{ key = "carauto", save = "carauto", def = true, label = "自动绑车", w = 1 }
+	feature{ key = "hornon", label = "常声(" .. S.hornkey .. ")", set = horn }
+	feature{ kind = "hold", label = "声", set = horn }
+	feature{ kind = "hold", key = "accel", label = "▲ 加速", h = 36 }
+	feature{ kind = "hold", key = "decel", label = "▼ 减速", h = 36 }
+	feature{ kind = "hold", key = "cup", label = "飞 ↑", h = 36 }
+	feature{ kind = "hold", key = "cdown", label = "飞 ↓", h = 36 }
+	feature{ kind = "text", key = "car_status", label = "上车即控; 没车就对准它按 换车" }
+	feature{ kind = "dump", key = "car", dump = carLines }
+	feature{ kind = "tick", tick = carTick, init = wheelInit, off = carStop }
+end
 
 -- ═════════ drift: 人物推进 (自动找踏板; 找不到就用面板按钮) ═════════
 do -- ═════════ 漂: 人物推进 (自动找踏板; 找不到就用面板按钮) ═════════
