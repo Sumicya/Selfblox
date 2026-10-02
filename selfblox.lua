@@ -815,13 +815,16 @@ MODS[#MODS + 1] = { name = "log", tab = "志", fn = function(page)
 		while alive do
 			task.wait(S.int)
 			if run then
-				local L = { "[" .. clock(true) .. "] #" .. n, "配置 " .. Http:JSONEncode(saved) } -- 数值不用各模块自己拼, 这里全有
-				for _, m in ipairs(MODS) do if INFO[m.name] then L[#L + 1] = m.name .. " " .. INFO[m.name]() end end
-				local txt = table.concat(L, "\n") .. "\n"
-				if written == 0 or written + #txt > S.max * 1024 then head() end -- ponytail: 超限直接重写, 不归档; 要历史自己复制文件
-				appendfile(F, txt)
-				n, written = n + 1, written + #txt
-				status.Text = "#" .. n .. " · " .. math.floor(written / 1024) .. "KB / " .. S.max .. "KB"
+				local ok, err = pcall(function() -- 一轮里 INFO / 序列化 / 写盘任何一步抛错, 记录循环都不能永久死掉 (task.spawn 里的错不会自己恢复)
+					local L = { "[" .. clock(true) .. "] #" .. n, "配置 " .. Http:JSONEncode(saved) } -- 数值不用各模块自己拼, 这里全有
+					for _, m in ipairs(MODS) do if INFO[m.name] then L[#L + 1] = m.name .. " " .. INFO[m.name]() end end
+					local txt = table.concat(L, "\n") .. "\n"
+					if written == 0 or written + #txt > S.max * 1024 then head() end -- ponytail: 超限直接重写, 不归档; 要历史自己复制文件
+					appendfile(F, txt)
+					n, written = n + 1, written + #txt
+					status.Text = "#" .. n .. " · " .. math.floor(written / 1024) .. "KB / " .. S.max .. "KB"
+				end)
+				if not ok then status.Text = "记录出错 (下一轮再试): " .. tostring(err) end
 			end
 		end
 	end)
@@ -1003,17 +1006,16 @@ MODS[#MODS + 1] = { name = "brick", tab = "砖", fn = function(page)
 		local bits, mult = ls and ls:FindFirstChild("Bits"), ls and ls:FindFirstChild("Multiplier")
 		if not (col and bits) then setRun(false); toast("没找到 workspace.Collector / leaderstats.Bits"); return end
 		local mult0, lvl0 = mult and mult.Value, me:GetAttribute("MultiplierUpgradeLevel")
-		local last, lastT = bits.Value, os.clock()
+		local last, lastT, seen = bits.Value, os.clock(), bits.Value -- seen = 上次记账时的 Bits: 按它算增量, 周期之间到账的也不丢
 		local conn = workspace.ChildAdded:Connect(function(c) task.defer(function() if run and mine(c) then ingest(c, col); st.got = st.got + 1 end end) end)
 		local function drain() for _, c in ipairs(workspace:GetChildren()) do if mine(c) then ingest(c, col) end end end
 		while run and alive do
 			st.cycles = st.cycles + 1
-			local before = bits.Value
 			drain()
 			if spawnBit then for _ = 1, S.batch do if not run then break end; spawnBit:FireServer(); st.sent = st.sent + 1; task.wait(S.int) end end
 			task.wait(S.drain)
 			drain()
-			st.earned = st.earned + math.max(bits.Value - before, 0)
+			st.earned, seen = st.earned + math.max(bits.Value - seen, 0), bits.Value
 			local t = os.clock()
 			if t - lastT >= 1 then st.rate = (bits.Value - last) / (t - lastT); last, lastT = bits.Value, t end
 			if mult and mult.Value < S.mult then mult.Value = S.mult end
@@ -1025,7 +1027,14 @@ MODS[#MODS + 1] = { name = "brick", tab = "砖", fn = function(page)
 		if mult and mult0 then mult.Value = mult0 end
 		me:SetAttribute("MultiplierUpgradeLevel", lvl0)
 	end
-	setRun = toggle(page, "刷砖", false, function(v) run = v; if v then task.spawn(loop) end end)
+	local looping = false -- 关了立刻又开时旧循环还没退出: 只认一条, 不然两条同时跑 (请求翻倍, 还原值也乱)
+	setRun = toggle(page, "刷砖", false, function(v)
+		run = v
+		if v and not looping then
+			looping = true
+			task.spawn(function() local ok, err = pcall(loop); looping = false; if not ok then setRun(false); toast("刷砖出错: " .. tostring(err)) end end)
+		end
+	end)
 	local r1 = row(page)
 	num(r1, "批次", S, "batch", 0.5, "bbatch")
 	num(r1, "间隔", S, "int", 0.5, "bint")

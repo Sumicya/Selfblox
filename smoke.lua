@@ -34,30 +34,40 @@ local function fromScript(level) -- 谁在访问: selfblox.lua 的代码 (chunk 
 	local ii = debug.getinfo(level or 4, "S")
 	return ii ~= nil and (ii.short_src or ""):find('^%[string "selfblox') ~= nil
 end
-local INSTANCE_OK = words("ChildAdded DescendantAdded Destroy FindFirstAncestorOfClass FindFirstChild FindFirstChildOfClass FindFirstChildWhichIsA GetChildren GetDescendants GetFullName GetPropertyChangedSignal IsA IsDescendantOf Name Parent WaitForChild") -- Instance / Object 上的公共成员
+local INSTANCE_OK = words("ChildAdded DescendantAdded Destroy FindFirstAncestorOfClass FindFirstChild FindFirstChildOfClass FindFirstChildWhichIsA GetAttribute GetAttributes GetChildren GetDescendants GetFullName GetPropertyChangedSignal IsA IsDescendantOf Name Parent SetAttribute WaitForChild") -- Instance / Object 上的公共成员
 local VERIFIED = {
 	AlignOrientation = words("Attachment0 CFrame MaxTorque Mode Responsiveness"),
+	AngularVelocity = words("AngularVelocity Attachment0 MaxTorque RelativeTo"),
 	Attachment = words(""),
+	BillboardGui = words("Adornee AlwaysOnTop Enabled Size StudsOffsetWorldSpace"),
 	Camera = words("CFrame ViewportSize WorldToViewportPoint"),
 	ColorCorrectionEffect = words("Brightness Contrast Saturation"),
 	Folder = words(""),
 	Frame = words("AbsolutePosition AbsoluteSize Active AnchorPoint AutomaticSize BackgroundColor3 BackgroundTransparency BorderSizePixel LayoutOrder Position Rotation Size Visible ZIndex"),
+	Highlight = words("Adornee DepthMode Enabled FillColor FillTransparency OutlineColor OutlineTransparency"),
 	HttpService = words("JSONDecode JSONEncode"),
 	Humanoid = words("ChangeState Health JumpHeight JumpPower MoveDirection PlatformStand SeatPart UseJumpPower WalkSpeed"),
 	ImageButton = words("AbsolutePosition AbsoluteSize Active InputBegan InputEnded Visible"),
+	IntValue = words("Value"),
 	Lighting = words("Ambient Brightness FogEnd GlobalShadows OutdoorAmbient"),
 	LinearVelocity = words("Attachment0 MaxForce RelativeTo VectorVelocity"),
-	Model = words("GetExtentsSize"),
-	Part = words("Anchored AssemblyLinearVelocity AssemblyMass AssemblyRootPart CFrame CanCollide GetConnectedParts Position Size"),
-	Player = words("Character GetNetworkPing Team"),
+	Model = words("GetExtentsSize GetPivot PivotTo"),
+	Part = words("Anchored AssemblyAngularVelocity AssemblyLinearVelocity AssemblyMass AssemblyRootPart CFrame CanCollide Color GetConnectedParts Position Size"),
+	Player = words("Character DisplayName GetNetworkPing Team TeamColor UserId"),
 	PlayerGui = words(""),
-	Players = words("GetPlayers LocalPlayer MaxPlayers PlayerAdded PlayerRemoving"),
+	Players = words("GetPlayerFromCharacter GetPlayers LocalPlayer MaxPlayers PlayerAdded PlayerRemoving"),
+	ProximityPrompt = words("Enabled HoldDuration MaxActivationDistance RequiresLineOfSight"),
+	RemoteEvent = words("FireServer OnClientEvent"),
+	RemoteFunction = words(""),
 	ReplicatedStorage = words(""),
 	RunService = words("PreRender PreSimulation"),
 	ScreenGui = words("DisplayOrder IgnoreGuiInset ResetOnSpawn"),
-	Seat = words("Anchored AssemblyLinearVelocity AssemblyMass AssemblyRootPart CFrame Occupant Position"),
+	Seat = words("Anchored AssemblyLinearVelocity AssemblyMass AssemblyRootPart CFrame GetConnectedParts Occupant Position Size"),
 	SpotLight = words("Angle Brightness Color Enabled Face Range"),
 	Stats = words("GetTotalMemoryUsageMb"),
+	StringValue = words("Value"),
+	Team = words("TeamColor"),
+	Teams = words("GetTeams"),
 	TextBox = words("BackgroundTransparency ClearTextOnFocus FocusLost Font Position Size Text TextColor3 TextSize TextXAlignment TextYAlignment"),
 	TextButton = words("Activated AutoButtonColor BackgroundColor3 BackgroundTransparency BorderSizePixel Font InputBegan InputEnded LayoutOrder Position Size Text TextColor3 TextSize TextXAlignment TextYAlignment"),
 	TextLabel = words("AbsolutePosition AnchorPoint AutomaticSize BackgroundColor3 BackgroundTransparency BorderSizePixel Font InputBegan InputEnded LayoutOrder Position RichText Size Text TextColor3 TextSize TextStrokeTransparency TextWrapped TextXAlignment TextYAlignment Visible"),
@@ -67,7 +77,7 @@ local VERIFIED = {
 	UIPadding = words("PaddingLeft PaddingRight"),
 	UserInputService = words("JumpRequest"),
 	VectorForce = words("ApplyAtCenterOfMass Attachment0 Force RelativeTo"),
-	VehicleSeat = words("Anchored AssemblyLinearVelocity AssemblyMass AssemblyRootPart CFrame CanCollide GetConnectedParts MaxSpeed Occupant Position Size Steer Throttle Torque"),
+	VehicleSeat = words("Anchored AssemblyAngularVelocity AssemblyLinearVelocity AssemblyMass AssemblyRootPart CFrame CanCollide GetConnectedParts MaxSpeed Occupant Position Size Steer Throttle Torque"),
 	VirtualInputManager = words("SendKeyEvent"),
 	Workspace = words("CurrentCamera GetPartBoundsInRadius Raycast"),
 }
@@ -230,7 +240,10 @@ local function inst(cls, props)
 	INSTANCES[#INSTANCES + 1] = self
 	self.props.Name = cls -- Roblox 默认给实例起类名, FindFirstChild("LinearVelocity") 这类调用要靠它
 	if ISA[cls] then -- GuiObject 默认 Visible=true, 引擎行为; 不模拟的话断言会被 nil 坑
-		for _, x in ipairs(ISA[cls]) do if x == "GuiObject" then self.props.Visible = true end end
+		for _, x in ipairs(ISA[cls]) do
+			if x == "GuiObject" then self.props.Visible = true end
+			if x == "BasePart" then self.props.Color = Color3.fromRGB(163, 162, 165) end -- 真引擎里每个零件都有颜色 (默认 Medium stone grey)
+		end
 	end
 	for k, v in pairs(props or {}) do self.props[k] = v end
 	return self
@@ -424,7 +437,7 @@ appendfile = function(p, s) VFS[p] = (VFS[p] or "") .. s end
 setclipboard = function(s) CLIP = s end
 gethui = function() return _G.CoreGui end
 newcclosure = function(f) return f end
-getnamecallmethod = function() return "FireServer" end
+getnamecallmethod = function() return _G.__ncm or "FireServer" end
 hookmetamethod = function(o, m, f) local old = _G.__hook; _G.__hook = f; return old or function() end end
 typeof = function(v)
 	if type(v) == "table" then
@@ -1013,6 +1026,294 @@ ok(dm and dm:find("CAr", 1, true) == nil and dm:find("=== CAR", 1, true) ~= nil,
 ok(CLIP ~= nil and CLIP:find("SELFblox 诊断", 1, true) ~= nil, "快照同时进了剪贴板")
 ok(type(_G.SB_DUMP) == "function", "也可以用 _G.SB_DUMP() 手动打")
 
+-- ───────── 其余模块的覆盖补齐: hud-ESP / plane / brick / log / moc / sibs 角落 ─────────
+-- 这些模块原来几乎没被自检跑到 (plane 33% / brick 48% / log 67% / hud 78%): "真引擎会抛错、假引擎放行"的错最容易藏在没跑到的代码里
+do local function section7c() -- 包进函数: 主函数的局部变量已经快到 200 个上限了
+print("\n[7c] 其余模块: ESP / 飞机侦察 / 刷砖 / 日志 / 旋转·秒互动·速度三模式 / 翻转")
+local TMP = {}
+local function T(i) TMP[#TMP + 1] = i; return i end
+local function mkPart(name, size, pos, extra)
+	local d = inst("Part", { Name = name, CanCollide = true, Anchored = false, Size = size, CFrame = CFrame.new(pos), Position = pos, AssemblyLinearVelocity = Vector3.zero, AssemblyAngularVelocity = Vector3.zero, AssemblyMass = 5, Color = Color3.fromRGB(120, 120, 120) })
+	for k, v in pairs(extra or {}) do d.props[k] = v end
+	d.props.AssemblyRootPart = d
+	return T(d)
+end
+local function btnExact(t) for _, b in ipairs(buttons()) do if b.Text == t then return b end end end
+local function labelHas(sub) for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" and d.Text:find(sub, 1, true) then return d.Text end end end
+local seatSaved = humanoid.props.SeatPart
+humanoid.props.SeatPart = nil
+local PS, RSv = _G.__SVC.Players, _G.__SVC.ReplicatedStorage
+local savedGP, savedFC = PS.props.GetPlayers, PS.props.GetPlayerFromCharacter
+
+-- ── hud: 别的玩家的 ESP ──
+local teamRed = T(inst("Team", { Name = "Red", TeamColor = { Color = Color3.fromRGB(255, 0, 0) } }))
+local teamBlue = T(inst("Team", { Name = "Blue", TeamColor = { Color = Color3.fromRGB(0, 0, 255) } }))
+local bobChar, bobHum = T(inst("Model", { Name = "Bob" })), T(inst("Humanoid", { Health = 100 }))
+local bobRoot = mkPart("HumanoidRootPart", Vector3.new(2, 2, 1), Vector3.new(30, 5, 0))
+bobHum.Parent, bobRoot.Parent = bobChar, bobChar
+bobChar.Parent = workspace
+local bob = T(inst("Player", { Name = "Bob", DisplayName = "Bobby", UserId = 2, Character = bobChar, Team = teamRed, TeamColor = teamRed.props.TeamColor }))
+PS.props.GetPlayers = function() return { player, bob } end
+PS.props.GetPlayerFromCharacter = function(_, c) if c == char then return player elseif c == bobChar then return bob end end
+local espBtn = findBtn("玩家 ESP")
+if espBtn.Text:find("关", 1, true) then click(espBtn) end
+PS.props.PlayerAdded:Fire(bob)
+step(1 / 60, 20)
+local function espHL(adornee) for _, d in ipairs(_G.CoreGui:GetDescendants()) do if d.ClassName == "Highlight" and d.Adornee == adornee then return d end end end
+local function espBB() for _, d in ipairs(_G.CoreGui:GetDescendants()) do if d.ClassName == "BillboardGui" and d.Adornee == bobRoot then return d end end end
+local hl = espHL(bobChar)
+ok(hl ~= nil and hl.Enabled == true, "别的玩家有 ESP 高亮")
+ok(hl and hl.FillColor.R == 1 and hl.FillColor.G == 0, "高亮用队伍颜色 (红队)")
+local bb = espBB()
+local nameTxt = bb and bb:FindFirstChildOfClass("TextLabel").Text
+ok(nameTxt == "Bobby 30", "名牌 = 显示名 + 距离 (" .. tostring(nameTxt) .. ")")
+bob.props.Team = nil
+step(1 / 60, 20)
+ok(espHL(bobChar).FillColor.R == 0.5, "没队伍 → 按 UserId 取色")
+bobHum.props.Health = 0
+step(1 / 60, 20)
+ok(espHL(bobChar).Enabled == false and espBB().Enabled == false, "死了 → 高亮和名牌都关")
+bobHum.props.Health = 100
+click(espBtn) -- 关
+step(1 / 60, 20)
+ok(espHL(bobChar).Enabled == false, "「玩家 ESP」关掉 → 活人也不画")
+click(espBtn) -- 开
+step(1 / 60, 20)
+ok(espHL(bobChar).Enabled == true, "再开 → 又画")
+PS.props.PlayerRemoving:Fire(bob)
+ok(espHL(bobChar) == nil and espBB() == nil, "玩家离开 → ESP 实例清掉")
+PS.props.PlayerAdded:Fire(bob) -- 再进来一次, 留着让卸载去清
+bob.props.Team = teamRed
+
+-- ── plane: 飞机侦察 ──
+local spawnRemote = T(inst("RemoteEvent", { Name = "SpawnPlane" })); spawnRemote.Parent = RSv
+local chatFn = T(inst("RemoteFunction", { Name = "ChatFn" })); chatFn.Parent = RSv
+local function mkPlane(name, o)
+	local m = T(inst("Model", { Name = name }))
+	local st = T(inst("VehicleSeat", { Name = "Pilot", Size = Vector3.new(2, 1, 2), CFrame = CFrame.new(Vector3.new(200, 50, 0)), Position = Vector3.new(200, 50, 0), Occupant = o.occ }))
+	st.Parent = m
+	for _, wn in ipairs(o.wings or {}) do mkPart(wn, Vector3.new(6, 0.5, 2), Vector3.new(200, 50, 0)).Parent = m end
+	for i = 1, (o.fill or 0) do mkPart("Body" .. i, Vector3.new(1, 1, 1), Vector3.new(200, 50, 0)).Parent = m end
+	if o.paint then mkPart("Hull", Vector3.new(20, 4, 4), Vector3.new(200, 50, 0), { Color = o.paint }).Parent = m end
+	if o.remote then T(inst("RemoteEvent", { Name = o.remote })).Parent = m end
+	if o.attr then m:SetAttribute(o.attr[1], o.attr[2]) end
+	if o.value then T(inst("StringValue", { Name = o.value[1], Value = o.value[2] })).Parent = m end
+	m.Parent = workspace
+	return m
+end
+local p1 = mkPlane("Plane_RAF", { occ = humanoid, attr = { "Team", "RAF" }, remote = "FireGun", fill = 8 })
+local p2 = mkPlane("Zero", { occ = bobHum, wings = { "LeftWing", "RightWing" }, value = { "Faction", "Axis" } })
+local p3 = mkPlane("Biplane9", { occ = bobHum })
+local p4 = mkPlane("RedBaron", { wings = { "Aileron", "Rudder" } })
+local p5 = mkPlane("Glider", { paint = Color3.fromRGB(10, 10, 250) })
+mkPlane("Shed", {}).props.IsShed = true
+_G.__SVC.Teams.props.GetTeams = function() return { teamRed, teamBlue } end
+local fireGun
+for _, d in ipairs(p1:GetDescendants()) do if d.Name == "FireGun" then fireGun = d end end
+click(findBtn("重扫"))
+local st1 = labelHas("飞机 ")
+ok(st1 and st1:find("飞机 5", 1, true) and st1:find("Remote 2", 1, true), "重扫: 5 架飞机 (车不算) + 2 个相关 Remote (" .. tostring(st1) .. ")")
+click(findBtn("写报告"))
+local rep = VFS["plane_debug.txt"]
+ok(rep ~= nil and CLIP == rep, "写报告 → plane_debug.txt + 剪贴板")
+ok(rep and rep:find("★我", 1, true) and rep:find("队:RAF(attr:Team)", 1, true), "我坐的那架标 ★我, 队伍来自属性")
+ok(rep and rep:find('队:Faction="Axis"(value)', 1, true), "队伍来自 StringValue")
+ok(rep and rep:find("(乘员)", 1, true) and rep:find("乘员:Bobby", 1, true) == nil or rep:find("(乘员)", 1, true), "队伍来自乘员的队伍")
+ok(rep and rep:find("(名字)", 1, true), "队伍来自机名 (RedBaron)")
+ok(rep and rep:find("(涂装≈)", 1, true), "队伍来自涂装颜色最接近的 Team")
+ok(rep and rep:find("FireGun", 1, true) and rep:find("-- Remote 2", 1, true), "报告里列出 Remote")
+-- 高亮: 我=绿 / 同队=蓝 / 敌队=红 / 未知=灰
+player.props.Team = teamRed
+click(findBtn("高亮 "))
+local function hlOf(m) return espHL(m) end
+local function near(c, r, g, b) return math.abs(c.R - r / 255) < 1e-6 and math.abs(c.G - g / 255) < 1e-6 and math.abs(c.B - b / 255) < 1e-6 end
+ok(hlOf(p1) and near(hlOf(p1).FillColor, 80, 255, 80), "我坐的飞机 = 绿")
+ok(hlOf(p3) and near(hlOf(p3).FillColor, 80, 140, 255), "同队 = 蓝")
+ok(hlOf(p5) and near(hlOf(p5).FillColor, 255, 70, 70), "敌队 = 红")
+ok(hlOf(p2) and near(hlOf(p2).FillColor, 170, 170, 170), "队伍未知 = 灰")
+click(findBtn("高亮 "))
+ok(hlOf(p1) == nil and hlOf(p5) == nil, "关高亮 → 全清掉")
+player.props.Team = nil
+-- 发侦听: hook __namecall
+click(findBtn("发侦听"))
+local hookF = _G.__hook
+_G.__planeHook = hookF
+ok(type(hookF) == "function", "开「发侦听」会装 __namecall 钩子")
+hookF(fireGun, "bullet", Vector3.new(1, 2, 3), { a = 1 })
+_G.__ncm = "InvokeServer"
+hookF(chatFn, "hi") -- 路径里没有关键字, 默认不录
+_G.__ncm = nil
+ok(pcall(hookF, {}, "x"), "记录失败(self 不是实例)不能拦住游戏自己的调用")
+click(findBtn("写报告"))
+rep = VFS["plane_debug.txt"]
+ok(rep:find("-- 发 1", 1, true) and rep:find('Workspace.Plane_RAF.FireGun:FireServer "bullet", (1,2,3), {a=1}', 1, true), "命中关键字的 FireServer 被记下来了, 参数格式化对")
+click(findBtn("全录"))
+_G.__ncm = "InvokeServer"
+hookF(chatFn, "hi")
+_G.__ncm = nil
+click(findBtn("写报告"))
+ok(VFS["plane_debug.txt"]:find("ReplicatedStorage.ChatFn:InvokeServer", 1, true) ~= nil, "「全录」开了 → 没关键字的 InvokeServer 也录")
+click(findBtn("全录"))
+-- 收侦听
+click(findBtn("收侦听"))
+fireGun.OnClientEvent:Fire("boom", 5)
+click(findBtn("写报告"))
+ok(VFS["plane_debug.txt"]:find("-- 收 1", 1, true) and VFS["plane_debug.txt"]:find("Workspace.Plane_RAF.FireGun <- \"boom\", 5", 1, true), "OnClientEvent 收到的被记下来了")
+click(findBtn("清空记录"))
+click(findBtn("写报告"))
+ok(VFS["plane_debug.txt"]:find("-- 发 0", 1, true) and VFS["plane_debug.txt"]:find("-- 收 0", 1, true), "清空记录 → 收发都归零")
+-- 自动 5s
+mkPlane("Jet_new", {}) -- 手动重扫之后才冒出来的飞机: 只有真的重扫了, 它才会进报告
+click(findBtn("自动 5s"))
+VFS["plane_debug.txt"] = nil
+step(1 / 60, 330)
+ok(VFS["plane_debug.txt"] ~= nil and VFS["plane_debug.txt"]:find("Jet_new", 1, true) ~= nil, "「自动 5s」开着 → 5 秒后自己重扫 (新冒出来的飞机进了报告) 并写报告")
+click(findBtn("自动 5s"))
+-- 发侦听 / 收侦听 故意留着开, 让卸载去验证"钩子还原 + 连接断干净"
+
+-- ── brick: BitFarmer 刷砖 ──
+local brickBtn = btnExact("刷砖 关")
+click(brickBtn)
+step(1 / 60, 2)
+ok(toastText():find("没找到", 1, true) ~= nil and brickBtn.Text == "刷砖 关", "没有 Collector / leaderstats → 提示并自己关回去 (" .. toastText() .. ")")
+local ls = T(inst("Folder", { Name = "leaderstats" })); ls.Parent = player
+local bits = T(inst("IntValue", { Name = "Bits", Value = 100 })); bits.Parent = ls
+local mult = T(inst("IntValue", { Name = "Multiplier", Value = 2 })); mult.Parent = ls
+local collector = mkPart("Collector", Vector3.new(10, 1, 10), Vector3.new(80, 3, 0), { Anchored = true }); collector.Parent = workspace
+local fires = 0
+local spawnBit = T(inst("RemoteEvent", { Name = "SpawnBit", FireServer = function() fires = fires + 1 end })); spawnBit.Parent = RSv
+local function mkBrick(owner, anchored) local b = mkPart("Brick", Vector3.new(1, 1, 1), Vector3.new(0, 20, 0), { Anchored = anchored or false }); b:SetAttribute("Owner", owner); b.Parent = workspace; return b end
+local b1, b2, b3, b4 = mkBrick(1), mkBrick(1), mkBrick(99), mkBrick(1, true)
+click(btnExact("刷砖 关"))
+step(1 / 60, 60)
+bits.Value = bits.Value + 50 -- 游戏给的分
+local b5 = mkBrick(1)
+workspace.props.ChildAdded:Fire(b5) -- 新掉出来的砖: ChildAdded → defer → 吸走
+step(1 / 60, 90)
+ok(fires >= 4, "每个周期按批次发 SpawnBit (发了 " .. fires .. " 次)")
+ok(mult.Value == 99999 and player:GetAttribute("MultiplierUpgradeLevel") == 9999, "倍率和等级被顶上去")
+local function nearCollector(b) local pz = b.CFrame.Position; return math.abs(pz.X - 80) <= 3 and math.abs(pz.Y - 4.5) < 0.01 and math.abs(pz.Z) <= 3 end
+ok(nearCollector(b1) and nearCollector(b2) and b1.AssemblyLinearVelocity.Y == -35, "自己的砖被吸到 Collector 上方并往下砸")
+ok(nearCollector(b5), "新掉出来的砖也被吸走 (ChildAdded)")
+ok(b3.CFrame.Position.Y == 20 and b4.CFrame.Position.Y == 20, "别人的砖 / 自己锚定的砖不碰")
+local brickTxt = labelHas("周期 ")
+ok(brickTxt ~= nil and brickTxt:find("+50", 1, true), "状态行有周期和累计收益 (" .. tostring(brickTxt) .. ")")
+-- 关了立刻又开: 不能同时跑两条循环
+click(btnExact("刷砖 开"))
+click(btnExact("刷砖 关"))
+local f0 = fires
+step(1 / 60, 192)
+ok(fires - f0 <= 16, "关了立刻又开: 只有一条循环在跑 (3.2 秒发了 " .. (fires - f0) .. " 次, 两条循环会翻倍)")
+click(btnExact("刷砖 开"))
+step(1 / 60, 150)
+ok(mult.Value == 2 and player:GetAttribute("MultiplierUpgradeLevel") == nil, "关掉 → 倍率和等级还原 (原来的 2 / 没有)")
+local f1 = fires
+step(1 / 60, 120)
+ok(fires == f1, "关掉以后循环真的停了")
+
+-- ── log: 录制 / 超限重写 / 循环里抛错不能死 ──
+VFS["Selfblox_log.txt"] = nil
+click(findBtn("录制 "))
+step(1 / 60, 250)
+local logTxt = VFS["Selfblox_log.txt"]
+ok(logTxt ~= nil and logTxt:sub(1, 13) == "---- Selfblox", "录制 → 写了带表头的日志")
+ok(logTxt and logTxt:find("] #0", 1, true) and logTxt:find("] #1", 1, true) and logTxt:find("配置 {", 1, true) and logTxt:find("moc 速度=", 1, true), "每条有序号 / 配置 / 各模块状态")
+ok(labelHas("KB / ") ~= nil, "状态行显示写了多少 KB")
+local limitBox
+for _, d in ipairs(all()) do if d:IsA("TextBox") and d.Text == "512" then limitBox = d end end
+limitBox.Text = "0.001"; limitBox.FocusLost:Fire()
+step(1 / 60, 250)
+local _, entries = (VFS["Selfblox_log.txt"] or ""):gsub("%] #%d+", "")
+ok(entries == 1, "超过上限 → 直接重写, 文件里只剩最新一条 (" .. entries .. " 条)")
+limitBox.Text = "512"; limitBox.FocusLost:Fire()
+-- 循环里任何一步抛错, 记录循环都不能永久死掉
+local HS = _G.__SVC.HttpService
+local oldEnc = HS.props.JSONEncode
+HS.props.JSONEncode = function() error("boom") end
+step(1 / 60, 250)
+HS.props.JSONEncode = oldEnc
+local before = #(VFS["Selfblox_log.txt"] or "")
+step(1 / 60, 250)
+ok(#(VFS["Selfblox_log.txt"] or "") > before, "中间抛过错, 恢复后记录循环照样继续写 (没有因为一次错误永久死掉)")
+click(findBtn("录制 "))
+
+-- ── moc: 旋转 / 秒互动三态 / 速度三模式 ──
+local startPos = hrp.props.Position
+click(findBtn("旋转 "))
+step(1 / 60, 6)
+local spinAV
+for _, d in ipairs(hrp:GetDescendants()) do if d.ClassName == "AngularVelocity" then spinAV = d end end
+ok(spinAV ~= nil and spinAV.AngularVelocity.Y == 50, "旋转: 挂上原生 AngularVelocity, 绕 Y 轴 50")
+click(findBtn("旋转 "))
+step(1 / 60, 3)
+local spinGone = true
+for _, d in ipairs(hrp:GetDescendants()) do if d.ClassName == "AngularVelocity" then spinGone = false end end
+ok(spinGone, "关旋转 → 约束删掉")
+local pp = T(inst("ProximityPrompt", { Name = "Prompt", HoldDuration = 2, MaxActivationDistance = 10, RequiresLineOfSight = true, Enabled = true })); pp.Parent = workspace
+local ppOff = T(inst("ProximityPrompt", { Name = "PromptOff", HoldDuration = 1, MaxActivationDistance = 8, RequiresLineOfSight = true, Enabled = false })); ppOff.Parent = workspace
+for _ = 1, 3 do local b = findBtn("秒互动 "); if b.Text == "秒互动 关" then break end; click(b) end
+local nocdBtn = findBtn("秒互动 ")
+click(nocdBtn)
+ok(nocdBtn.Text == "秒互动 普通" and pp.HoldDuration == 0 and pp.MaxActivationDistance == 1000 and pp.RequiresLineOfSight == false, "秒互动·普通: 0 长按 / 超远距离 / 不要视线")
+ok(ppOff.Enabled == false and ppOff.HoldDuration == 1, "普通模式不碰被游戏关掉的")
+local ppNew = T(inst("ProximityPrompt", { Name = "PromptNew", HoldDuration = 3, MaxActivationDistance = 5, RequiresLineOfSight = true, Enabled = true })); ppNew.Parent = workspace
+workspace.props.DescendantAdded:Fire(ppNew)
+ok(ppNew.HoldDuration == 0, "之后新出现的 prompt 也被改")
+click(nocdBtn)
+ok(nocdBtn.Text == "秒互动 强制" and ppOff.Enabled == true and ppOff.HoldDuration == 0, "秒互动·强制: 连关掉的也打开")
+click(nocdBtn)
+ok(nocdBtn.Text == "秒互动 关" and pp.HoldDuration == 2 and pp.MaxActivationDistance == 10 and pp.RequiresLineOfSight == true and ppOff.Enabled == false and ppOff.HoldDuration == 1, "关掉 → 原样还原")
+-- 速度三种模式
+for _ = 1, 3 do local m = findBtn("模式 "); if m.Text == "模式 root" then break end; click(m) end
+local modeBtn = findBtn("模式 ")
+local spdBtn = findBtn("速度 ")
+if spdBtn.Text:find("开", 1, true) then click(spdBtn) end
+click(spdBtn)
+humanoid.props.MoveDirection = Vector3.new(0, 0, -1)
+step(1 / 60, 4)
+ok(hrp.props.AssemblyLinearVelocity.Z == -16 and hrp.props.AssemblyLinearVelocity.X == 0, "速度·root: 直接写水平速度 (" .. tostring(hrp.props.AssemblyLinearVelocity) .. ")")
+humanoid.props.MoveDirection = Vector3.zero
+step(1 / 60, 4)
+ok(hrp.props.AssemblyLinearVelocity.Z == 0, "松摇杆 → 水平速度归零")
+click(modeBtn)
+ok(modeBtn.Text == "模式 walk", "模式按钮循环到 walk")
+step(1 / 60, 4)
+ok(humanoid.WalkSpeed == 16, "速度·walk: 写 WalkSpeed")
+click(modeBtn)
+ok(modeBtn.Text == "模式 cframe", "模式按钮循环到 cframe")
+humanoid.props.MoveDirection = Vector3.new(0, 0, -1)
+local z0 = hrp.props.CFrame.Position.Z
+step(1 / 60, 6)
+ok(hrp.props.CFrame.Position.Z < z0, "速度·cframe: 直接推 CFrame")
+humanoid.props.MoveDirection = Vector3.zero
+click(modeBtn)
+click(spdBtn)
+step(1 / 60, 3)
+ok(humanoid.WalkSpeed == 16, "关速度 → WalkSpeed 还原")
+hrp.props.CFrame, hrp.props.Position = CFrame.new(startPos), startPos
+
+-- ── sibs 角落: 翻转 / 缓存的车 ──
+for _, d in ipairs(all()) do if d:IsA("TextButton") and d.Text == "翻转 180°" then d.Activated:Fire() end end
+ok(car.props.__pivot ~= nil, "翻转: 有 Model 就整车 PivotTo")
+local loose = mkPart("Loose", Vector3.new(4, 1, 4), Vector3.new(60, 5, 0)); loose.Parent = workspace
+_G.__rayHit = { Instance = loose }
+click(findBtn("换车"))
+step(1 / 60, 5)
+for _, d in ipairs(all()) do if d:IsA("TextButton") and d.Text == "翻转 180°" then d.Activated:Fire() end end
+ok(math.abs(loose.CFrame.Position.Y - 7) < 1e-6, "翻转: 没有 Model 也能翻 (抬高 2 格)")
+_G.__rayHit = { Instance = seat }
+click(findBtn("换车"))
+step(1 / 60, 5)
+_G.__rayHit = nil
+loose:Destroy()
+
+-- ── 收尾: 假场景用完就收, 不然会被当成脚本漏的实例 ──
+PS.props.GetPlayers, PS.props.GetPlayerFromCharacter = savedGP, savedFC
+_G.__SVC.Teams.props.GetTeams = function() return {} end
+humanoid.props.SeatPart = seatSaved
+for i = #TMP, 1, -1 do TMP[i]:Destroy() end
+end section7c() end
+
 print("\n[8] 写盘 / 剪贴板")
 ok(VFS["Selfblox.json"] ~= nil, "改过的值写进了 Selfblox.json")
 local barLbl
@@ -1035,6 +1336,7 @@ ok(tabs() == nil, "面板整个没了")
 ok(leaked == 0, "没漏实例 (漏了 " .. leaked .. " 个)")
 ok(LIVE == 0, "没漏连接 (还剩 " .. LIVE .. " 个)")
 ok(_G.SB_UNLOAD == nil, "SB_UNLOAD 自己清了")
+ok(_G.__hook ~= _G.__planeHook, "卸载时 __namecall 钩子还原成原来的")
 
 -- ───────── 第二轮: 只装 moc + _G.SB 覆盖 ─────────
 print("\n[10] _G.SB 覆盖 + only 过滤")
@@ -1136,11 +1438,32 @@ _G.__radius = { sSeat }
 freshSibs()
 step(1 / 60, 90)
 ok(bound(sSeat), "只有没锚定的普通 Seat 的车 → 也绑上 (锚定的才是长椅)")
+_G.SB_DUMP()
+local dmpPlain = VFS["selfblox_dump.txt"]
+ok(dmpPlain:find("(普通座, 无油门/方向)", 1, true) ~= nil, "快照: 普通 Seat 标明「普通座, 无油门/方向」")
+ok(dmpPlain:find("-- 周围的座位", 1, true) ~= nil and dmpPlain:find("Chair", 1, true) ~= nil and dmpPlain:find("乘员=空", 1, true) ~= nil, "快照: 周围座位里列出这个座位, 乘员=空")
+ok(dmpPlain:find("-- 车周围 25 格里的部件", 1, true) ~= nil and dmpPlain:find("Chair                          Seat", 1, true) ~= nil, "快照: 车周围的部件里有它")
 _G.__radius = { sSeat, farSeat } -- 普通 Seat 更近 (30 格) 且排在前面, VehicleSeat 在 100 格外
 freshSibs()
 step(1 / 60, 90)
 ok(bound(farSeat) and not bound(sSeat), "VehicleSeat 优先于更近的普通 Seat")
 sCar:Destroy() -- 场景物件用完就销毁, 不然会被当成脚本漏的实例
+do -- 车被游戏销毁后再点诊断打包: 缓存的那辆如实说"已经不在 workspace"
+	local dCar = inst("Model", { Name = "DisposableCar" })
+	local dSeat = inst("VehicleSeat", { Name = "DSeat", CanCollide = true, Anchored = false, Size = Vector3.new(2, 1, 2), CFrame = CFrame.new(Vector3.new(20, 5, 0)), Position = Vector3.new(20, 5, 0), AssemblyLinearVelocity = Vector3.zero, AssemblyAngularVelocity = Vector3.zero, AssemblyMass = 20, MaxSpeed = 30, Steer = 0, Throttle = 0 })
+	dSeat.props.AssemblyRootPart = dSeat
+	dSeat.Parent = dCar
+	dCar.Parent = workspace
+	_G.__radius = { dSeat }
+	freshSibs()
+	step(1 / 60, 90)
+	ok(bound(dSeat), "(对照) 一次性的车绑上了")
+	_G.__radius = {}
+	dCar:Destroy()
+	step(1 / 60, 5)
+	_G.SB_DUMP()
+	ok(VFS["selfblox_dump.txt"]:find("已经不在 workspace 里了", 1, true) ~= nil, "车被销毁后点诊断打包: 缓存的那辆如实说「已经不在 workspace」")
+end
 _G.__radius = { bench, farSeat, seat }
 
 freshSibs()
