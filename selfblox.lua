@@ -184,14 +184,16 @@ local KIND = {
 local NOUI = { tick = true, dump = true }
 
 -- ═════════ moc: 角色 ═════════
-feature{ kind = "legacy", id = "moc", tab = "动", fn = function(page)
-	local S = { spd = opt("spd", 16), mode = opt("spdmode", "root"), fly = opt("flyspd", 50), jump = opt("jump", 50), spin = opt("spin", 50), dist = opt("promptdist", 1000) }
-	local speedOn, flyOn, jumpOn, spinOn, infJump, clip, nv, nocd = false, false, false, false, false, false, false, "off"
-	local up, down, moving, nvT, setFly = false, false, false, 0, nil
+do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转 / 无限跳 / 穿墙 / 夜视 / 秒互动) ═════════
+	local moving, nvT = false, 0
 	local att, flyLV, flyAO, spinAV, cc, nvSaved
 	local base = setmetatable({}, { __mode = "k" }) -- humanoid -> 原始 WalkSpeed/JumpPower/JumpHeight
 	local col = setmetatable({}, { __mode = "k" }) -- 穿墙前 CanCollide=true 的部件
 	local prompts = setmetatable({}, { __mode = "k" }) -- prompt -> 原始属性
+	local function body() -- 角色在场才干活: 返回 character, humanoid, root
+		local c, h, r = me.Character, hum(), root()
+		if c and h and r and r:IsDescendantOf(workspace) then return c, h, r end
+	end
 
 	local function baseOf(h) local b = base[h]; if not b then b = { h.WalkSpeed, h.JumpPower, h.JumpHeight }; base[h] = b end; return b end
 	local function restore() local h = hum(); local b = h and base[h]; if b then h.WalkSpeed, h.JumpPower, h.JumpHeight = b[1], b[2], b[3] end end
@@ -210,13 +212,13 @@ feature{ kind = "legacy", id = "moc", tab = "动", fn = function(page)
 		local cam, md = workspace.CurrentCamera.CFrame, h.MoveDirection
 		local look = flat(cam.LookVector) or Vector3.zAxis
 		-- 水平跟摇杆, 前后分量带上相机俯仰, 上升/下降按钮叠加
-		flyLV.VectorVelocity = md * S.fly + Vector3.yAxis * (S.fly * (cam.LookVector.Y * md:Dot(look) + (up and 1 or 0) - (down and 1 or 0)))
+		flyLV.VectorVelocity = md * S.flyspd + Vector3.yAxis * (S.flyspd * (cam.LookVector.Y * md:Dot(look) + (F.up and 1 or 0) - (F.down and 1 or 0)))
 		flyAO.CFrame = CFrame.lookAt(Vector3.zero, look)
 	end
 	local function doSpeed(r, h, dt)
 		local md = h.MoveDirection
-		if S.mode == "walk" then baseOf(h); h.WalkSpeed = S.spd
-		elseif S.mode == "cframe" then if md.Magnitude > 0 then r.CFrame = r.CFrame + md * (S.spd * dt) end
+		if F.spdmode == "walk" then baseOf(h); h.WalkSpeed = S.spd
+		elseif F.spdmode == "cframe" then if md.Magnitude > 0 then r.CFrame = r.CFrame + md * (S.spd * dt) end
 		else -- root: 直接写水平速度, 松摇杆归零一次
 			local v = r.AssemblyLinearVelocity
 			if md.Magnitude > 0 then r.AssemblyLinearVelocity = Vector3.new(md.X * S.spd, v.Y, md.Z * S.spd); moving = true
@@ -247,60 +249,39 @@ feature{ kind = "legacy", id = "moc", tab = "动", fn = function(page)
 		nvSaved = nil
 	end
 	local function patch(p) -- 秒互动: 0 长按 / 超远距离 / 不要视线; 强制模式连 Enabled=false 的也打开
-		if not p:IsA("ProximityPrompt") or prompts[p] or (nocd == "normal" and not p.Enabled) then return end
+		if not p:IsA("ProximityPrompt") or prompts[p] or (F.nocd == "normal" and not p.Enabled) then return end
 		prompts[p] = { p.HoldDuration, p.MaxActivationDistance, p.RequiresLineOfSight, p.Enabled }
-		p.HoldDuration, p.MaxActivationDistance, p.RequiresLineOfSight, p.Enabled = 0, math.max(p.MaxActivationDistance, S.dist), false, true
+		p.HoldDuration, p.MaxActivationDistance, p.RequiresLineOfSight, p.Enabled = 0, math.max(p.MaxActivationDistance, S.promptdist), false, true
 	end
 	local function setNocd(m)
-		nocd = m
+		F.nocd = m
 		for p, s in pairs(prompts) do if p.Parent then p.HoldDuration, p.MaxActivationDistance, p.RequiresLineOfSight, p.Enabled = s[1], s[2], s[3], s[4] end end
 		table.clear(prompts)
 		if m ~= "off" then for _, p in ipairs(workspace:GetDescendants()) do patch(p) end end
 	end
-	on(workspace.DescendantAdded, function(p) if nocd ~= "off" then patch(p) end end)
-	on(UIS.JumpRequest, function() local h = hum(); if infJump and h then h:ChangeState(Enum.HumanoidStateType.Jumping) end end)
 
-	on(RunService.PreSimulation, function(dt)
-		local c, h, r = me.Character, hum(), root()
-		if not (c and h and r and r:IsDescendantOf(workspace)) then return end
-		local seated = h.SeatPart ~= nil
-		if clip then noclip(c) end
-		if flyOn and seated then setFly(false) elseif flyOn then doFly(r, h) elseif flyLV then stopFly() end
-		if speedOn and not seated and h.Health > 0 then doSpeed(r, h, dt) end
-		if jumpOn then baseOf(h); if h.UseJumpPower then h.JumpPower = S.jump else h.JumpHeight = S.jump end end
-		if spinOn and not seated then doSpin(r) elseif spinAV then stopSpin() end
-		if nv and os.clock() - nvT > 0.5 then nvT = os.clock(); nvOn() end -- 游戏会重置光照, 半秒补一次
-	end)
-
-	local r1 = row(page)
-	toggle(r1, "速度", false, function(v) speedOn, moving = v, false; if not v then restore() end end, 0.5)
-	num(r1, nil, S, "spd", 0.5)
-	local MODES = { root = "walk", walk = "cframe", cframe = "root" }
-	btn(page, "模式 " .. S.mode, function(b) restore(); moving = false; S.mode = MODES[S.mode] or "root"; save("spdmode", S.mode); b.Text = "模式 " .. S.mode end)
-	local r2 = row(page)
-	setFly = toggle(r2, "飞行", false, function(v) flyOn = v; if not v then stopFly() end end, 0.5)
-	num(r2, nil, S, "fly", 0.5, "flyspd")
-	local r3 = row(page)
-	toggle(r3, "高跳", false, function(v) jumpOn = v; if not v then restore() end end, 0.5)
-	num(r3, nil, S, "jump", 0.5)
-	local r4 = row(page)
-	toggle(r4, "旋转", false, function(v) spinOn = v; if not v then stopSpin() end end, 0.5)
-	num(r4, nil, S, "spin", 0.5)
-	local r5 = row(page)
-	toggle(r5, "无限跳", false, function(v) infJump = v end, 0.5)
-	toggle(r5, "穿墙", false, function(v) clip = v; if not v then reclipAll(col) end end, 0.5)
-	local r6 = row(page)
-	toggle(r6, "夜视", false, function(v) nv = v; if v then nvOn() else nvOff() end end, 0.5)
-	local NEXT, CN = { off = "normal", normal = "force", force = "off" }, { off = "秒互动 关", normal = "秒互动 普通", force = "秒互动 强制" }
-	btn(r6, CN.off, function(b) setNocd(NEXT[nocd]); b.Text = CN[nocd]; lit(b, nocd ~= "off") end, 0.5)
-	local r7 = row(page, 36)
-	hold(r7, "▲ 上升", function(v) up = v end, 0.5)
-	hold(r7, "▼ 下降", function(v) down = v end, 0.5)
-	num(page, "秒互动距离", S, "dist", nil, "promptdist")
-
-	INFO.moc = function() return string.format("速度=%s/%s 飞行=%s 高跳=%s 旋转=%s 穿墙=%s 夜视=%s 秒互动=%s", tostring(speedOn), S.mode, tostring(flyOn), tostring(jumpOn), tostring(spinOn), tostring(clip), tostring(nv), nocd) end
-	return function() setFly(false); stopSpin(); reclipAll(col); restore(); nvOff(); setNocd("off"); if att then att:Destroy() end end
-end }
+	local function speedTick(dt) local _, h, r = body(); if h and not h.SeatPart and h.Health > 0 then doSpeed(r, h, dt) end end
+	local function flyTick() local _, h, r = body(); if h then if h.SeatPart then W.fly(false) else doFly(r, h) end end end
+	local function jumpTick() local _, h = body(); if h then baseOf(h); if h.UseJumpPower then h.JumpPower = S.jump else h.JumpHeight = S.jump end end end
+	local function spinTick() local _, h, r = body(); if h then if h.SeatPart then if spinAV then stopSpin() end else doSpin(r) end end end
+	local function clipTick() local c = body(); if c then noclip(c) end end
+	local function nvTick() if body() and os.clock() - nvT > 0.5 then nvT = os.clock(); nvOn() end end -- 游戏会重置光照, 半秒补一次
+	feature{ kind = "page", id = "moc", tab = "动" }
+	feature{ key = "speed", label = "速度", num = { "spd", 16 }, tick = speedTick, set = function() moving = false end, off = restore }
+	feature{ kind = "cycle", key = "spdmode", save = "spdmode", def = "root", cycle = { "root", "walk", "cframe" }, text = function(v) return "模式 " .. v end, set = function() restore(); moving = false end, w = 1 }
+	feature{ key = "fly", label = "飞行", num = { "flyspd", 50 }, tick = flyTick, off = stopFly }
+	feature{ key = "jump", label = "高跳", num = { "jump", 50 }, tick = jumpTick, off = restore }
+	feature{ key = "spin", label = "旋转", num = { "spin", 50 }, tick = spinTick, off = stopSpin }
+	feature{ key = "infjump", label = "无限跳", init = function() on(UIS.JumpRequest, function() local h = hum(); if F.infjump and h then h:ChangeState(Enum.HumanoidStateType.Jumping) end end) end }
+	feature{ key = "clip", label = "穿墙", tick = clipTick, off = function() reclipAll(col) end }
+	feature{ key = "nv", label = "夜视", tick = nvTick, set = function(v) if v then nvOn() end end, off = nvOff }
+	feature{ kind = "cycle", key = "nocd", def = "off", cycle = { "off", "normal", "force" }, text = { off = "秒互动 关", normal = "秒互动 普通", force = "秒互动 强制" }, lit = true, set = setNocd, off = function() setNocd("off") end,
+		init = function() on(workspace.DescendantAdded, function(p) if F.nocd ~= "off" then patch(p) end end) end }
+	feature{ kind = "hold", key = "up", label = "▲ 上升", h = 36 }
+	feature{ kind = "hold", key = "down", label = "▼ 下降", h = 36 }
+	feature{ kind = "num", key = "promptdist", def = 1000, label = "秒互动距离", w = 1 }
+	feature{ kind = "tick", off = function() if att then att:Destroy(); att = nil end end } -- 只在卸载时: 飞行 / 旋转共用的 Attachment
+end
 
 -- ═════════ sibs: 载具 (坐着 = 控制座位所在装配体; 没坐 = 准星"换车"锁定) ═════════
 feature{ kind = "legacy", id = "sibs", tab = "车", fn = function(page)
