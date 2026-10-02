@@ -688,10 +688,10 @@ feature{ kind = "legacy", id = "sibs", tab = "车", fn = function(page)
 end }
 
 -- ═════════ drift: 人物推进 (自动找踏板; 找不到就用面板按钮) ═════════
-feature{ kind = "legacy", id = "drift", tab = "漂", fn = function(page)
-	local S = { acc = opt("dacc", 5), brake = opt("dbrake", 10) }
-	local enabled, w, s, att, vf, status = opt("drift", true), false, false, nil, nil, nil
-	local slots, pedalRoot = {}, nil -- slots[1]=刹车 slots[2]=油门
+do -- ═════════ 漂: 人物推进 (自动找踏板; 找不到就用面板按钮) ═════════
+	local att, vf, pedalRoot
+	local slots = {} -- slots[1]=刹车 slots[2]=油门
+	F.dgas, F.dbrake = false, false -- 油门 / 刹车现在是不是踩着: 游戏踏板和面板按钮都写这两个
 	local function pedalLines() -- 踏板的真实结构: 绑不上时能直接看出它长啥样
 		local pg = me:FindFirstChild("PlayerGui")
 		local f = pg and pg:FindFirstChild("MobilePedals")
@@ -707,10 +707,9 @@ feature{ kind = "legacy", id = "drift", tab = "漂", fn = function(page)
 		end
 		return L
 	end
-	DUMP.pedals = pedalLines
 	local function slotName(n) return slots[n] and slots[n].btn.Name or "未绑" end
-	local function setSlot(n, v) if n == 1 then s = v else w = v end end
-	local function clearSlot(n) local sl = slots[n]; if sl then for _, c in ipairs(sl.conns) do c:Disconnect() end end; slots[n] = nil; w, s = w or false, s or false end
+	local function setSlot(n, v) if n == 1 then F.dbrake = v else F.dgas = v end end
+	local function clearSlot(n) local sl = slots[n]; if sl then for _, c in ipairs(sl.conns) do c:Disconnect() end end; slots[n] = nil; F.dgas, F.dbrake = F.dgas or false, F.dbrake or false end
 	local function bindSlot(n, g) -- 按住 g 就当踩着第 n 个踏板
 		clearSlot(n)
 		local conns = {}
@@ -729,23 +728,23 @@ feature{ kind = "legacy", id = "drift", tab = "漂", fn = function(page)
 		local pg = me:FindFirstChild("PlayerGui")
 		local f = pg and pg:FindFirstChild("MobilePedals")
 		if not f then
-			if not slotLive(1) and not slotLive(2) then status.Text = "无 MobilePedals → 用下面的 ▲ 油门 / ▼ 刹车" end
+			if not slotLive(1) and not slotLive(2) then say("drift_status", "无 MobilePedals → 用下面的 ▲ 油门 / ▼ 刹车") end
 			return
 		end
 		local b = {}
 		for _, c in ipairs(f:GetDescendants()) do if c:IsA("GuiButton") then b[#b + 1] = c end end -- 框名/嵌套深度每个游戏不一样, 整个子树找按钮
 		table.sort(b, function(x, y) return (x.AbsolutePosition or Vector2.zero).X < (y.AbsolutePosition or Vector2.zero).X end)
-		if #b < 2 then if force then status.Text = "MobilePedals 里只找到 " .. #b .. " 个按钮 → 用下面的 ▲ 油门 / ▼ 刹车" end; return end
+		if #b < 2 then if force then say("drift_status", "MobilePedals 里只找到 " .. #b .. " 个按钮 → 用下面的 ▲ 油门 / ▼ 刹车") end; return end
 		bindSlot(1, b[1])
 		bindSlot(2, b[2])
 		pedalRoot = f
-		status.Text = slotsText()
+		say("drift_status", slotsText())
 	end
 
-	on(RunService.PreSimulation, function()
+	local function driftTick()
 		local c = me.Character
 		local r = c and c:FindFirstChild("Root") or root() -- 漂移游戏的车体叫 Root
-		if not (enabled and r and r:IsDescendantOf(workspace)) or r.Anchored then if att then att:Destroy(); att = nil end; return end
+		if not (r and r:IsDescendantOf(workspace)) or r.Anchored then if att then att:Destroy(); att = nil end; return end
 		if not att or att.Parent ~= r then
 			if att then att:Destroy() end
 			att = mk("Attachment", { Name = "SB_DRIFT" }, r)
@@ -753,38 +752,36 @@ feature{ kind = "legacy", id = "drift", tab = "漂", fn = function(page)
 		end
 		local look = flat(r.CFrame.LookVector) or Vector3.zAxis
 		local m, fs = r.AssemblyMass, r.AssemblyLinearVelocity:Dot(look)
-		local F = Vector3.zero
-		if w and s then if math.abs(fs) > 0.1 then F = -look * (math.sign(fs) * S.brake * m) end
-		elseif w then F = look * (S.acc * m)
-		elseif s then F = -look * ((fs > 0.1 and S.brake or S.acc) * m) end -- 前进中刹车, 停了倒退
-		vf.Force = F
-	end)
-
-	local r1 = row(page)
-	num(r1, "加速", S, "acc", 0.5, "dacc")
-	num(r1, "刹车", S, "brake", 0.5, "dbrake")
-	local r2 = row(page)
-	toggle(r2, "推进", enabled, function(v) enabled = v; save("drift", v) end, 0.5)
-	btn(r2, "重绑踏板", function() autoBind(true) end, 0.5)
-	local r4 = row(page, 36)
-	hold(r4, "▲ 油门", function(v) w = v end, 0.5)
-	hold(r4, "▼ 刹车", function(v) s = v end, 0.5)
-	status = text(page, "…")
-	task.spawn(function()
-		local pg = me:WaitForChild("PlayerGui")
-		on(pg.ChildAdded, function(c) if c.Name == "MobilePedals" then task.delay(0.2, autoBind) end end)
-		autoBind()
-		while alive do -- 没绑上就每秒自己再试: 不用手动点, 也不怕游戏晚点才生成 UI
-			task.wait(1)
-			prune()
-			if enabled and (not pedalRoot or not pedalRoot.Parent or not slotLive(1) or not slotLive(2)) then autoBind() end
-		end
-	end)
-
-	INFO.drift = function() return "推进=" .. tostring(enabled) .. " 油门=" .. tostring(w) .. " 刹车=" .. tostring(s) .. " " .. slotsText() .. " 状态=" .. tostring(status and status.Text) end
-	return function() if att then att:Destroy() end; for _, sl in pairs(slots) do for _, c in ipairs(sl.conns) do c:Disconnect() end end end
-end }
-
+		local push = Vector3.zero
+		if F.dgas and F.dbrake then if math.abs(fs) > 0.1 then push = -look * (math.sign(fs) * S.dbrake * m) end
+		elseif F.dgas then push = look * (S.dacc * m)
+		elseif F.dbrake then push = -look * ((fs > 0.1 and S.dbrake or S.dacc) * m) end -- 前进中刹车, 停了倒退
+		vf.Force = push
+	end
+	local function driftOff() if att then att:Destroy(); att = nil end end
+	local function pedalInit() -- 游戏晚点才生成踏板 UI / 重建 UI: 出现就绑
+		task.spawn(function()
+			local pg = me:WaitForChild("PlayerGui")
+			on(pg.ChildAdded, function(c) if c.Name == "MobilePedals" then task.delay(0.2, autoBind) end end)
+			autoBind()
+		end)
+	end
+	local function pedalPoll() -- 每秒: 清掉死按钮; 没绑上就自己再试 (不用手动点)
+		prune()
+		if F.drift and (not pedalRoot or not pedalRoot.Parent or not slotLive(1) or not slotLive(2)) then autoBind() end
+	end
+	local function pedalStop() driftOff(); for _, sl in pairs(slots) do for _, c in ipairs(sl.conns) do c:Disconnect() end end end
+	feature{ kind = "page", id = "drift", tab = "漂", info = function() return "油门=" .. tostring(F.dgas) .. " 刹车=" .. tostring(F.dbrake) .. " " .. slotsText() .. " 状态=" .. tostring(W.drift_status and W.drift_status.Text) end }
+	feature{ kind = "num", key = "dacc", def = 5, label = "加速" }
+	feature{ kind = "num", key = "dbrake", def = 10, label = "刹车" }
+	feature{ key = "drift", save = "drift", def = true, label = "推进", tick = driftTick, off = driftOff }
+	feature{ kind = "btn", label = "重绑踏板", fn = function() autoBind(true) end }
+	feature{ kind = "hold", key = "dgas", label = "▲ 油门", h = 36 }
+	feature{ kind = "hold", key = "dbrake", label = "▼ 刹车", h = 36 }
+	feature{ kind = "text", key = "drift_status", label = "…" }
+	feature{ kind = "dump", key = "pedals", dump = pedalLines }
+	feature{ kind = "tick", loop = pedalPoll, every = 1, init = pedalInit, off = pedalStop }
+end
 
 -- ═════════ hud: 数据条 / 速度箭头 / 玩家 ESP (原生 Highlight + BillboardGui) ═════════
 do -- ═════════ 显: 数据条 / 速度箭头 / 玩家 ESP (原生 Highlight + BillboardGui) ═════════
