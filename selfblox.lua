@@ -1,10 +1,12 @@
--- Selfblox v13.3 · 单文件 · 一次 loadstring · 一个面板 · 七个模块
+-- Selfblox v14.0 · 单文件 · 一次 loadstring · 一个面板 · 七页清单
 -- 用法:  loadstring(game:HttpGet("https://raw.githubusercontent.com/Sumicya/Selfblox/main/selfblox.lua"))()
 -- 覆盖:  执行前 _G.SB = { spd = 50, flyspd = 80, only = {"moc", "sibs"} }
 -- 优先级: _G.SB > Selfblox.json(面板里改过的值) > 默认值
 -- 卸载:  _G.SB_UNLOAD()   重跑会自动先卸载
 -- 自检:  lua5.4 smoke.lua  (离线假引擎, 不跑也行)
 --
+-- v14 = 表驱动: 一个功能 = 一个顶层函数 + 清单里一行 feature{}; 建页 / 存盘 / 每帧连接 / 卸载 / 诊断都从清单生成, 核心不为新功能改一个字 (见下面「注册表」)
+--       加功能三步: 写函数 → 在对应页的块里追加一行 → 跑 smoke.lua
 -- v13 = 只保 Delta 最新版: 执行器能力探测(isfile/gethui/newcclosure/hookmetamethod/UIDragDetector)
 --       全部当它一定有, 不留兜底; 删掉没用的变量与重复样板; 配置自动进日志;
 --       刹车/灯/互动/ESP 全走引擎原生属性。
@@ -34,7 +36,7 @@ local CLOCK12 = opt("clock", "12") ~= "24" -- 12 小时制默认; _G.SB = { cloc
 local function clock(sec) return os.date((CLOCK12 and "%I" or "%H") .. (sec and ":%M:%S" or ":%M")) end
 
 -- ───────── 公共 ─────────
-local alive, conns, INFO, stops, DUMP = true, {}, {}, {}, {}
+local alive, conns, DUMP = true, {}, {}
 local function on(sig, fn) local c = sig:Connect(fn); conns[#conns + 1] = c; return c end
 local function mk(cls, props, parent) local i = Instance.new(cls); for k, v in pairs(props) do i[k] = v end; i.Parent = parent; return i end
 local function tap(i) return i.UserInputType == Enum.UserInputType.Touch or i.UserInputType == Enum.UserInputType.MouseButton1 end
@@ -97,7 +99,7 @@ end
 
 local vp = workspace.CurrentCamera.ViewportSize
 local pos = opt("pos", { vp.X / 2 - W / 2, vp.Y * 0.3 })
-local title = mk("TextLabel", { Name = "SB_Title", Size = UDim2.fromOffset(W, ROW), Position = UDim2.fromOffset(math.clamp(pos[1], 0, math.max(vp.X - W, 0)), math.clamp(pos[2], 0, math.max(vp.Y - ROW, 0))), BackgroundColor3 = BG, BackgroundTransparency = CLEAR, BorderSizePixel = 0, Font = FONT, TextSize = 13, TextColor3 = WHITE, Text = "Selfblox v13.3" }, gui)
+local title = mk("TextLabel", { Name = "SB_Title", Size = UDim2.fromOffset(W, ROW), Position = UDim2.fromOffset(math.clamp(pos[1], 0, math.max(vp.X - W, 0)), math.clamp(pos[2], 0, math.max(vp.Y - ROW, 0))), BackgroundColor3 = BG, BackgroundTransparency = CLEAR, BorderSizePixel = 0, Font = FONT, TextSize = 13, TextColor3 = WHITE, Text = "Selfblox v14.0" }, gui)
 local body = mk("Frame", { Name = "SB_Body", Size = UDim2.new(0, W, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Position = title.Position + UDim2.fromOffset(0, ROW), BackgroundColor3 = BG, BackgroundTransparency = CLEAR, BorderSizePixel = 0 }, gui)
 mk("UIListLayout", { Padding = UDim.new(0, 0) }, body)
 on(title:GetPropertyChangedSignal("Position"), function() body.Position = title.Position + UDim2.fromOffset(0, ROW) end)
@@ -183,7 +185,6 @@ local KIND = {
 }
 local NOUI = { tick = true, dump = true }
 
--- ═════════ moc: 角色 ═════════
 do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转 / 无限跳 / 穿墙 / 夜视 / 秒互动) ═════════
 	local moving, nvT = false, 0
 	local att, flyLV, flyAO, spinAV, cc, nvSaved
@@ -283,7 +284,6 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 	feature{ kind = "tick", off = function() if att then att:Destroy(); att = nil end end } -- 只在卸载时: 飞行 / 旋转共用的 Attachment
 end
 
--- ═════════ sibs: 载具 (坐着 = 控制座位所在装配体; 没坐 = 准星"换车"锁定) ═════════
 do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配体; 没坐 = 准星"换车"锁定 / 自动绑最近的空座位) ═════════
 	S.turncap, S.hornkey, S.carmaxstuds, S.carswap = opt("turncap", 1), opt("hornkey", "H"), opt("carmaxstuds", 150), opt("carswap", true) -- 只读配置 (没有面板控件) -- maxstuds: 多大的 Model 还算"一辆车"(超过就不当成载具容器)
 	local picked, pickSeat, pickPath, autoPick, curSeat, curMax, att, vf, lv, clipModel, lastCar, lastAnch
@@ -655,7 +655,6 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 	feature{ kind = "tick", tick = carTick, init = wheelInit, off = carStop }
 end
 
--- ═════════ drift: 人物推进 (自动找踏板; 找不到就用面板按钮) ═════════
 do -- ═════════ 漂: 人物推进 (自动找踏板; 找不到就用面板按钮) ═════════
 	local att, vf, pedalRoot
 	local slots = {} -- slots[1]=刹车 slots[2]=油门
@@ -751,7 +750,6 @@ do -- ═════════ 漂: 人物推进 (自动找踏板; 找不到�
 	feature{ kind = "tick", loop = pedalPoll, every = 1, init = pedalInit, off = pedalStop }
 end
 
--- ═════════ hud: 数据条 / 速度箭头 / 玩家 ESP (原生 Highlight + BillboardGui) ═════════
 do -- ═════════ 显: 数据条 / 速度箭头 / 玩家 ESP (原生 Highlight + BillboardGui) ═════════
 	local bar, arrow, arrowTxt
 	local esp, frames, fps, tick = {}, 0, 0, os.clock()
@@ -819,7 +817,6 @@ do -- ═════════ 显: 数据条 / 速度箭头 / 玩家 ESP (�
 	feature{ key = "esp", save = "esp", def = true, label = "玩家 ESP", w = 1 }
 end
 
--- ═════════ log: 配置 + 各模块状态定时追加到 Selfblox_log.txt ═════════
 do -- ═════════ 志: 周期记录 / 诊断打包 ═════════
 	local LOGFILE, count, written = "Selfblox_log.txt", 0, 0
 	local function head() local h = "---- Selfblox " .. os.date("%Y-%m-%d ") .. clock(true) .. " ----\n"; writefile(LOGFILE, h); written = #h end
@@ -841,7 +838,6 @@ do -- ═════════ 志: 周期记录 / 诊断打包 ════�
 		onerr = function(err) say("log_status", "记录出错 (下一轮再试): " .. tostring(err)) end }
 end
 
--- ═════════ plane: 飞机侦察 (找飞机/判队伍/列 Remote/收发侦听/写报告) ═════════
 do -- ═════════ 机: 飞机侦察 (找飞机 / 判队伍 / 列 Remote / 收发侦听 / 写报告) ═════════
 	local HINT = { "plane", "jet", "aircraft", "fighter", "bomber", "heli", "glider", "warbird", "biplane", "gunship", "blimp" }
 	local WING = { "wing", "aileron", "rudder", "elevator", "propeller", "rotor", "flap", "stabilizer", "tailfin" }
@@ -1041,7 +1037,7 @@ end
 -- ───────── 启动: 按清单建页 / 控件 / 每帧连接; 一个功能装不上不拖累别的 (记下来, 页里写一行) ─────────
 local only = opt("only", nil) -- _G.SB.only = {"moc","sibs"} 只装一部分
 local function wanted(id) return type(only) ~= "table" or table.find(only, id) ~= nil end
-for _, e in ipairs(FEATURES) do if (e.kind == "page" or e.kind == "legacy") and wanted(e.id) then ACTIVE[#ACTIVE + 1] = e end end
+for _, e in ipairs(FEATURES) do if e.kind == "page" and wanted(e.id) then ACTIVE[#ACTIVE + 1] = e end end
 local pages, tabBtns, BUILT, FAILED = {}, {}, {}, {}
 local function show(name)
 	for n, pg in pairs(pages) do pg.Visible = n == name; lit(tabBtns[n], n == name) end
@@ -1051,17 +1047,13 @@ do
 	local page, pid, cur, used, curH
 	for _, e in ipairs(FEATURES) do
 		local k = e.kind or "toggle"
-		if k == "page" or k == "legacy" then
+		if k == "page" then
 			page, pid, cur = nil, e.id, nil
 			if wanted(e.id) then
 				page = mk("Frame", { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1, Visible = false, LayoutOrder = ord() }, body)
 				mk("UIListLayout", { Padding = UDim.new(0, 0) }, page)
 				pages[e.id] = page
 				tabBtns[e.id] = btn(tabs, e.tab, function() show(e.id) end, 1 / #ACTIVE)
-				if k == "legacy" then -- 迁移脚手架: 旧模块整块照跑, 迁完删
-					local ok, stop = pcall(e.fn, page)
-					if ok then stops[#stops + 1] = stop else warn("[Selfblox] " .. e.id .. ": " .. tostring(stop)); text(page, "出错: " .. tostring(stop)) end
-				end
 			end
 		elseif page then
 			local parent, w = page, e.w or (k == "text" and 1 or 0.5)
@@ -1100,11 +1092,10 @@ do
 end
 if #ACTIVE > 0 then show(pages[opt("tab", "moc")] and opt("tab", "moc") or ACTIVE[1].id) end
 
-pageInfos = function() -- 各页状态, 一页一行 (给日志 / 诊断快照用): 旧模块用自己的 INFO, 清单行按 开关=值 生成
+pageInfos = function() -- 各页状态, 一页一行 (给日志 / 诊断快照用): 清单行按 开关=值 生成, 页自己的 info() 追加详细状态
 	local o = {}
 	for _, p in ipairs(ACTIVE) do
 		local ok, v = pcall(function()
-			if INFO[p.id] then return INFO[p.id]() end
 			local t = {}
 			for _, e in ipairs(BUILT) do
 				if e._page == p.id then
@@ -1124,7 +1115,7 @@ end
 
 local function dumpLines()
 	local L = { "==== SELFblox 诊断 " .. os.date("%Y-%m-%d ") .. clock(true) .. " ====",
-		"脚本=v13.3 页签=" .. tostring(saved.tab) .. " place=" .. game.PlaceId .. " 地图=" .. tostring(game.Name),
+		"脚本=v14.0 页签=" .. tostring(saved.tab) .. " place=" .. game.PlaceId .. " 地图=" .. tostring(game.Name),
 		"配置 " .. Http:JSONEncode(saved),
 		"执行器 isfile=" .. tostring(isfile ~= nil) .. " writefile=" .. tostring(writefile ~= nil) .. " appendfile=" .. tostring(appendfile ~= nil) .. " setclipboard=" .. tostring(setclipboard ~= nil) .. " gethui=" .. tostring(gethui ~= nil) .. " hookmetamethod=" .. tostring(hookmetamethod ~= nil) .. " newcclosure=" .. tostring(newcclosure ~= nil) .. " getnamecallmethod=" .. tostring(getnamecallmethod ~= nil),
 		"角色 " .. tostring(me.Name) .. " 队=" .. tostring(me.Team and me.Team.Name) .. " 坐=" .. tostring(hum() and hum().SeatPart and (hum().SeatPart:GetFullName())) .. " 根=" .. tostring(root() and root().Anchored) }
@@ -1148,10 +1139,9 @@ _G.SB_DUMP = dumpNow
 _G.SB_UNLOAD = function()
 	alive = false
 	for _, e in ipairs(BUILT) do if e.off then pcall(e.off) end end -- 一个功能清理炸了不能拦住其他的
-	for _, s in ipairs(stops) do pcall(s) end
 	for _, c in ipairs(conns) do c:Disconnect() end
 	gui:Destroy()
 	FX:Destroy()
 	_G.SB_UNLOAD = nil
 end
-print("[Selfblox] v13.3 · " .. #ACTIVE .. " 模块 · _G.SB_UNLOAD() 卸载")
+print("[Selfblox] v14.0 · " .. #ACTIVE .. " 模块 · _G.SB_UNLOAD() 卸载")

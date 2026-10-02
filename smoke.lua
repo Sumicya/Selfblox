@@ -1350,6 +1350,7 @@ step(1 / 60, 20) -- 先把帧喂够: 数据条 0.2s 才刷一次, 页签/数值�
 local n = 0
 for _, d in ipairs(all()) do if d:IsA("TextButton") and d.Text == "动" then n = n + 1 end end
 ok(n == 1, "only={moc,hud} 只留了「动」「显」两个页签")
+ok(findBtn("车") == nil and findBtn("漂") == nil and findBtn("志") == nil and findBtn("机") == nil and findBtn("砖") == nil, "only 过滤掉的页 (车/漂/志/机/砖) 根本没建")
 local box = nil
 for _, d in ipairs(all()) do if d:IsA("TextBox") then box = d; break end end
 ok(box and box.Text == "99", "_G.SB.spd=99 顶掉了默认 16")
@@ -1509,6 +1510,72 @@ for i = SNAP12 + 1, #INSTANCES do if not INSTANCES[i].destroyed then leaked12 = 
 ok(leaked12 == 0 and LIVE == 0, "自动绑车这一轮卸载同样干净 (漏 " .. leaked12 .. " 个实例 / " .. LIVE .. " 个连接)")
 _G.__radius = nil
 seat.props.Occupant = driver
+end
+
+-- ───────── 第五轮: 清单的扩展性 —— 加一个功能 = 一个顶层函数 + 清单一行, 不改核心 ─────────
+do
+print("\n[13] 清单: 往源码里注入一个玩具功能 (一个函数 + 几行清单), 核心一个字不改")
+if _G.SB_UNLOAD then _G.SB_UNLOAD() end
+VFS["Selfblox.json"] = nil
+_G.SB = nil
+_G.__ping, _G.__pingbtn = nil, nil
+local EXTRA = [[
+do -- 玩具: 一个顶层函数 + 清单几行
+	local ticks, offs = 0, 0
+	local function pingTick(dt) ticks = ticks + 1; _G.__ping = { ticks = ticks, offs = offs, v = S.pingn } end
+	local function pingOff() offs = offs + 1; _G.__ping = { ticks = ticks, offs = offs, v = S.pingn } end
+	feature{ kind = "page", id = "toy", tab = "玩" }
+	feature{ key = "ping", save = "pingsave", label = "测试开关", num = { "pingn", 7 }, tick = pingTick, off = pingOff }
+	feature{ kind = "cycle", key = "pingmode", save = "pingmode", def = "a", cycle = { "a", "b" }, text = function(v) return "档 " .. v end }
+	feature{ kind = "btn", label = "测试按钮", fn = function() _G.__pingbtn = true end }
+	feature{ kind = "custom", label = "坏行", build = function() error("boom") end }
+	feature{ kind = "dump", key = "toydump", dump = function() return { "玩具诊断行" } end }
+end
+]]
+local at = SRC:find("-- ───────── 启动: 按清单建页", 1, true)
+ok(at ~= nil, "找得到清单的建页入口")
+local SNAP13 = #INSTANCES
+local okLoad, errLoad = pcall(assert(load_chunk(SRC:sub(1, at - 1) .. EXTRA .. SRC:sub(at), "selfblox14")))
+ok(okLoad, "多一个功能 (含一个坏行) 后脚本照样起得来 " .. tostring(errLoad or ""))
+local toy = findBtn("测试开关 ")
+ok(toy ~= nil and toy.Text == "测试开关 关", "清单一行 → 面板上多了开关")
+ok(findBtn("档 a") ~= nil and findBtn("测试按钮") ~= nil, "cycle / btn 行也按清单建出来")
+local box
+for _, d in ipairs(all()) do if d:IsA("TextBox") and d.Text == "7" then box = d end end
+ok(box ~= nil, "num 框自动跟在开关后面 (默认 7)")
+box.Text = "9"; box.FocusLost:Fire()
+ok(jsonDecode(VFS["Selfblox.json"]).pingn == 9, "改了数值自动写进 Selfblox.json")
+step(1 / 60, 5)
+ok(_G.__ping == nil, "开关关着 → 不 tick")
+click(toy)
+step(1 / 60, 5)
+ok(_G.__ping ~= nil and _G.__ping.ticks == 5 and _G.__ping.v == 9, "开着 → 每帧 tick, 读得到面板里改的数值")
+click(toy)
+ok(_G.__ping.offs == 1, "关掉 → 调 off")
+step(1 / 60, 5)
+ok(_G.__ping.ticks == 5, "关掉以后不再 tick")
+ok(jsonDecode(VFS["Selfblox.json"]).pingsave == false, "save 键存了开关状态")
+click(findBtn("测试按钮"))
+ok(_G.__pingbtn == true, "btn 行的回调被调到")
+click(findBtn("档 a"))
+ok(findBtn("档 b") ~= nil, "cycle 行循环")
+ok(jsonDecode(VFS["Selfblox.json"]).pingmode == "b", "cycle 行的值也按 save 键存盘")
+local bad
+for _, d in ipairs(all()) do if d:IsA("TextLabel") and d.Text == "✗ 坏行" then bad = d end end
+ok(bad ~= nil, "坏行装不上 → 页里写一行 ✗, 其余功能不受影响")
+_G.SB_DUMP()
+local dm = VFS["selfblox_dump.txt"]
+ok(dm:find("toy 测试开关=false", 1, true) ~= nil and dm:find("pingn=9", 1, true) ~= nil, "诊断快照自动带上新页的开关 / 数值")
+ok(dm:find("玩具诊断行", 1, true) ~= nil, "dump 行注册的诊断提供者被调到")
+ok(dm:find("✗ toy 坏行", 1, true) ~= nil, "快照里列出装不上的功能")
+click(toy)
+_G.SB_UNLOAD()
+step(1 / 60, 3)
+ok(_G.__ping.offs == 2, "卸载时开着的功能也被 off")
+local leaked13 = 0
+for i = SNAP13 + 1, #INSTANCES do if not INSTANCES[i].destroyed then leaked13 = leaked13 + 1 end end
+ok(leaked13 == 0 and LIVE == 0, "加了功能的这一轮卸载同样干净 (漏 " .. leaked13 .. " 个实例 / " .. LIVE .. " 个连接)")
+_G.__ping, _G.__pingbtn = nil, nil
 end
 
 print("\n" .. (FAILS == 0 and "全部通过 ✓" or ("有 " .. FAILS .. " 条没过 ✗")))
