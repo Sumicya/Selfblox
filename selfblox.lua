@@ -14,7 +14,7 @@
 --            gethui / isfile / writefile 缺失时退回 CoreGui 并跳过存盘, 面板照样起得来
 --   保持 Lua 5.4 可解析子集(不用 +=/continue/字符串插值), 这样 smoke.lua 能离线跑: 可测试性 > 语法糖
 
-local VERSION = "26.10.2" -- 单一版本来源: 发布时改成当次 yy.m.d (Asia/Shanghai), 同一天发第二次补 .ci, 再打 v<VERSION> 标签
+local VERSION = "26.10.3" -- 单一版本来源: 发布时改成当次 yy.m.d (Asia/Shanghai), 同一天发第二次补 .ci, 再打 v<VERSION> 标签
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
@@ -289,7 +289,7 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 end
 
 do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配体; 没坐 = 准星"换车"锁定 / 自动绑最近的空座位) ═════════
-	S.turncap, S.hornkey, S.carmaxstuds, S.carswap = opt("turncap", 1), opt("hornkey", "H"), opt("carmaxstuds", 150), opt("carswap", true) -- 只读配置 (没有面板控件) -- maxstuds: 多大的 Model 还算"一辆车"(超过就不当成载具容器)
+	S.turncap, S.hornkey, S.carmaxstuds, S.carswap = opt("turncap", 1), opt("hornkey", "H"), opt("carmaxstuds", 150), opt("carswap", true) -- 只读配置 (没有面板控件) -- maxstuds: 装配体外径超过这个数就不当成车(是地图/大容器). 量装配体不量 Model 容器: 车直接挂在超大容器里也认得出来
 	local picked, pickSeat, pickPath, autoPick, curSeat, curMax, att, vf, lv, clipCar, lastCar, lastAnch
 	local target, statT, autoT = 0, 0, 0
 	local lamps, lampSaved, col = {}, setmetatable({}, { __mode = "k" }), setmetatable({}, { __mode = "k" })
@@ -309,11 +309,22 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 	end
 	local swapParams = OverlapParams.new()
 	swapParams.FilterType = Enum.RaycastFilterType.Exclude
+	local function asmDims(r) -- 装配体的粗略外径(格) + 质量. 判"这是车还是地图"量装配体, 不量 Model 容器: 容器可能装着整条街而车只是里面一件; 反过来整块路面自己就是一个超大装配体
+		local span = 0
+		for _, d in ipairs(r:GetConnectedParts(true)) do
+			local m = (d.Position - r.Position).Magnitude + 0.5 * d.Size.Magnitude -- 加半件尺寸: 单件的装配体(一整块路面)也能算出来
+			if m > span then span = m end
+		end
+		return span * 2, nn(r.AssemblyMass)
+	end
 	local function heavyNear(p) -- 附近最重的"没锚定"零件: 锁到装饰件时, 真身往往是它
 		swapParams.FilterDescendantsInstances = { me.Character }
 		local best, bm
 		for _, d in ipairs(workspace:GetPartBoundsInRadius(p.Position, 30, swapParams)) do
-			if d:IsA("BasePart") and not d.Anchored and d.AssemblyRootPart and nn(d.AssemblyMass) > (bm or 0) then best, bm = d.AssemblyRootPart, nn(d.AssemblyMass) end
+			if d:IsA("BasePart") and not d.Anchored and d.AssemblyRootPart and nn(d.AssemblyMass) > (bm or 0) then
+				local r = d.AssemblyRootPart
+				if (asmDims(r)) <= S.carmaxstuds then best, bm = r, nn(d.AssemblyMass) end -- 就近改绑也不能改绑到整条街: 30 格里最重的那件往往就是地图
+			end
 		end
 		return best
 	end
@@ -431,7 +442,10 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 		end
 		local r = (s or inst).AssemblyRootPart
 		if inst:FindFirstAncestorOfClass("Model") and inst:FindFirstAncestorOfClass("Model"):FindFirstChildOfClass("Humanoid") then toast("打中的是人, 不是车"); return end
-		if not s and inst:FindFirstAncestorOfClass("Model") and not scopeOf(inst) then toast("打中的是地图/大容器, 不是车 (超过 carmaxstuds=" .. S.carmaxstuds .. ")"); return end
+		if not s then -- 没座位才要判"是不是地图". 量将要绑的那个装配体, 不量祖先 Model: 车直接挂在超大容器 Model 里时, 量容器会把真车一起拒掉 (= "新构建绑不上车")
+			local span, mass = asmDims(r)
+			if span > S.carmaxstuds then toast(string.format("打中的是地图/大容器, 不是车 (装配体外径 %.0f 格 > 上限 %d, 质量 %.0f)", span, S.carmaxstuds, mass)); return end -- 数字打进提示: 下次误拒/漏拒, 报告自己就能说明为什么
+		end
 		if r.Anchored then toast("这个还锁着(锚定), 等游戏解锁"); return end
 		picked, pickSeat, pickPath, autoPick = r, s, r:GetFullName(), false
 		dropLamps()
@@ -857,6 +871,7 @@ do -- ═════════ 机: 飞机侦察 (找飞机 / 判队伍 / 列
 	local HINT = { "plane", "jet", "aircraft", "fighter", "bomber", "heli", "glider", "warbird", "biplane", "gunship", "blimp" }
 	local WING = { "wing", "aileron", "rudder", "elevator", "propeller", "rotor", "flap", "stabilizer", "tailfin" }
 	local TEAMK = { "team", "faction", "side", "country", "nation" }
+	local OWNK = { "owner", "pilot" } -- OldOwner/Owner/Pilot 这类属性: 被服务器接管的飞机座位是空的, 只剩属性还写着你的名字
 	local RHINT = { "fire", "shoot", "shot", "bullet", "gun", "weapon", "attack", "damage", "hit", "kill", "launch", "missile", "rocket", "bomb", "plane", "spawn", "team", "seat", "pilot" }
 	local function hint(name, list) name = name:lower(); for _, h in ipairs(list) do if name:find(h, 1, true) then return h end end end
 	local planes, remotes, sent, got, hls, watch = {}, {}, {}, {}, {}, {}
@@ -876,7 +891,24 @@ do -- ═════════ 机: 飞机侦察 (找飞机 / 判队伍 / 列
 		return tostring(v)
 	end
 	local function args(a) local o = {}; for i = 1, a.n do o[i] = fmt(a[i]) end; return table.concat(o, ", ") end
-	local function push(log, s) log[#log + 1] = clock(true) .. " " .. s; if #log > 200 then table.remove(log, 1) end end
+	local CAP = 400 -- 组数上限. 原来 200 条不折叠: 飞行中 EngineSync+VehicleReplication 每秒 ~20 条, 200 条只装得下 10 秒, 一生只发一次的 RequestPlane/SpawnHangarPlane 必被挤掉
+	local function keyOf(a) local v = a[1]; return typeof(v) == "Instance" and v:GetFullName() or "" end -- 折叠键: 同一个 Remote 打同一个目标算一组
+	local function push(log, k, s) -- 连续同键的只累加次数, 并留下首末两条 payload: 刷屏的复制包不再吃掉整个窗口
+		local e = log[#log]
+		if e and e.k == k then e.n, e.t1, e.s1 = e.n + 1, clock(true), s; return end
+		local t = clock(true)
+		log[#log + 1] = { k = k, n = 1, t0 = t, t1 = t, s0 = s, s1 = s }
+		if #log > CAP then table.remove(log, 1) end
+	end
+	local function tot(log) local n = 0; for _, e in ipairs(log) do n = n + e.n end; return n end -- 折叠前的真实条数
+	local function dump(log) -- 报告行: 一组一行 (时间跨度 + ×N + 首条), 首末不同再补一行「末」→ EngineSync 从 0.64 衰减到 0 这种趋势还看得见
+		local o = {}
+		for _, e in ipairs(log) do
+			o[#o + 1] = "  " .. (e.n > 1 and e.t0 .. "→" .. e.t1 .. " ×" .. e.n .. " " or e.t0 .. " ") .. e.s0
+			if e.n > 1 and e.s1 ~= e.s0 then o[#o + 1] = "      末 " .. e.s1 end
+		end
+		return o
+	end
 	local function team(p) -- 属性 → Value → 乘员队伍 → 名字 → 最大部件颜色最接近的 Team
 		for k, v in pairs(p.model:GetAttributes()) do if hint(k, TEAMK) then return tostring(v), "attr:" .. k end end
 		if p.teamVal then return p.teamVal, "value" end
@@ -913,6 +945,11 @@ do -- ═════════ 机: 飞机侦察 (找飞机 / 判队伍 / 列
 		p.score = (p.hint and 40 or 0) + (p.seat and 35 or 0) + math.min(p.wings, 2) * 12 + (p.parts >= 8 and 10 or 0) + (p.occ and 5 or 0)
 		p.team, p.src, p.teamObj = team(p)
 		p.mine = p.occ == me
+		if not p.mine then -- 被服务器接管的自家飞机: 座位空着, 只剩 OldOwner 这类属性还写着你 → 只看乘员会把它算成别人的残留机
+			for k, v in pairs(m:GetAttributes()) do
+				if hint(k, OWNK) and (v == me or v == me.Name) then p.mine, p.ownBy = true, k; break end
+			end
+		end
 		return p
 	end
 	local function highlight()
@@ -928,9 +965,10 @@ do -- ═════════ 机: 飞机侦察 (找飞机 / 判队伍 / 列
 		for _, c in ipairs(watch) do c:Disconnect() end
 		table.clear(watch)
 		if not v then return end
+		if #remotes == 0 then say("plane_status", "收侦听开着但一个都没挂上: 先点 重扫 (收 是拿扫出来的 Remote 列表挂 OnClientEvent 的)"); return end -- 没扫描过 → remotes 是空的 → 收 永远 0, 看着像"服务器没发"
 		for _, r in ipairs(remotes) do
 			if r:IsA("RemoteEvent") or r:IsA("UnreliableRemoteEvent") then
-				watch[#watch + 1] = r.OnClientEvent:Connect(function(...) push(got, r:GetFullName() .. " <- " .. args(table.pack(...))) end)
+				watch[#watch + 1] = r.OnClientEvent:Connect(function(...) local a = table.pack(...); push(got, r:GetFullName() .. " <- " .. keyOf(a), r:GetFullName() .. " <- " .. args(a)) end)
 			end
 		end
 	end
@@ -940,56 +978,69 @@ do -- ═════════ 机: 飞机侦察 (找飞机 / 判队伍 / 列
 				local m = getnamecallmethod()
 				if F.spy and (m == "FireServer" or m == "InvokeServer") then
 					local a = table.pack(...)
-					pcall(function() local path = self:GetFullName(); if F.pall or hint(path, RHINT) then push(sent, path .. ":" .. m .. " " .. args(a)) end end) -- 记录失败不能拦住游戏自己的调用
+					pcall(function() local path = self:GetFullName(); if F.pall or hint(path, RHINT) then push(sent, path .. ":" .. m .. " " .. keyOf(a), path .. ":" .. m .. " " .. args(a)) end end) -- 记录失败不能拦住游戏自己的调用
 				end
 				return oldNC(self, ...)
 			end))
 		end
 		return true
 	end
+	local scanAt, rejects = nil, {} -- rejects: 扫到但没过门槛的, 报告里列出来 → 下次该把门槛调到哪, 报告自己会说
+	local function outerModel(d) local m = d:FindFirstAncestorOfClass("Model"); while m and m.Parent and m.Parent:IsA("Model") do m = m.Parent end; return m end -- ponytail: 全部飞机套在一个 Model 里会被并成一架
 	local function scan()
 		table.clear(planes)
 		table.clear(remotes)
-		local seen = {}
+		table.clear(rejects)
+		local cand = {}
 		local function remote(d) if isRemote(d) and (F.pall or hint(d:GetFullName(), RHINT)) then remotes[#remotes + 1] = d end end
 		for _, d in ipairs(workspace:GetDescendants()) do
 			remote(d)
-			if d:IsA("Seat") or d:IsA("VehicleSeat") then -- 有座位的最外层 Model 才是候选
-				local m = d:FindFirstAncestorOfClass("Model")
-				while m and m.Parent and m.Parent:IsA("Model") do m = m.Parent end -- ponytail: 全部飞机套在一个 Model 里会被并成一架
-				if m and not seen[m] and not m:FindFirstChildOfClass("Humanoid") then
-					seen[m] = true
-					local p = inspect(m)
-					if p.score >= 55 then planes[#planes + 1] = p end
-				end
+			if d:IsA("Seat") or d:IsA("VehicleSeat") then -- 候选一: 有座位的最外层 Model
+				local m = outerModel(d); if m then cand[m] = "座" end
+			elseif d:IsA("BasePart") and hint(d.Name, WING) then -- 候选二: 没座位的飞机(机库/菜单/刚落地的残留机)只能靠机翼名认: 只从座位出发会把自己那架整个漏掉
+				local m = outerModel(d); if m and not cand[m] then cand[m] = "翼" end
+			end
+		end
+		for m, why in pairs(cand) do
+			if not m:FindFirstChildOfClass("Humanoid") then
+				local p = inspect(m)
+				-- 门槛 55 是"有座位"那条路. 机型名(M21/P51/BF109/Gloster/Ki10)一个都不在 HINT 里 → hint 那 40 分永远拿不到, 没座位时只剩 24+10=34 分, 所以再给一条实机路子: 2 个机翼名 + 12 件以上
+				if p.score >= 55 or (p.wings >= 2 and p.parts >= 12) then planes[#planes + 1] = p
+				elseif #rejects < 20 then p.why = why; rejects[#rejects + 1] = p end
 			end
 		end
 		for _, d in ipairs(RS:GetDescendants()) do remote(d) end
-		table.sort(planes, function(a, b) return a.score > b.score end)
+		table.sort(planes, function(a, b) if a.score ~= b.score then return a.score > b.score end; return a.path < b.path end) -- 同分按路径: pairs 顺序不定, 两次报告要能对着看
+		scanAt = clock(true)
 		if F.watch then setWatch(true) end
 		highlight()
-		say("plane_status", "飞机 " .. #planes .. " · Remote " .. #remotes .. " · 发 " .. #sent .. " 收 " .. #got)
+		say("plane_status", "飞机 " .. #planes .. " · Remote " .. #remotes .. " · 发 " .. tot(sent) .. "/" .. #sent .. "组 收 " .. tot(got) .. "/" .. #got .. "组")
 	end
 	local function report()
-		local L = { "==== PLANE " .. os.date("%Y-%m-%d ") .. clock(true) .. " place=" .. game.PlaceId .. " me=" .. me.Name .. " team=" .. (me.Team and me.Team.Name or "-") .. " ====", "-- 飞机 " .. #planes }
+		if #planes == 0 and #remotes == 0 then scan() end -- 只点「写报告」会得到"飞机 0 Remote 0"的假象: 两个表都只有 scan() 会填 (实测过: 人在飞, 报告却是 0 架 0 个 Remote)
+		local L = { "==== PLANE " .. os.date("%Y-%m-%d ") .. clock(true) .. " place=" .. game.PlaceId .. " me=" .. me.Name .. " team=" .. (me.Team and me.Team.Name or "-") .. " ====", "-- 飞机 " .. #planes .. " · 重扫于 " .. (scanAt or "从未") }
 		for _, p in ipairs(planes) do
-			L[#L + 1] = "[" .. p.score .. "] " .. p.path .. (p.mine and " ★我" or "") .. " | 座:" .. (p.seat and "有" or "无") .. " 翼:" .. p.wings .. " 件:" .. p.parts .. " | 队:" .. p.team .. "(" .. p.src .. ")" .. (p.occ and " 乘员:" .. p.occ.Name or "")
+			L[#L + 1] = "[" .. p.score .. "] " .. p.path .. (p.mine and " ★我" .. (p.ownBy and "(" .. p.ownBy .. ")" or "") or "") .. " | 座:" .. (p.seat and "有" or "无") .. " 翼:" .. p.wings .. " 件:" .. p.parts .. " | 队:" .. p.team .. "(" .. p.src .. ")" .. (p.occ and " 乘员:" .. p.occ.Name or "")
 			for k, v in pairs(p.model:GetAttributes()) do L[#L + 1] = "    attr " .. k .. "=" .. fmt(v) end
 			for _, r in ipairs(p.remotes) do L[#L + 1] = "    " .. r.ClassName .. " " .. r:GetFullName() end
 		end
+		if #rejects > 0 then
+			L[#L + 1] = "-- 疑似 " .. #rejects .. " (扫到但没过门槛; 靠「座」=有座位, 靠「翼」=只认到机翼名)"
+			for _, p in ipairs(rejects) do L[#L + 1] = "[" .. p.score .. "] " .. p.path .. " | 靠" .. p.why .. " 座:" .. (p.seat and "有" or "无") .. " 翼:" .. p.wings .. " 件:" .. p.parts end
+		end
 		L[#L + 1] = "-- Remote " .. #remotes
 		for _, r in ipairs(remotes) do L[#L + 1] = "  " .. r.ClassName .. " " .. r:GetFullName() end
-		L[#L + 1] = "-- 发 " .. #sent
-		for _, s in ipairs(sent) do L[#L + 1] = "  " .. s end
-		L[#L + 1] = "-- 收 " .. #got
-		for _, s in ipairs(got) do L[#L + 1] = "  " .. s end
+		L[#L + 1] = "-- 发 " .. tot(sent) .. " 条 / " .. #sent .. " 组 (上限 " .. CAP .. " 组; 连续同 Remote 同目标折叠成一组, 首末 payload 都留着)"
+		for _, s in ipairs(dump(sent)) do L[#L + 1] = s end
+		L[#L + 1] = "-- 收 " .. tot(got) .. " 条 / " .. #got .. " 组" .. (F.watch and #watch == 0 and " ← 收侦听开着却一个都没挂上 (要先点 重扫)" or "")
+		for _, s in ipairs(dump(got)) do L[#L + 1] = s end
 		local txt = table.concat(L, "\n")
 		writefile("plane_debug.txt", txt)
 		setclipboard(txt)
 		toast("报告 " .. #L .. " 行 → plane_debug.txt / 剪贴板")
 	end
 
-	feature{ kind = "page", id = "plane", tab = "机", info = function() return "飞机=" .. #planes .. " Remote=" .. #remotes .. " 发=" .. #sent .. " 收=" .. #got .. " 侦听=" .. tostring(F.spy) end }
+	feature{ kind = "page", id = "plane", tab = "机", info = function() return "飞机=" .. #planes .. " Remote=" .. #remotes .. " 发=" .. tot(sent) .. "/" .. #sent .. "组 收=" .. tot(got) .. "/" .. #got .. "组 侦听=" .. tostring(F.spy) .. (F.watch and #watch == 0 and " 收没挂上(先重扫)" or "") end }
 	feature{ kind = "btn", label = "重扫", fn = scan }
 	feature{ kind = "btn", label = "写报告", fn = report }
 	feature{ key = "spy", label = "发侦听", set = setSpy }

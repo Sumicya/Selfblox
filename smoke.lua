@@ -427,6 +427,17 @@ truckBed.props.AssemblyRootPart = truckBed
 truckBed.Parent = truck
 truck.Parent = street
 street.Parent = workspace
+do -- 街道路面 = 一个横跨 3000 格的装配体; 另有一件"车"直接挂在超大容器 Model 里. 车页守卫靠这两件才测得出"量装配体, 不量 Model 容器"
+	local function streetPart(name, size, pos, mass, root)
+		local d = inst("Part", { Name = name, CanCollide = true, Anchored = false, Size = size, Position = pos, CFrame = CFrame.new(pos), AssemblyLinearVelocity = Vector3.zero, AssemblyMass = mass })
+		d.props.AssemblyRootPart = root or d
+		d.Parent = street
+		return d
+	end
+	CP.road = streetPart("Primary", Vector3.new(40, 1, 40), Vector3.new(0, 0, 900), 1549) -- 真游戏里 Workspace.Spawned.Street.Primary 就是这种: 质量 1549, 还能被推着跑到 70
+	CP.roadFar = streetPart("RoadFar", Vector3.new(40, 1, 40), Vector3.new(3000, 0, 900), 1549, CP.road) -- 和 road 同一个装配体 → 外径 ~6000 格
+	CP.looseCar = streetPart("Loose", Vector3.new(6, 2, 12), Vector3.new(120, 5, 900), 800) -- 没有自己的小 Model: 上一版量容器(4000 格) → 误判成地图 → "新构建绑不上车"
+end
 
 -- ───────── 假执行器: 文件 / 剪贴板 / 钩子 / task / JSON ─────────
 local VFS, CLIP = {}, nil
@@ -1001,17 +1012,29 @@ ok(dumpCar and dumpCar:find("座位: -", 1, true) ~= nil, "快照里座位一栏
 ok(dumpCar and dumpCar:find("准星射线", 1, true) ~= nil and dumpCar:find("祖先: ", 1, true) ~= nil, "快照里有准星射线 + 祖先链")
 ok(dumpCar and dumpCar:find("周围的座位", 1, true) ~= nil, "快照里有周围座位(半径扫描)")
 ok(dumpCar and dumpCar:find("车周围 25 格里的部件", 1, true) ~= nil, "快照里有周围部件")
-do local function mapGuard() -- 打中街区里的一件(祖先 Model 只有 Street, 尺寸远超 carmaxstuds): 不能当成车
-	local mp = inst("Part", { Name = "Surface", CanCollide = true, Anchored = false, Size = Vector3.new(20, 1, 20), Position = Vector3.new(500, 0, 0), CFrame = CFrame.new(Vector3.new(500, 0, 0)), AssemblyLinearVelocity = Vector3.zero, AssemblyMass = 900 })
-	mp.props.AssemblyRootPart = mp
-	mp.Parent = street
-	_G.__rayHit = { Instance = mp }
+do local function mapGuard() -- 打中街道路面(横跨 3000 格的装配体): 不能当成车
+	_G.__rayHit = { Instance = CP.road }
 	click(findBtn("换车"))
 	step(1 / 60, 5)
-	ok(mp:FindFirstChild("SB_SIBS") == nil, "打中街区里的地面件 Surface → 不绑 (祖先 Model 全都超过 carmaxstuds)")
+	ok(CP.road:FindFirstChild("SB_SIBS") == nil, "打中街道路面 → 不绑 (装配体外径 ~6000 格, 远超 carmaxstuds)")
 	ok(toastText():find("地图", 1, true) ~= nil, "提示说清是地图/大容器, 不是笼统的「没座位」(" .. toastText() .. ")")
-	mp:Destroy()
+	ok(toastText():match("外径 %d+ 格") ~= nil and toastText():match("质量 %d+") ~= nil, "提示里带实测外径和质量: 下次误拒/漏拒, 报告自己就能说明为什么 (" .. toastText() .. ")")
+	local slab = inst("Part", { Name = "Slab", CanCollide = true, Anchored = false, Size = Vector3.new(2000, 1, 2000), Position = Vector3.new(0, 0, 1500), CFrame = CFrame.new(Vector3.new(0, 0, 1500)), AssemblyLinearVelocity = Vector3.zero, AssemblyMass = 5000 })
+	slab.props.AssemblyRootPart = slab
+	slab.Parent = street
+	_G.__rayHit = { Instance = slab }
+	click(findBtn("换车"))
+	step(1 / 60, 5)
+	ok(slab:FindFirstChild("SB_SIBS") == nil and toastText():find("地图", 1, true) ~= nil, "一整块超大路面(自己一个装配体, 靠零件自身尺寸也算得出来) → 不绑")
+	slab:Destroy()
 end mapGuard() end
+do local function looseInBigModel() -- 真车直接挂在超大容器 Model 里: 量容器会把它当地图拒掉 = 用户报的"新构建绑不上车"
+	_G.__rayHit = { Instance = CP.looseCar }
+	click(findBtn("换车"))
+	step(1 / 60, 5)
+	ok(CP.looseCar:FindFirstChild("SB_SIBS") ~= nil, "超大容器 Model 里的小装配体(没座位)照样绑得上: 量的是装配体, 不是容器")
+	ok(toastText():find("没座位", 1, true) ~= nil, "绑上后照样提示没座位只能推 (" .. toastText() .. ")")
+end looseInBigModel() end
 _G.__rayHit = { Instance = seat } -- 换回真车: 带座位的那种
 click(findBtn("换车"))
 step(1 / 60, 5)
@@ -1037,9 +1060,20 @@ newBed.props.Anchored = true -- 这件还没解锁(锚定) → 应该自动改�
 local heavy = inst("Part", { Name = "Chassis", CanCollide = true, Anchored = false, Size = Vector3.new(6, 2, 14), Position = Vector3.new(61, 5, 0), CFrame = CFrame.new(Vector3.new(61, 5, 0)), AssemblyLinearVelocity = Vector3.zero, AssemblyMass = 2000 })
 heavy.props.AssemblyRootPart = heavy
 heavy.Parent = truck
-_G.__radius = { newBed, heavy }
-step(1 / 60, 5)
-ok(heavy:FindFirstChild("SB_SIBS") ~= nil, "锚定件被换成了附近更重的自由件 (Chassis)")
+do -- 就近改绑也不能改绑到地图: 30 格里最重的那件往往就是路面
+	local mapBit = inst("Part", { Name = "Plaza", CanCollide = true, Anchored = false, Size = Vector3.new(60, 1, 60), Position = Vector3.new(62, 5, 0), CFrame = CFrame.new(Vector3.new(62, 5, 0)), AssemblyLinearVelocity = Vector3.zero, AssemblyMass = 9000 })
+	mapBit.props.AssemblyRootPart = mapBit
+	mapBit.Parent = street
+	local mapFar = inst("Part", { Name = "PlazaFar", CanCollide = true, Anchored = false, Size = Vector3.new(60, 1, 60), Position = Vector3.new(2062, 5, 0), CFrame = CFrame.new(Vector3.new(2062, 5, 0)), AssemblyLinearVelocity = Vector3.zero, AssemblyMass = 9000 })
+	mapFar.props.AssemblyRootPart = mapBit -- 同一个装配体 → 外径 ~4000 格
+	mapFar.Parent = street
+	_G.__radius = { newBed, heavy, mapBit }
+	step(1 / 60, 5)
+	ok(heavy:FindFirstChild("SB_SIBS") ~= nil, "锚定件被换成了附近更重的自由件 (Chassis)")
+	ok(mapBit:FindFirstChild("SB_SIBS") == nil, "就近改绑没改到最重(9000)但超大的地图件上")
+	mapBit:Destroy()
+	mapFar:Destroy()
+end
 newBed.props.Anchored = false
 heavy:Destroy()
 newBed:Destroy()
@@ -1150,7 +1184,7 @@ local chatFn = T(inst("RemoteFunction", { Name = "ChatFn" })); chatFn.Parent = R
 local function mkPlane(name, o)
 	local m = T(inst("Model", { Name = name }))
 	local st = T(inst("VehicleSeat", { Name = "Pilot", Size = Vector3.new(2, 1, 2), CFrame = CFrame.new(Vector3.new(200, 50, 0)), Position = Vector3.new(200, 50, 0), Occupant = o.occ }))
-	st.Parent = m
+	if not o.noseat then st.Parent = m end -- 没座位的飞机(机库/菜单/被服务器接管的残留机): 上一版只从座位出发扫描, 这种整个漏掉
 	for _, wn in ipairs(o.wings or {}) do mkPart(wn, Vector3.new(6, 0.5, 2), Vector3.new(200, 50, 0)).Parent = m end
 	for i = 1, (o.fill or 0) do mkPart("Body" .. i, Vector3.new(1, 1, 1), Vector3.new(200, 50, 0)).Parent = m end
 	if o.paint then mkPart("Hull", Vector3.new(20, 4, 4), Vector3.new(200, 50, 0), { Color = o.paint }).Parent = m end
@@ -1169,6 +1203,12 @@ mkPlane("Shed", {}).props.IsShed = true
 _G.__SVC.Teams.props.GetTeams = function() return { teamRed, teamBlue } end
 local fireGun
 for _, d in ipairs(p1:GetDescendants()) do if d.Name == "FireGun" then fireGun = d end end
+click(findBtn("收侦听")) -- 一个 Remote 都还没扫出来就开收侦听: 实测报告里"收 0"就是这么来的
+ok(labelHas("收侦听开着但一个都没挂上") ~= nil, "没扫描过就开「收侦听」→ 状态行说清要先重扫 (收 是拿扫出来的 Remote 列表挂 OnClientEvent 的)")
+click(findBtn("收侦听"))
+click(findBtn("写报告")) -- 一次都没重扫过就写报告
+ok(VFS["plane_debug.txt"] ~= nil and VFS["plane_debug.txt"]:find("-- 飞机 5", 1, true) ~= nil, "没重扫过就点「写报告」→ 自动先扫一遍 (实测过: 人在飞, 报告却是 飞机 0 / Remote 0)")
+VFS["plane_debug.txt"] = nil
 click(findBtn("重扫"))
 local st1 = labelHas("飞机 ")
 ok(st1 and st1:find("飞机 5", 1, true) and st1:find("Remote 2", 1, true), "重扫: 5 架飞机 (车不算) + 2 个相关 Remote (" .. tostring(st1) .. ")")
@@ -1221,6 +1261,27 @@ ok(VFS["plane_debug.txt"]:find("-- 收 1", 1, true) and VFS["plane_debug.txt"]:f
 click(findBtn("清空记录"))
 click(findBtn("写报告"))
 ok(VFS["plane_debug.txt"]:find("-- 发 0", 1, true) and VFS["plane_debug.txt"]:find("-- 收 0", 1, true), "清空记录 → 收发都归零")
+do -- 记录折叠 / 没座位的飞机 / 疑似名单 / ★我(OldOwner): 四条都是实测报告暴露出来的盲区
+	hookF(fireGun, "one")
+	hookF(fireGun, "two")
+	hookF(fireGun, "three")
+	click(findBtn("写报告"))
+	rep = VFS["plane_debug.txt"]
+	ok(rep:find("×3", 1, true) ~= nil, "连续同 Remote 同目标折叠成一组 ×3 (原来 200 条不折叠只装 10 秒, RequestPlane 必被刷掉)")
+	ok(rep:find('FireGun:FireServer "one"', 1, true) ~= nil and rep:find('末 Workspace.Plane_RAF.FireGun:FireServer "three"', 1, true) ~= nil, "折叠后首末两条 payload 都留着 (EngineSync 从 0.64 衰减到 0 这种趋势还看得见)")
+	ok(rep:find("-- 发 3 条 / 1 组", 1, true) ~= nil, "报告头写清 原始条数/组数 (" .. tostring(rep:match("-- 发 [^\n]*")) .. ")")
+	local m21 = mkPlane("M21", { noseat = true, wings = { "LeftWing", "RightWing" }, fill = 12 })
+	local fw = mkPlane("FW190", { noseat = true, wings = { "LeftWing", "RightWing" }, fill = 12, attr = { "OldOwner", "Me" } })
+	click(findBtn("重扫"))
+	click(findBtn("写报告"))
+	rep = VFS["plane_debug.txt"]
+	ok(rep:find("[34] Workspace.M21 | 座:无", 1, true) ~= nil, "没座位的飞机也进报告 (机型名 M21 不在 HINT 里 → 只有 34 分, 靠「2 翼 + 12 件」这条进来)")
+	ok(rep:find("FW190 ★我(OldOwner)", 1, true) ~= nil, "被服务器接管的自家飞机(座位空的, 只剩 OldOwner 属性)也标 ★我")
+	ok(rep:find("-- 疑似 2", 1, true) ~= nil and rep:find("Shed | 靠座", 1, true) ~= nil and rep:find("Workspace.Car | 靠座", 1, true) ~= nil, "没过门槛的进「疑似」名单(2 个: Shed + 那辆车), 写清是靠座还是靠翼认到的 (" .. tostring(rep:match("-- 疑似 [^\n]*")) .. ")")
+	ok(rep:find("· 重扫于 ", 1, true) ~= nil, "报告头带重扫时间 (只点「写报告」会得到 0 架 0 Remote 的假象)")
+	m21:Destroy()
+	fw:Destroy()
+end
 -- 自动 5s
 mkPlane("Jet_new", {}) -- 手动重扫之后才冒出来的飞机: 只有真的重扫了, 它才会进报告
 click(findBtn("自动 5s"))
