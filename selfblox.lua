@@ -14,7 +14,7 @@
 --            gethui / isfile / writefile 缺失时退回 CoreGui 并跳过存盘, 面板照样起得来
 --   保持 Lua 5.4 可解析子集(不用 +=/continue/字符串插值), 这样 smoke.lua 能离线跑: 可测试性 > 语法糖
 
-local VERSION = "26.10.3.16" -- 单一版本来源: 发布时改成当次 yy.m.d (Asia/Shanghai), 同一天发第二次补 .ci, 再打 v<VERSION> 标签
+local VERSION = "26.10.3.17" -- 单一版本来源: 发布时改成当次 yy.m.d (Asia/Shanghai), 同一天发第二次补 .ci, 再打 v<VERSION> 标签
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
@@ -338,7 +338,7 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 end
 
 do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配体; 没坐 = 准星"换车"锁定 / 自动绑最近的空座位) ═════════
-	S.turncap, S.turnmax, S.hornkey, S.carmaxstuds, S.carswap = opt("turncap", 1), opt("turnmax", 8), opt("hornkey", "H"), opt("carmaxstuds", 150), opt("carswap", true) -- turnmax: 有效转速上限 (rad/s). 转向填 50 这种大数字时截到这里, 不然原地打方向就像陀螺 -- 只读配置 (没有面板控件) -- maxstuds: 装配体外径超过这个数就不当成车(是地图/大容器). 量装配体不量 Model 容器: 车直接挂在超大容器里也认得出来
+	S.turncap, S.turnmax, S.gyro, S.hornkey, S.carmaxstuds, S.carswap = opt("turncap", 1), opt("turnmax", 8), opt("gyro", 8), opt("hornkey", "H"), opt("carmaxstuds", 150), opt("carswap", true) -- gyro: 没人在打方向时, 车头自己转起来的那部分的回收速率 (每秒按掉的比例, 8 ≈ 半秒按到 1%); 属于只读配置, 用 _G.SB 覆盖 -- turnmax: 有效转速上限 (rad/s). 转向填 50 这种大数字时截到这里, 不然原地打方向就像陀螺 -- 只读配置 (没有面板控件) -- maxstuds: 装配体外径超过这个数就不当成车(是地图/大容器). 量装配体不量 Model 容器: 车直接挂在超大容器里也认得出来
 	local picked, pickSeat, pickPath, autoPick, curSeat, curMax, att, vf, lv, clipCar, lastCar, lastAnch
 	local target, statT, autoT = 0, 0, 0
 	local lamps, lampSaved, col = {}, setmetatable({}, { __mode = "k" }), setmetatable({}, { __mode = "k" })
@@ -732,6 +732,13 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 			stLook, stWin, stCmd, stAct, stIdle = nil, 0, 0, 0, stIdle + dt
 			if stIdle > 2 then stRate, stCmdRate, stStuck = nil, nil, false end -- 松手两秒后不再挂着一句"转向"
 		end
+		-- 防陀螺: 没人在打方向 (滑条和游戏座位都是 0) 时, 车头自己转起来的那部分按回去.
+		-- 26.10.3.16 的日志: 加速到 400~800 格/秒 时车头一路涨到 ±1000°/s, 滑条一次没碰 —— 拧它的不是滑条也不是我们的力 (推力从质心推, 没有扭矩).
+		-- 没人打方向还越转越快, 才会攒成"自己掉头"; 你打方向时上面那条照写角速度, 这里一个字都不碰.
+		if not anch and math.abs(mine) <= 0.02 and math.abs(gst) <= 0.02 then
+			local av2 = p.AssemblyAngularVelocity
+			if math.abs(av2.Y) > 0.02 then p.AssemblyAngularVelocity = Vector3.new(av2.X, av2.Y * math.max(0, 1 - dt * S.gyro), av2.Z) end
+		end
 		-- 抓地力: 把侧滑掰回车头. 只在"真的在侧滑"时动手 —— 直着开/直着加速时这一行一个字都不写,
 		-- 所以"不拉转向直接加速方向乱"不可能再是它; 侧翻/倒扣时也不动手 (那种姿态下车头朝哪都说不清)
 		local along = hv:Dot(fwd)
@@ -878,13 +885,13 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 	local function holdInfo() return (F.accel and " 按加速" or "") .. (F.decel and " 按减速" or "") .. (F.cup and " 按升" or "") .. (F.cdown and " 按降" or "") end
 	local function carInfo()
 		local p, s = part()
-		local spin = string.format(" 车头=%+.0f°/s", math.deg(yawRate)) .. (math.abs(stMine) > 0.02 and string.format(" 滑条=%+.0f%%", stMine * 100) or "") -- 写进日志/诊断: 掉头时时间线里直接看得到 (第 0.2 秒的状态行也会写, 那个不进文件)
+		local spin = string.format(" 车头=%+.0f°/s 姿态=%.2f", math.deg(yawRate), upY) .. (math.abs(stMine) > 0.02 and string.format(" 滑条=%+.0f%%", stMine * 100) or "") -- 写进日志/诊断: 掉头时时间线里直接看得到; 姿态=up.Y (≈1 = 四轮朝下, 0 上下 = 立起来/翻了 —— 分清"真掉头"和"翻车")
 		if p and vf then
-			return string.format("抓地=%s/转向=%s/过弯上限=%s 部件=%s%s 推力=%.0f(%.1f/kg) 质量=%.0f 速度=%.0f%s%s%s",
-				S.grip, S.turn, S.turncap, p:GetFullName(), seatInfo(s), vf.Force.Magnitude, vf.Force.Magnitude / math.max(p.AssemblyMass, 1), p.AssemblyMass,
+			return string.format("抓地=%s/转向=%s/过弯上限=%s/防陀螺=%s 部件=%s%s 推力=%.0f(%.1f/kg) 质量=%.0f 速度=%.0f%s%s%s",
+				S.grip, S.turn, S.turncap, S.gyro, p:GetFullName(), seatInfo(s), vf.Force.Magnitude, vf.Force.Magnitude / math.max(p.AssemblyMass, 1), p.AssemblyMass,
 				p.AssemblyLinearVelocity.Magnitude, p.Anchored and " 锚定(引擎不让推)" or "", F.cruise and string.format(" 定速@%.0f", target) or "", holdInfo() .. spin)
 		end
-		return "抓地=" .. S.grip .. "/转向=" .. S.turn .. "/过弯上限=" .. S.turncap .. " 部件=-" .. seatInfo(nil) .. (F.cruise and string.format(" 定速@%.0f", target) or "") .. holdInfo() .. spin
+		return "抓地=" .. S.grip .. "/转向=" .. S.turn .. "/过弯上限=" .. S.turncap .. "/防陀螺=" .. S.gyro .. " 部件=-" .. seatInfo(nil) .. (F.cruise and string.format(" 定速@%.0f", target) or "") .. holdInfo() .. spin
 	end
 	local function carStop() detach(); reclip(); dropLamps(); horn(false); if curSeat and curMax then curSeat.MaxSpeed = curMax end end
 	feature{ kind = "page", id = "sibs", tab = "车", info = carInfo }

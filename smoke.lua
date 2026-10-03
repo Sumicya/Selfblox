@@ -1186,8 +1186,10 @@ ok(knob7 and knob7.Position.X.Offset == 0, "圆点也不跟着跑 (不会假装�
 
 print("\n[6b9] 车头自己在转: 状态行常显 + 自动弹一次 (\"自己掉头\"不用打包就能看见)")
 seat.props.AssemblyLinearVelocity = Vector3.zero
-seat.props.AssemblyAngularVelocity = Vector3.new(0, 4, 0) -- 谁都没打方向, 直接让车自己转 (4 rad/s ≈ 229°/s)
-step(1 / 60, 60) -- 1 秒: 提示要持续 0.6 秒才弹
+for i = 1, 60 do
+	seat.props.AssemblyAngularVelocity = Vector3.new(0, 4, 0) -- 谁都没打方向, 直接让车自己转 (4 rad/s ≈ 229°/s); 每帧补一次 = 模拟"游戏物理一直在拧它" (只写一次的话防陀螺会把它按回去, 那是 [6b11] 的事)
+	step(1 / 60, 1)
+end -- 1 秒: 提示要持续 0.6 秒才弹
 local yawTxt
 for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" and d.Text:find("车头 ", 1, true) then yawTxt = d.Text end end
 ok(yawTxt ~= nil, "状态行常显车头转速, 不用开关也不用打包: " .. tostring(yawTxt))
@@ -1197,11 +1199,24 @@ ok(tt:find("滑条=", 1, true) ~= nil, "提示里带上滑条值 (收没收回�
 seat.props.AssemblyAngularVelocity = Vector3.zero
 step(1 / 60, 5)
 
+print("\n[6b11] 防陀螺: 没人打方向时, 车头自己转起来的那部分被按回去 (\"掉头\"就是这么攒起来的)")
+seat.props.AssemblyAngularVelocity = Vector3.new(0, 4, 0) -- 4 rad/s ≈ 229°/s
+step(1 / 60, 30) -- 0.5 秒
+ok(math.abs(seat.props.AssemblyAngularVelocity.Y) < 0.6, "没人打方向: 229°/s 半秒内被按到 " .. string.format("%.0f°/s", math.abs(seat.props.AssemblyAngularVelocity.Y) * 180 / math.pi) .. " (攒不起来)")
+dragTo(999)
+step(1 / 60, 3)
+ok(math.abs(seat.props.AssemblyAngularVelocity.Y) > 1e-3, "拖着滑条时防陀螺一个字不碰: 打方向照转 " .. string.format("%.2f", seat.props.AssemblyAngularVelocity.Y) .. " rad/s")
+dragEnd()
+step(1 / 60, 3)
+seat.props.AssemblyAngularVelocity = Vector3.zero
+
 print("\n[6b10] 报告读数: 静止时不量差角 (噪声), 车头转速要进日志/诊断")
 _G.SB_DUMP()
 yawTxt = VFS["selfblox_dump.txt"] or "" -- 复用上面的局部名: 顶层 local 已经到 200 个上限, 不能再加新的 (Lua 5.4 限制)
 ok(yawTxt:find("车头与运动方向差=—", 1, true) ~= nil, "速度太低时不量差角 (上一份报告静止却写 47°, 就是噪声)")
-ok(yawTxt:find("车头=%+", 1) ~= nil, "日志/诊断的 sibs 行带车头实测转速 (掉头时 1 秒一条的时间线里看得到)")
+yawTxt = yawTxt:match("[^\n]*sibs [^\n]*") or "" -- 只看 sibs 那一行 (复用局部名: 顶层 local 已经到 200 个上限)
+ok(yawTxt:find("车头=[%+%-]?%d+°/s", 1) ~= nil, "日志/诊断的 sibs 行带车头实测转速 (掉头时 1 秒一条的时间线里看得到): " .. yawTxt)
+ok(yawTxt:find("姿态=", 1, true) ~= nil, "同一行还带车姿态 up.Y (分清\"真掉头\"和\"翻车\")")
 if not bd.Visible then tapTitle() end -- 展开回去, 后面 [6b3] 自己会折
 
 print("\n[6b3] 转向走角速度: 拖滑条 = 真方向盘, 松手收回; 车不归你这边模拟时状态行直说没生效")
