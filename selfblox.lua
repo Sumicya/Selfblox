@@ -14,7 +14,7 @@
 --            gethui / isfile / writefile 缺失时退回 CoreGui 并跳过存盘, 面板照样起得来
 --   保持 Lua 5.4 可解析子集(不用 +=/continue/字符串插值), 这样 smoke.lua 能离线跑: 可测试性 > 语法糖
 
-local VERSION = "26.10.3" -- 单一版本来源: 发布时改成当次 yy.m.d (Asia/Shanghai), 同一天发第二次补 .ci, 再打 v<VERSION> 标签
+local VERSION = "26.10.3.1" -- 单一版本来源: 发布时改成当次 yy.m.d (Asia/Shanghai), 同一天发第二次补 .ci, 再打 v<VERSION> 标签
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
@@ -49,6 +49,23 @@ local function mine(d) local c = me.Character; return c ~= nil and (d == c or d:
 local function root() local c = me.Character; return c and (c:FindFirstChild("HumanoidRootPart") or c:FindFirstChild("Root")) end
 local function flat(v) v = Vector3.new(v.X, 0, v.Z); if v.Magnitude > 1e-3 then return v.Unit end end
 local function reclipAll(col) for d in pairs(col) do if d.Parent then d.CanCollide = true end end; table.clear(col) end -- 穿墙还原: moc/sibs 原来各写了一份一模一样的
+local ocol = setmetatable({}, { __mode = "k" }) -- 穿墙附带: 别人的部件 -> 改之前的 CanCollide
+local oT = -math.huge
+-- 「穿墙」开着时, 本地把别的玩家当不碰撞. 只改自己这一份: 服务器和对方客户端都不受影响,
+-- 所以他们照样会被你的车撞开/压过 (推开挡路的小屁孩就是这个效果), 只是挡不住你.
+-- 半秒一轮: 顺带补上刚加入/刚重生的玩家, 也自愈游戏把 CanCollide 改回来的情况. 别人的车、没人开的车和地图不动.
+local function othersNoclip()
+	local t = os.clock()
+	if t - oT < 0.5 then return end
+	oT = t
+	for _, pl in ipairs(Players:GetPlayers()) do
+		if pl ~= me then
+			local c = pl.Character
+			if c then for _, d in ipairs(c:GetDescendants()) do if d:IsA("BasePart") and d.CanCollide then ocol[d] = true; d.CanCollide = false end end end
+		end
+	end
+end
+local function othersBack() reclipAll(ocol); oT = -math.huge end
 local function nn(v) return tonumber(v) or 0 end -- 诊断/日志里的引擎数字: 拿不到就 0, 不能因为一个属性缺失把整份 dump 弄炸
 
 -- ───────── UI: 一个 ScreenGui, 标题条(原生 UIDragDetector 拖) + 页签 + 每模块一页 ─────────
@@ -269,7 +286,7 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 	local function flyTick() local _, h, r = body(); if h then if h.SeatPart then W.fly(false) else doFly(r, h) end end end
 	local function jumpTick() local _, h = body(); if h then baseOf(h); if h.UseJumpPower then h.JumpPower = S.jump else h.JumpHeight = S.jump end end end
 	local function spinTick() local _, h, r = body(); if h then if h.SeatPart then if spinAV then stopSpin() end else doSpin(r) end end end
-	local function clipTick() local c = body(); if c then noclip(c) end end
+	local function clipTick() othersNoclip(); local c = body(); if c then noclip(c) end end -- 人穿墙开着时连别人一起忽略 (开车也能用)
 	local function nvTick() if body() and os.clock() - nvT > 0.5 then nvT = os.clock(); nvOn() end end -- 游戏会重置光照, 半秒补一次
 	feature{ kind = "page", id = "moc", tab = "动" }
 	feature{ key = "speed", label = "速度", num = { "spd", 16 }, tick = speedTick, set = function() moving = false end, off = restore }
@@ -278,7 +295,7 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 	feature{ key = "jump", label = "高跳", num = { "jump", 50 }, tick = jumpTick, off = restore }
 	feature{ key = "spin", label = "旋转", num = { "spin", 50 }, tick = spinTick, off = stopSpin }
 	feature{ key = "infjump", label = "无限跳", init = function() on(UIS.JumpRequest, function() local h = hum(); if F.infjump and h then h:ChangeState(Enum.HumanoidStateType.Jumping) end end) end }
-	feature{ key = "clip", label = "穿墙", tick = clipTick, off = function() reclipAll(col) end }
+	feature{ key = "clip", label = "穿墙", tick = clipTick, off = function() reclipAll(col); if not (F.clip or F.carclip) then othersBack() end end }
 	feature{ key = "nv", label = "夜视", tick = nvTick, set = function(v) if v then nvOn() end end, off = nvOff }
 	feature{ kind = "cycle", key = "nocd", def = "off", cycle = { "off", "normal", "force" }, text = { off = "秒互动 关", normal = "秒互动 普通", force = "秒互动 强制" }, lit = true, set = setNocd, off = function() setNocd("off") end,
 		init = function() on(workspace.DescendantAdded, function(p) if F.nocd ~= "off" then patch(p) end end) end }
@@ -514,6 +531,7 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 	end
 
 	local function carTick(dt)
+		if F.carclip then othersNoclip() end -- 车穿墙开着: 别人挡不住车 (车自己的轮胎块照旧保留碰撞, 不然会掉出世界)
 		local s = seat()
 		if s ~= curSeat then -- 换座: 还原旧座限速, 新座解限速, 灯重挂
 			if curSeat and curMax then curSeat.MaxSpeed = curMax end
@@ -664,7 +682,9 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 	feature{ kind = "num", key = "grip", def = 5, label = "抓地" }
 	feature{ kind = "num", key = "turn", def = 2.2, label = "转向" }
 	feature{ kind = "btn", label = "换车(准星)", fn = pick }
-	feature{ key = "carclip", save = "carclip", label = "穿墙" }
+	feature{ key = "carclip", save = "carclip", label = "穿墙",
+		set = function() if F.carclip or F.clip then othersNoclip() else othersBack() end end,
+		off = function() if not (F.carclip or F.clip) then othersBack() end end }
 	feature{ key = "cruise", label = "定速" }
 	feature{ key = "cfly", label = "飞车" }
 	feature{ kind = "btn", label = "翻转 180°", fn = flipCar }
@@ -1205,6 +1225,7 @@ _G.SB_DUMP = dumpNow
 _G.SB_UNLOAD = function()
 	alive = false
 	for _, e in ipairs(BUILT) do if e.off then pcall(e.off) end end -- 一个功能清理炸了不能拦住其他的
+	othersBack() -- 收尾: 穿墙开着时别人的碰撞是关着的, 卸载必须还原 (上面的 off 互相看开关, 这里无条件兜一次)
 	for _, c in ipairs(conns) do c:Disconnect() end
 	gui:Destroy()
 	FX:Destroy()

@@ -1178,6 +1178,32 @@ ok(espHL(bobChar) == nil and espBB() == nil, "玩家离开 → ESP 实例清掉"
 PS.props.PlayerAdded:Fire(bob) -- 再进来一次, 留着让卸载去清
 bob.props.Team = teamRed
 
+-- ── 穿墙附带: 别人挡不住你 (只改本地那几份; 关掉穿墙 / 卸载都要还原) ──
+local clips = {}
+for _, b in ipairs(buttons()) do if starts(b.Text, "穿墙 ") then clips[#clips + 1] = b end end -- 开关按钮的文字带 " 开" / " 关"
+ok(#clips == 2, "「动」和「车」各有一个「穿墙」开关 (找到 " .. #clips .. " 个)")
+local clipMoc, clipCar = clips[1], clips[2] -- 树里的顺序 = 建页顺序: 动 在前, 车 在后
+ok(bobRoot.CanCollide == true and hrp.CanCollide == true, "起点: 别人的部件和我自己的都还能碰撞")
+click(clipMoc)
+step(1 / 60, 5)
+ok(bobRoot.CanCollide == false, "「动」穿墙开着 → 别的玩家在我这一份里看不到碰撞 (人挡不住)")
+ok(hrp.CanCollide == false, "人物穿墙本来就全身不可碰 (自己这边也没变)")
+click(clipMoc)
+step(1 / 60, 5)
+ok(bobRoot.CanCollide == true and hrp.CanCollide == true, "关掉「动」穿墙 → 两边的碰撞都还原")
+click(clipCar)
+step(1 / 60, 5)
+ok(bobRoot.CanCollide == false, "「车」穿墙开着 → 别人的部件也不碰 (车保留的轮胎块不再被挡路的人顶住)")
+ok(hrp.CanCollide == true, "「车」穿墙不动我自己的人物")
+local latecomer = mkPart("Latecomer", Vector3.new(2, 2, 1), Vector3.new(31, 5, 0))
+latecomer.Parent = bobChar
+ok(latecomer.CanCollide == true, "刚冒出来的部件还是有碰撞")
+step(1 / 60, 45) -- 半秒一轮: 后加入 / 重生的部件下一轮补上
+ok(latecomer.CanCollide == false, "开了以后新加 / 重生的部件最迟半秒补上")
+click(clipCar)
+step(1 / 60, 5)
+ok(bobRoot.CanCollide == true and latecomer.CanCollide == true, "关掉「车」穿墙 → 连后补的那块也还原")
+
 -- ── plane: 飞机侦察 ──
 local spawnRemote = T(inst("RemoteEvent", { Name = "SpawnPlane" })); spawnRemote.Parent = RSv
 local chatFn = T(inst("RemoteFunction", { Name = "ChatFn" })); chatFn.Parent = RSv
