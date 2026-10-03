@@ -14,7 +14,7 @@
 --            gethui / isfile / writefile 缺失时退回 CoreGui 并跳过存盘, 面板照样起得来
 --   保持 Lua 5.4 可解析子集(不用 +=/continue/字符串插值), 这样 smoke.lua 能离线跑: 可测试性 > 语法糖
 
-local VERSION = "26.10.3.6" -- 单一版本来源: 发布时改成当次 yy.m.d (Asia/Shanghai), 同一天发第二次补 .ci, 再打 v<VERSION> 标签
+local VERSION = "26.10.3.7" -- 单一版本来源: 发布时改成当次 yy.m.d (Asia/Shanghai), 同一天发第二次补 .ci, 再打 v<VERSION> 标签
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
@@ -157,8 +157,7 @@ local body = mk("Frame", { Name = "SB_Body", Size = UDim2.new(0, W, 0, 0), Autom
 mk("UIListLayout", { Padding = UDim.new(0, 0) }, body)
 on(title:GetPropertyChangedSignal("Position"), function() body.Position = title.Position + UDim2.fromOffset(0, ROW) end)
 local fold = mk("TextButton", { Size = UDim2.fromOffset(ROW, ROW), Position = UDim2.new(1, -ROW, 0, 0), BackgroundTransparency = 1, Font = FONT, TextSize = 16, TextColor3 = WHITE, Text = "–" }, title)
-local foldHooks = {} -- 想知道"面板是折着还是开着"的模块挂这里
-local function setFold(v) body.Visible = v; fold.Text = v and "–" or "+"; for _, f in ipairs(foldHooks) do f(v) end end
+local function setFold(v) body.Visible = v; fold.Text = v and "–" or "+" end
 local drag = mk("UIDragDetector", { BoundingUI = gui }, title)
 local flipT, down = -math.huge, nil
 local function flip() -- 一次点按可能同时走下面三条路(拖拽器 / +按钮 / 标签自己的输入), 0.2 秒内只认第一条, 不然翻两次等于没翻. ponytail: 0.2 秒内连点两下会被当成一下
@@ -345,7 +344,6 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 	local rp = RaycastParams.new()
 	rp.FilterType = Enum.RaycastFilterType.Exclude
 	local track, knob, handle, kd, dragX -- 方向盘控件 (init 里建)
-	local live = false
 	local stCar, stAvSet = nil, false -- 这套角速度转向是我们写上去的: 松手/下车要收回来, 不然车会一直自转
 	local stCmd, stAct, stWin, stIdle, stLook = 0, 0, 0, 0, nil -- 转向自检: 命令转了多少 vs 车头真的转了多少
 	local stRate, stCmdRate, stStuck = nil, nil, false
@@ -582,19 +580,14 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 	end
 	local function brakeNow(p, v) p.AssemblyLinearVelocity = Vector3.yAxis * v.Y end -- 急刹: 水平速度直接归零, 比推力快且不吃质量
 
-	local function setLive(v)
-		live = v
-		handle.Visible = v
-		track.ZIndex, knob.ZIndex = v and 10 or 1, v and 11 or 2
-		track.BackgroundTransparency, knob.BackgroundTransparency = v and 0.4 or 0.75, v and 0 or 0.55
-		if not v then dragX = nil; knob.Position = UDim2.fromScale(0.5, 0.5) end
-	end
-	local function steer() -- 轨道宽 200 / 圆点半径 18 → 圆心能走 ±82
-		if not live then return 0 end
-		local cx = track.AbsolutePosition.X + 100
-		local s = math.clamp((dragX or cx) - cx, -82, 82)
+	local SW, SH, KH = 220, 48, 44 -- 轨道宽 / 轨道高 / 圆点直径: 手机上手指按得住的尺寸 (原来 200x36 + 18px 圆点, 一滑就脱手)
+	local SLIM = SW / 2 - KH / 2 -- 圆心能走的半程 (±88)
+	local function steer()
+		if not track then return 0 end -- 面板还没建完时 carTick 也会被调到
+		local cx = track.AbsolutePosition.X + SW / 2
+		local s = math.clamp((dragX or cx) - cx, -SLIM, SLIM)
 		knob.Position = UDim2.new(0.5, s, 0.5, 0) -- 圆点是纯显示, 只跟手指
-		return s / 82
+		return s / SLIM
 	end
 	local function moveVec() -- 摇杆原始输入 (前推 Z=-1, 右推 X=1). 官方 UserInputService 没有 GetMoveVector (那是 PlayerModule.ControlModule 的方法), 真引擎里一调就抛错; 这里把 Humanoid.MoveDirection (相机相对的世界方向) 换回相机坐标
 		local h, md = hum(), nil
@@ -603,18 +596,19 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 		local r = flat(workspace.CurrentCamera.CFrame.RightVector) or Vector3.xAxis
 		return Vector3.new(md:Dot(r), 0, -md:Dot(Vector3.yAxis:Cross(r)))
 	end
-	local function wheelInit() -- 建好页之后: 钉在屏幕底部的方向盘 (有副作用, 不能放块级)
-		track = mk("Frame", { Name = "SB_Steer", AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -10), Size = UDim2.fromOffset(200, 36), BackgroundColor3 = BG, BackgroundTransparency = 0.4, BorderSizePixel = 0, Visible = false, ZIndex = 10 }, gui)
+	local function wheelInit() -- 方向盘 (有副作用, 不能放块级). 位置: 屏幕左侧、上下居中 —— 底部正中会被手机的返回手势条和游戏自己的按钮吃掉, 拖不动
+		local pos = opt("steerpos", "left") -- left(默认) / right / bottom (底部正中 = 老位置)
+		local ap = pos == "right" and Vector2.new(1, 0.5) or (pos == "bottom" and Vector2.new(0.5, 1) or Vector2.new(0, 0.5))
+		local at = pos == "right" and UDim2.new(1, -18, 0.5, 0) or (pos == "bottom" and UDim2.new(0.5, 0, 1, -28) or UDim2.new(0, 18, 0.5, 0))
+		track = mk("Frame", { Name = "SB_Steer", AnchorPoint = ap, Position = at, Size = UDim2.fromOffset(SW, SH), BackgroundColor3 = BG, BackgroundTransparency = 0.35, BorderSizePixel = 0, Visible = false, ZIndex = 10 }, gui)
 		mk("UICorner", { CornerRadius = UDim.new(1, 0) }, track)
-		knob = mk("Frame", { Name = "SB_Knob", AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(36, 36), BackgroundColor3 = Color3.fromRGB(95, 65, 135), BorderSizePixel = 0, ZIndex = 11 }, track)
+		knob = mk("Frame", { Name = "SB_Knob", AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(KH, KH), BackgroundColor3 = Color3.fromRGB(95, 65, 135), BorderSizePixel = 0, ZIndex = 11 }, track)
 		mk("UICorner", { CornerRadius = UDim.new(1, 0) }, knob)
 		local HOME = UDim2.new(0, 0, 0, 0) -- 手柄的家: 全宽 + 锚点(0,0). 松手要回到这里; 原来照抄圆点的 fromScale(0.5,0.5), 一松手整条手柄被推到右下半格, 左半条就按不到了
 		handle = mk("Frame", { Name = "SB_Handle", Position = HOME, Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Active = true, ZIndex = 12 }, track) -- 看不见的手柄盖在最上面, 整条都能按
 		kd = mk("UIDragDetector", { DragStyle = Enum.UIDragDetectorDragStyle.TranslateLine, DragAxis = Vector2.new(1, 0), BoundingUI = track }, handle)
 		on(kd.DragContinue, function(p) dragX = p.X end) -- 官方文档: DragContinue 给的是 inputPosition: Vector2 (屏幕坐标), 不是 InputObject; 原来按 i.Position 读, 在 Vector2 上会直接抛错
 		on(kd.DragEnd, function() dragX = nil; handle.Position = HOME end)
-		foldHooks[#foldHooks + 1] = function(open) setLive(F.steeropen or not open) end -- 钩子收到的是"面板开着吗", 滑条要的是"能不能拖"
-		setLive(not body.Visible)
 	end
 
 	local function carTick(dt)
@@ -677,10 +671,6 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 				p.AssemblyAngularVelocity = Vector3.new(av.X, rate, av.Z) -- 自己这边模拟的车: 直接给绕 Y 的角速度 = 真的方向盘 (轮胎抓地、不穿墙, 也比每帧传送更能顶住引擎回弹)
 				stCar, stAvSet = p, true
 			end
-			if spd > 1 then
-				local dir = hv:Dot(fwd) < 0 and -fwd or fwd
-				p.AssemblyLinearVelocity = hv.Unit:Lerp(dir, math.min(dt * S.grip, 1)).Unit * spd + Vector3.yAxis * v.Y
-			end
 			-- 自检: 命令了多少 vs 车头真的转了多少 (服务器接管的车, 写了也白写 → 状态行/快照里说清)
 			stCmd, stWin, stIdle = stCmd + rate * dt, stWin + dt, 0
 			if stLook then stAct = stAct + yawStep(stLook, p.CFrame.LookVector) end
@@ -693,6 +683,11 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 			steerRelease()
 			stLook, stWin, stCmd, stAct, stIdle = nil, 0, 0, 0, stIdle + dt
 			if stIdle > 2 then stRate, stCmdRate, stStuck = nil, nil, false end -- 松手两秒后不再挂着一句"转向"
+		end
+		-- 抓地力: 速度方向往车头贴 (轮胎抓地). 一直生效, 不再只在"我们拖滑条打方向"时管 —— 用游戏自己的方向盘时它照样把侧滑掰直, 不然这个数字就是摆设; 0 = 关
+		if spd > 1 then
+			local dir = hv:Dot(fwd) < 0 and -fwd or fwd
+			p.AssemblyLinearVelocity = hv.Unit:Lerp(dir, math.min(dt * S.grip, 1)).Unit * spd + Vector3.yAxis * v.Y
 		end
 		local f, push = mass * S.acc, Vector3.zero
 		if F.brake then -- 急刹: 刹到停, 再踩油门自动解除
@@ -832,7 +827,6 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 	feature{ key = "brake", label = "急刹" }
 	feature{ key = "lamp", label = "常亮", set = function(v) if v then setLamps(true) else dropLamps() end end }
 	feature{ kind = "btn", label = "闪 ×3", fn = function() task.spawn(function() for _ = 1, 3 do setLamps(true); task.wait(0.12); setLamps(false); task.wait(0.12) end; if F.lamp then setLamps(true) else dropLamps() end end) end }
-	feature{ key = "steeropen", save = "steeropen", label = "滑条常可拖", w = 1, set = function(v) setLive(v or not body.Visible) end } -- true = 面板开着也能拖滑条 (默认: 折起来才能拖)
 	feature{ key = "carauto", save = "carauto", def = true, label = "自动绑车", w = 1 }
 	feature{ key = "hornon", label = "常声(" .. S.hornkey .. ")", set = horn }
 	feature{ kind = "hold", label = "声", set = horn }
