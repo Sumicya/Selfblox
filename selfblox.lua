@@ -14,7 +14,7 @@
 --            gethui / isfile / writefile 缺失时退回 CoreGui 并跳过存盘, 面板照样起得来
 --   保持 Lua 5.4 可解析子集(不用 +=/continue/字符串插值), 这样 smoke.lua 能离线跑: 可测试性 > 语法糖
 
-local VERSION = "26.10.3.17" -- 单一版本来源: 发布时改成当次 yy.m.d (Asia/Shanghai), 同一天发第二次补 .ci, 再打 v<VERSION> 标签
+local VERSION = "26.10.3.18" -- 单一版本来源: 发布时改成当次 yy.m.d (Asia/Shanghai), 同一天发第二次补 .ci, 再打 v<VERSION> 标签
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
@@ -697,12 +697,15 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 		local acc, dec = F.accel or thr > 0, F.decel or thr < 0
 		if os.clock() - statT > 0.2 then statT = os.clock(); say("car_status", (m and m.Name or p.Name) .. " · " .. math.floor(spd + 0.5) .. (s and "" or " · 准星锁定") .. (anch and " · 锚定(等游戏解锁)" or "") .. (F.carclip and #clipList > 0 and (" · 穿墙(车) " .. clipText()) or "") .. steerText() .. spinText()) end
 		if F.carclip then noclip(p) elseif clipCar then reclip() end
-		if F.cfly then -- 飞车: 摇杆(前后左右) + 面板按钮都吃; 松手悬停
+		if F.cfly then -- 飞车: 摇杆(前后左右) + 面板按钮都吃; 方向跟摄像头走 (和角色飞行同一条公式: 抬头前推就往上飞), 松手悬停
 			if not lv then lv = mk("LinearVelocity", { Attachment0 = att, MaxForce = math.huge, VectorVelocity = Vector3.zero, RelativeTo = Enum.ActuatorRelativeTo.World }, att) end
 			local mv = moveVec() -- 摇杆: 前推 Z=-1, 右推 X=1
-			local dir = fwd * math.clamp(-mv.Z + (acc and 1 or 0) - (dec and 1 or 0), -1, 1) + (flat(p.CFrame.RightVector) or Vector3.xAxis) * math.clamp(mv.X, -1, 1)
+			local fwdIn = math.clamp(-mv.Z + (acc and 1 or 0) - (dec and 1 or 0), -1, 1) -- 前推量: 摇杆前后 + 面板加速/减速
+			local cam = workspace.CurrentCamera
+			local cl = cam and cam.CFrame.LookVector -- 相机没起来(或指天指地)时只好退回车头, 免得原地不动
+			local dir = (cl and flat(cl) or fwd) * fwdIn + (cam and flat(cam.CFrame.RightVector) or Vector3.xAxis) * math.clamp(mv.X, -1, 1)
 			if dir.Magnitude > 1 then dir = dir.Unit end
-			lv.VectorVelocity = anch and Vector3.zero or (dir * S.carfly + Vector3.yAxis * (S.carfly * ((F.cup and 1 or 0) - (F.cdown and 1 or 0))))
+			lv.VectorVelocity = anch and Vector3.zero or (dir * S.carfly + Vector3.yAxis * (S.carfly * ((cl and cl.Y or 0) * fwdIn + (F.cup and 1 or 0) - (F.cdown and 1 or 0)))) -- 抬头前推 = 沿相机视线爬升 (和角色飞行一样), 升/降按钮照旧
 			vf.Force = Vector3.zero
 			steerRelease() -- 飞车模式不吃滑条转向: 别把角速度留着让车自转
 			return

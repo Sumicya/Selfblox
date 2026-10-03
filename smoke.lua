@@ -1027,22 +1027,26 @@ tapTitle()
 seat.props.Anchored = false
 step(1 / 60, 3)
 
-print("\n[6d] 飞车: 摇杆前推 = 车头方向 (摇杆读 Humanoid.MoveDirection; 官方 UserInputService 没有 GetMoveVector)")
+print("\n[6d] 飞车: 跟摄像头方向飞 (摇杆读 Humanoid.MoveDirection; 官方 UserInputService 没有 GetMoveVector)")
 click(findBtn("飞车"))
 humanoid.props.MoveDirection = Vector3.new(0, 0, -1) -- 摄像机朝 -Z: 前推 = 世界 -Z
 seat.props.Throttle = 0
 step(1 / 60, 3)
 local lvc = seat:FindFirstChild("SB_SIBS"):FindFirstChildOfClass("LinearVelocity")
-ok(lvc and lvc.VectorVelocity.Z < -10, "摇杆前推 → 车头方向 " .. tostring(lvc and lvc.VectorVelocity))
+ok(lvc and lvc.VectorVelocity.Z < -10, "摇杆前推 → 摄像头方向 " .. tostring(lvc and lvc.VectorVelocity))
 humanoid.props.MoveDirection = Vector3.new(1, 0, 0) -- 右推 = 世界 +X
 step(1 / 60, 3)
-ok(lvc and lvc.VectorVelocity.X > 10, "摇杆右推 → 车右方向 " .. tostring(lvc and lvc.VectorVelocity))
-camera.CFrame = CFrame.new(Vector3.zero, Vector3.new(1, 0, 0)) -- 摄像机转到朝 +X: 前推 = 世界 +X, 但车还是该往车头(-Z)飞, 不能跟着相机跑
+ok(lvc and lvc.VectorVelocity.X > 10, "摇杆右推 → 摄像头右方向 " .. tostring(lvc and lvc.VectorVelocity))
+camera.CFrame = CFrame.new(Vector3.zero, Vector3.new(1, 0, 0)) -- 摄像机转到朝 +X: 前推该跟着相机去 +X (车头这时还对着 -Z, 不管它)
 humanoid.props.MoveDirection = Vector3.new(1, 0, 0)
 step(1 / 60, 3)
-local fw = seat.props.CFrame.LookVector -- 前面方向盘测试已经把假车转过了, 车头不再是 -Z, 所以跟车头的实际朝向比
+local fw = seat.props.CFrame.LookVector -- 前面方向盘测试已经把假车转过了, 车头不再是 -Z: 正好拿它反证「跟相机、不跟车头」
 fw = Vector3.new(fw.X, 0, fw.Z).Unit
-ok(lvc and lvc.VectorVelocity.Magnitude > 10 and lvc.VectorVelocity.Unit:Dot(fw) > 0.99, "相机转 90° 后, 前推仍是车头方向, 不跟着相机跑 (与车头夹角余弦 " .. string.format("%.3f", lvc and lvc.VectorVelocity.Unit:Dot(fw) or 0) .. ", 速度 " .. tostring(lvc and lvc.VectorVelocity) .. ")")
+ok(lvc and lvc.VectorVelocity.Magnitude > 10 and lvc.VectorVelocity.Unit:Dot(Vector3.xAxis) > 0.99 and lvc.VectorVelocity.Unit:Dot(fw) < 0.99, "相机转 90° 后前推 → 世界 +X (跟相机, 不跟车头; 与车头夹角余弦 " .. string.format("%.3f", lvc and lvc.VectorVelocity.Unit:Dot(fw) or 1) .. ")")
+camera.CFrame = CFrame.fromAxisAngle(Vector3.xAxis, math.rad(30)) -- 相机抬头 30°: 前推该顺着视线往上飞 (假引擎的 CFrame.Angles 是恒等桩, 用真实现的 fromAxisAngle)
+humanoid.props.MoveDirection = Vector3.new(0, 0, -1)
+step(1 / 60, 3)
+ok(lvc and lvc.VectorVelocity.Y > 10 and lvc.VectorVelocity.Z < 0, "相机抬头后前推 → 往上飞 (竖直分量 " .. string.format("%.0f", lvc and lvc.VectorVelocity.Y or 0) .. ")")
 camera.CFrame = CFrame.new(Vector3.zero)
 humanoid.props.MoveDirection = Vector3.zero
 step(1 / 60, 3)
