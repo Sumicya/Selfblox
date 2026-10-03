@@ -1183,6 +1183,19 @@ kd.DragContinue:Fire(Vector2.new(999, 0)) -- 真机上就是这么卡的: 事件
 step(1 / 60, 10)
 ok(math.abs(seat.props.AssemblyAngularVelocity.Y) < 1e-6, "没手指按着 → 拖拽事件被忽略, 车不转")
 ok(knob7 and knob7.Position.X.Offset == 0, "圆点也不跟着跑 (不会假装还在拖)")
+
+print("\n[6b9] 车头自己在转: 状态行常显 + 自动弹一次 (\"自己掉头\"不用打包就能看见)")
+seat.props.AssemblyLinearVelocity = Vector3.zero
+seat.props.AssemblyAngularVelocity = Vector3.new(0, 4, 0) -- 谁都没打方向, 直接让车自己转 (4 rad/s ≈ 229°/s)
+step(1 / 60, 60) -- 1 秒: 提示要持续 0.6 秒才弹
+local yawTxt
+for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" and d.Text:find("车头 ", 1, true) then yawTxt = d.Text end end
+ok(yawTxt ~= nil, "状态行常显车头转速, 不用开关也不用打包: " .. tostring(yawTxt))
+local tt = toastText()
+ok(tt:find("车自己在转", 1, true) ~= nil, "自己转起来会弹一次提示: " .. tostring(tt))
+ok(tt:find("滑条=", 1, true) ~= nil, "提示里带上滑条值 (收没收回去直接看得到) " .. tostring(tt))
+seat.props.AssemblyAngularVelocity = Vector3.zero
+step(1 / 60, 5)
 if not bd.Visible then tapTitle() end -- 展开回去, 后面 [6b3] 自己会折
 
 print("\n[6b3] 转向走角速度: 拖滑条 = 真方向盘, 松手收回; 车不归你这边模拟时状态行直说没生效")
@@ -1197,6 +1210,7 @@ step(1 / 60, 20) -- 自检窗口 0.5s 满上后, 再等状态行按 0.2s 的节�
 local stTxt
 for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" and d.Text:find("转向 ", 1, true) and d.Text:find("°/s", 1, true) then stTxt = d.Text end end
 ok(stTxt ~= nil, "状态行报实测转速 (" .. tostring(stTxt) .. ")")
+ok(stTxt ~= nil and stTxt:find("滑条 %+", 1) ~= nil, "状态行同时写滑条转向值 (拖着多少, 一眼看得出)")
 dragEnd()
 step(1 / 60, 3)
 ok(math.abs(seat.props.AssemblyAngularVelocity.Y) < 1e-6, "松手 → 角速度收回, 车不会一直自转")

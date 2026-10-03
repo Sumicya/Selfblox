@@ -14,7 +14,7 @@
 --            gethui / isfile / writefile 缺失时退回 CoreGui 并跳过存盘, 面板照样起得来
 --   保持 Lua 5.4 可解析子集(不用 +=/continue/字符串插值), 这样 smoke.lua 能离线跑: 可测试性 > 语法糖
 
-local VERSION = "26.10.3.14" -- 单一版本来源: 发布时改成当次 yy.m.d (Asia/Shanghai), 同一天发第二次补 .ci, 再打 v<VERSION> 标签
+local VERSION = "26.10.3.15" -- 单一版本来源: 发布时改成当次 yy.m.d (Asia/Shanghai), 同一天发第二次补 .ci, 再打 v<VERSION> 标签
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
@@ -351,6 +351,8 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 	local stRate, stCmdRate, stStuck = nil, nil, false
 	local upY = 1 -- 车姿态 (UpVector.Y): 抓地与推力都要看它
 	local dbgThr, dbgGst, dbgUp, dbgLat, dbgPush, dbgSpd = 0, 0, 1, 0, 0, 0 -- 诊断打包: 最近一帧的驾驶细节
+	local yawLook, yawRate, yawBadT, yawToastT = nil, 0, 0, -math.huge -- 车头自己转的实测角速度 (跟我们的转向无关, 直接量车头转了多少) + 提示节流
+	local stMine = 0 -- 最近一帧滑条给出的转向值 (-1~1): 状态行要显示"滑条多少", 但状态行比它先算, 所以存一帧
 	local function yawStep(a, b) local d = math.acos(math.clamp(a:Dot(b), -1, 1)); return (a:Cross(b).Y >= 0) and d or -d end -- a → b 绕 Y 转过的角 (带符号)
 	local function steerRelease() -- 松开滑条 / 下车 / 切飞车: 把角速度收回, 车不会一直自转
 		if not stAvSet then return end
@@ -358,10 +360,15 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 		local c = stCar
 		if c and c.Parent then local av = c.AssemblyAngularVelocity; c.AssemblyAngularVelocity = Vector3.new(av.X, 0, av.Z) end
 	end
-	local function steerText() -- 状态行里那半句
+	local function steerText() -- 状态行里那半句 (我们自己的转向自检)
 		if not stCmdRate then return "" end
 		if stStuck then return " · 转向没生效(车不由你这边模拟, 坐进去再试)" end
 		return string.format(" · 转向 %.0f°/s", math.deg(stRate or 0))
+	end
+	local function spinText() -- 车头自己在转吗: 一直显示 (不用打包、不用开关), 掉头时一眼看得见; 滑条值也带上
+		local d = math.deg(yawRate)
+		if math.abs(d) < 3 then return "" end
+		return string.format(" · 车头 %+.0f°/s", d) .. (math.abs(stMine) > 0.02 and string.format(" · 滑条 %+.0f%%", stMine * 100) or "")
 	end
 	local function seat() local h = hum(); return h and h.SeatPart end
 	local function seatIn(m) return m:FindFirstChildWhichIsA("VehicleSeat", true) or m:FindFirstChildWhichIsA("Seat", true) end -- 官方继承链: VehicleSeat 和 Seat 互不相干 (都挂在 BasePart 下), 只查 "Seat" 会把带 VehicleSeat 的车当成"没座位"
@@ -668,7 +675,7 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 			end
 		end
 		track.Visible = p ~= nil
-		if not p then steerRelease(); detach(); if clipCar then reclip() end; return end
+		if not p then steerRelease(); detach(); yawLook, yawRate = nil, 0; if clipCar then reclip() end; return end
 		attach(p) -- 锚定的车照样绑: 早先的实现一锚定就直接 return, 所以"要动一会(等游戏解锁)才能绑上"
 		local anch = p.Anchored -- 锚定 = 引擎不让推, 只能等游戏自己解锁; 滑条转向走 CFrame 照样有效
 		if anch ~= lastAnch then
@@ -680,10 +687,15 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 		local v = p.AssemblyLinearVelocity
 		local hv = Vector3.new(v.X, 0, v.Z)
 		local spd, mass, fwd = hv.Magnitude, p.AssemblyMass, facing()
+		local look2 = flat(p.CFrame.LookVector) -- 车头转了多少: 自己掉头时这里会一路有值, 跟我们有没有在转它无关
+		if look2 then
+			if yawLook then yawRate = yawRate * 0.85 + (yawStep(yawLook, look2) / math.max(dt, 1e-3)) * 0.15 end -- 0.15 的平滑: 防单帧抖动
+			yawLook = look2
+		end
 		local gst, thr, st = 0, 0, steer()
 		if sp and sp:IsA("VehicleSeat") then gst, thr, st = sp.Steer, sp.Throttle, math.clamp(st + sp.Steer, -1, 1) end -- 游戏自带的手机油门/方向盘也吃
 		local acc, dec = F.accel or thr > 0, F.decel or thr < 0
-		if os.clock() - statT > 0.2 then statT = os.clock(); say("car_status", (m and m.Name or p.Name) .. " · " .. math.floor(spd + 0.5) .. (s and "" or " · 准星锁定") .. (anch and " · 锚定(等游戏解锁)" or "") .. (F.carclip and #clipList > 0 and (" · 穿墙(车) " .. clipText()) or "") .. steerText()) end
+		if os.clock() - statT > 0.2 then statT = os.clock(); say("car_status", (m and m.Name or p.Name) .. " · " .. math.floor(spd + 0.5) .. (s and "" or " · 准星锁定") .. (anch and " · 锚定(等游戏解锁)" or "") .. (F.carclip and #clipList > 0 and (" · 穿墙(车) " .. clipText()) or "") .. steerText() .. spinText()) end
 		if F.carclip then noclip(p) elseif clipCar then reclip() end
 		if F.cfly then -- 飞车: 摇杆(前后左右) + 面板按钮都吃; 松手悬停
 			if not lv then lv = mk("LinearVelocity", { Attachment0 = att, MaxForce = math.huge, VectorVelocity = Vector3.zero, RelativeTo = Enum.ActuatorRelativeTo.World }, att) end
@@ -697,6 +709,7 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 		elseif lv then lv:Destroy(); lv = nil end
 		-- 转向: 游戏自己的 Steer 那部分让它自己转, 我们只转滑条多出来的部分, 不重复
 		local mine = st - gst
+		stMine = mine
 		if math.abs(mine) > 0.02 then -- 停着也能转(原地打方向), 不再等车动起来
 			local rate = math.clamp(-mine * S.turn * math.clamp(spd / 25, 0.2, S.turncap), -S.turnmax, S.turnmax) -- rad/s (turncap = 随速度放大的上限; turnmax = 硬上限: 2.2 ≈ 126°/s, 8 ≈ 458°/s, 再大就是陀螺)
 			if anch then
@@ -743,6 +756,14 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 		-- 用户要求: 不加任何闸/限速 —— 按了加速就一路推, 车翻了/横滑也照推 (限速和失控闸都撤了)
 		if anch then push = Vector3.zero end -- 锚定: 力无效
 		vf.Force = push
+		local deg = math.deg(yawRate)
+		if not anch and math.abs(mine) <= 0.02 and math.abs(gst) <= 0.02 and math.abs(deg) >= 15 then -- 谁都没在打方向, 车头却转得不慢 = 就是"自己掉头"现场
+			yawBadT = yawBadT + dt
+			if yawBadT > 0.6 and os.clock() - yawToastT > 8 then
+				yawToastT = os.clock()
+				toast(string.format("车自己在转 %+.0f°/s · 滑条=%.0f%% ← %s", deg, st * 100, math.abs(st) > 0.02 and "滑条没收回去" or "不是滑条给的转向(游戏物理在这辆车上)"))
+			end
+		else yawBadT = 0 end
 		dbgThr, dbgGst, dbgUp, dbgLat, dbgPush, dbgSpd = thr, gst, upY, lat, push.Magnitude, spd
 	end
 
@@ -764,7 +785,7 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 		local lv2 = flat(p.CFrame.LookVector) or Vector3.zAxis
 		local headAng = math.deg(math.acos(math.clamp((mv.Magnitude > 1e-3 and mv.Unit or lv2):Dot(lv2), -1, 1))) -- 车头与"运动方向"差多少度: 自己掉头时这里会一路涨
 		L[#L + 1] = string.format("驱动: 车头与运动方向差=%.0f° 角速度=%.1f/s (掉头就看这两个: 差角涨/角速度不为 0 = 车在自己转)", headAng, p.AssemblyAngularVelocity.Magnitude)
-		L[#L + 1] = string.format("滑条: %s · 现在 手指=%d 拖着=%s 圆点位移=%.0fpx (拖不了/自己掉头看这一行: 没「按住」=触摸没到滑条上)", dbgSteer ~= "" and dbgSteer or "(还没摸过)", held or 0, dragX ~= nil and "是" or "否", (knob and knob.Position.X.Offset) or 0)
+		L[#L + 1] = string.format("滑条: %s · 现在 手指=%d 拖着=%s 圆点位移=%.0fpx · 滑条转向值=%+.2f (0 = 没收到) · 车头实测 %+.0f°/s (拖不了/自己掉头看这一行)", dbgSteer ~= "" and dbgSteer or "(还没摸过)", held or 0, dragX ~= nil and "是" or "否", (knob and knob.Position.X.Offset) or 0, stMine, math.deg(yawRate))
 		L[#L + 1] = string.format("驱动: 面板加速=%s 减速=%s 定速=%s · 游戏座位油门=%.2f 方向=%.2f · 车姿态 up.Y=%.2f · 侧滑=%.1f/s 速度=%.1f · 实际推力=%.0f%s",
 			tostring(F.accel), tostring(F.decel), tostring(F.cruise), dbgThr, dbgGst, dbgUp, dbgLat, dbgSpd, dbgPush,
 			"")
