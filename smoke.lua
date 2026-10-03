@@ -62,7 +62,7 @@ local VERIFIED = {
 	ReplicatedStorage = words(""),
 	RunService = words("PreRender PreSimulation"),
 	ScreenGui = words("DisplayOrder IgnoreGuiInset ResetOnSpawn"),
-	Seat = words("Anchored AssemblyLinearVelocity AssemblyMass AssemblyRootPart CFrame GetConnectedParts Occupant Position Size"),
+	Seat = words("Anchored AssemblyAngularVelocity AssemblyLinearVelocity AssemblyMass AssemblyRootPart CFrame GetConnectedParts Occupant Position Size"), -- AssemblyAngularVelocity 是 BasePart 的官方属性 (create.roblox.com/docs/reference/engine/classes/BasePart), Seat 也继承它
 	SpotLight = words("Angle Brightness Color Enabled Face Range"),
 	Stats = words("GetTotalMemoryUsageMb"),
 	StringValue = words("Value"),
@@ -242,7 +242,12 @@ local function inst(cls, props)
 	if ISA[cls] then -- GuiObject 默认 Visible=true, 引擎行为; 不模拟的话断言会被 nil 坑
 		for _, x in ipairs(ISA[cls]) do
 			if x == "GuiObject" then self.props.Visible = true end
-			if x == "BasePart" then self.props.Color = Color3.fromRGB(163, 162, 165) end -- 真引擎里每个零件都有颜色 (默认 Medium stone grey)
+			if x == "BasePart" then -- 真引擎里这些属性永远有值 (Vector3/数字), 从不为 nil: 假引擎不补的话, 脚本里 p.AssemblyAngularVelocity.Magnitude 会炸在假引擎上而在真机没事, 反过来也藏 bug
+				self.props.Color = Color3.fromRGB(163, 162, 165) -- 真引擎里每个零件都有颜色 (默认 Medium stone grey)
+				if self.props.AssemblyAngularVelocity == nil then self.props.AssemblyAngularVelocity = Vector3.new(0, 0, 0) end
+				if self.props.AssemblyLinearVelocity == nil then self.props.AssemblyLinearVelocity = Vector3.new(0, 0, 0) end
+				if self.props.AssemblyMass == nil then self.props.AssemblyMass = 1 end
+			end
 		end
 	end
 	for k, v in pairs(props or {}) do self.props[k] = v end
@@ -1115,15 +1120,15 @@ ok(vfEnt.Force.Magnitude > 1000, "面板 ▲加速 踩着: 推力照旧 (" .. st
 local cf0 = seat.props.CFrame
 seat.props.CFrame = CFrame.fromBasis(Vector3.xAxis, Vector3.new(0, -1, 0), Vector3.new(0, 0, -1), seat.props.Position) -- 倒扣
 step(1 / 60, 5)
-ok(vfEnt.Force.Magnitude == 0, "车倒扣: 不给推力 (那种姿态下车头朝哪都说不清, 推了就是乱转)")
+ok(vfEnt.Force.Magnitude > 1000, "车倒扣也照推 (没有闸: 用户要求全撤)")
 seat.props.CFrame = cf0
 step(1 / 60, 5)
-ok(vfEnt.Force.Magnitude > 1000, "车正回来: 推力又给上")
+ok(vfEnt.Force.Magnitude > 1000, "车正回来: 照推")
 gasB.InputEnded:Fire(input("Touch"))
 seat.props.Throttle = 0
 step(1 / 60, 3)
 
-print("\n[6b6] 推力不限速, 但车失控 (侧翻/横滑/打转) 时不给力 (实测 acc=1000 把车顶翻后, 力还在按车头方向一脚一脚踹 = 方向乱)")
+print("\n[6b6] 推力没有任何闸/限速: 900 格/秒、横滑、打转都照推 (用户要求全撤)")
 local fwdA = seat.props.CFrame.LookVector; fwdA = Vector3.new(fwdA.X, 0, fwdA.Z).Unit
 local sideA = fwdA:Cross(Vector3.yAxis)
 gasB.InputBegan:Fire(input("Touch"))
@@ -1132,17 +1137,17 @@ step(1 / 60, 3)
 seat.props.AssemblyLinearVelocity = fwdA * 900 -- 不限速: 再快也照样给推力 (车翻/横滑/打转才收)
 step(1 / 60, 3)
 ok(vfEnt.Force.Magnitude > 1000, "不限速: 900 格/秒 照样推 (" .. string.format("%.0f", vfEnt.Force.Magnitude) .. ")")
-seat.props.AssemblyLinearVelocity = sideA * 60 -- 横着滑: 推它只会越滑越歪
+seat.props.AssemblyLinearVelocity = sideA * 60 -- 横着滑
 step(1 / 60, 3)
-ok(vfEnt.Force.Magnitude == 0, "横着滑不给推力 (侧滑 60 > max(20, 0.8×速度))")
+ok(vfEnt.Force.Magnitude > 1000, "横着滑也照推 (没有闸) (" .. string.format("%.0f", vfEnt.Force.Magnitude) .. ")")
 seat.props.AssemblyLinearVelocity = fwdA * 20
 seat.props.AssemblyAngularVelocity = Vector3.new(0, 7, 0) -- 自己在打转
 step(1 / 60, 3)
-ok(vfEnt.Force.Magnitude == 0 and seat.props.CFrame.UpVector.Y >= 0, "打转中不给推力 (等它稳下来)")
+ok(vfEnt.Force.Magnitude > 1000, "打转中也照推 (没有闸) (" .. string.format("%.0f", vfEnt.Force.Magnitude) .. ")")
 seat.props.AssemblyAngularVelocity = Vector3.zero
 seat.props.AssemblyLinearVelocity = Vector3.zero
 step(1 / 60, 5)
-ok(vfEnt.Force.Magnitude > 1000, "稳下来、速度归零: 推力又给上 (" .. string.format("%.0f", vfEnt.Force.Magnitude) .. ")")
+ok(vfEnt.Force.Magnitude > 1000, "速度归零: 照旧推 (" .. string.format("%.0f", vfEnt.Force.Magnitude) .. ")")
 gasB.InputEnded:Fire(input("Touch"))
 step(1 / 60, 3)
 
@@ -1389,6 +1394,7 @@ ok(dm and dm:find("PlayerGui 树", 1, true) == nil, "快照里不再带整个 Pl
 ok(dm and dm:find("CAr", 1, true) == nil and dm:find("=== CAR", 1, true) ~= nil, "快照里有车结构")
 ok(dm and dm:find("驱动: 面板加速", 1, true) ~= nil, "快照里有「驱动」一行 (谁在给力 / 车姿态 / 侧滑, 方向出问题时一眼看得出)")
 ok(dm and dm:find("驱动: 面板加速", 1, true) ~= nil, "快照里有「驱动」一行")
+ok(dm and dm:find("驱动: 车头与运动方向差", 1, true) ~= nil, "快照里有「车头与运动方向差 + 角速度」(自己掉头时这两项会露出来)")
 ok(CLIP ~= nil and CLIP:find("Selfblox 诊断", 1, true) ~= nil, "快照同时进了剪贴板")
 ok(type(_G.SB_DUMP) == "function", "也可以用 _G.SB_DUMP() 手动打")
 

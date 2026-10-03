@@ -14,7 +14,7 @@
 --            gethui / isfile / writefile 缺失时退回 CoreGui 并跳过存盘, 面板照样起得来
 --   保持 Lua 5.4 可解析子集(不用 +=/continue/字符串插值), 这样 smoke.lua 能离线跑: 可测试性 > 语法糖
 
-local VERSION = "26.10.3.12" -- 单一版本来源: 发布时改成当次 yy.m.d (Asia/Shanghai), 同一天发第二次补 .ci, 再打 v<VERSION> 标签
+local VERSION = "26.10.3.13" -- 单一版本来源: 发布时改成当次 yy.m.d (Asia/Shanghai), 同一天发第二次补 .ci, 再打 v<VERSION> 标签
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
@@ -338,7 +338,7 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 end
 
 do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配体; 没坐 = 准星"换车"锁定 / 自动绑最近的空座位) ═════════
-	S.turncap, S.turnmax, S.cargate, S.hornkey, S.carmaxstuds, S.carswap = opt("turncap", 1), opt("turnmax", 8), opt("cargate", true), opt("hornkey", "H"), opt("carmaxstuds", 150), opt("carswap", true) -- cargate: 车翻/横滑/打转时不给推力 (不限速, 只是失控时不继续加力); _G.SB = { cargate = false } 可关 -- turnmax: 有效转速上限 (rad/s). 转向填 50 这种大数字时截到这里, 不然原地打方向就像陀螺 -- 只读配置 (没有面板控件) -- maxstuds: 装配体外径超过这个数就不当成车(是地图/大容器). 量装配体不量 Model 容器: 车直接挂在超大容器里也认得出来
+	S.turncap, S.turnmax, S.hornkey, S.carmaxstuds, S.carswap = opt("turncap", 1), opt("turnmax", 8), opt("hornkey", "H"), opt("carmaxstuds", 150), opt("carswap", true) -- turnmax: 有效转速上限 (rad/s). 转向填 50 这种大数字时截到这里, 不然原地打方向就像陀螺 -- 只读配置 (没有面板控件) -- maxstuds: 装配体外径超过这个数就不当成车(是地图/大容器). 量装配体不量 Model 容器: 车直接挂在超大容器里也认得出来
 	local picked, pickSeat, pickPath, autoPick, curSeat, curMax, att, vf, lv, clipCar, lastCar, lastAnch
 	local target, statT, autoT = 0, 0, 0
 	local lamps, lampSaved, col = {}, setmetatable({}, { __mode = "k" }), setmetatable({}, { __mode = "k" })
@@ -350,7 +350,7 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 	local stCmd, stAct, stWin, stIdle, stLook = 0, 0, 0, 0, nil -- 转向自检: 命令转了多少 vs 车头真的转了多少
 	local stRate, stCmdRate, stStuck = nil, nil, false
 	local upY = 1 -- 车姿态 (UpVector.Y): 抓地与推力都要看它
-	local dbgThr, dbgGst, dbgUp, dbgLat, dbgPush, dbgSpd, dbgWhy = 0, 0, 1, 0, 0, 0, "" -- 诊断打包: 最近一帧的驾驶细节
+	local dbgThr, dbgGst, dbgUp, dbgLat, dbgPush, dbgSpd = 0, 0, 1, 0, 0, 0 -- 诊断打包: 最近一帧的驾驶细节
 	local function yawStep(a, b) local d = math.acos(math.clamp(a:Dot(b), -1, 1)); return (a:Cross(b).Y >= 0) and d or -d end -- a → b 绕 Y 转过的角 (带符号)
 	local function steerRelease() -- 松开滑条 / 下车 / 切飞车: 把角速度收回, 车不会一直自转
 		if not stAvSet then return end
@@ -731,18 +731,10 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 		elseif F.cruise then push = fwd * math.clamp((target - hv:Dot(fwd)) * mass * 2, -f, f) end
 		if not F.cruise then target = hv:Dot(fwd) end -- 定速一开就锁当前车速
 		upY = p.CFrame.UpVector.Y -- 车姿态: 1 = 正着, 0 = 立起来, 负数 = 倒扣
-		-- 失控闸 (没有限速): 车已经翻了/横着滑/自己在打转时, 我们的力只会越推越乱 (实测 acc=1000 时车被顶翻,
-		-- 翻着还按"车头方向"一脚一脚地踹 → 看着就是"方向乱"). 这不是限速, 车稳下来推力立刻回来
-		local why = ""
-		if push.Magnitude > 0 and not anch and S.cargate then
-			local spin = p.AssemblyAngularVelocity.Magnitude
-			if upY < 0.5 then push, why = Vector3.zero, "车不正(侧翻/倒扣)"
-			elseif spin > 6 then push, why = Vector3.zero, "在打转"
-			elseif spd > 10 and lat > math.max(20, spd * 0.8) then push, why = Vector3.zero, "横着滑 (侧滑 " .. math.floor(lat) .. ")" end
-		end
+		-- 用户要求: 不加任何闸/限速 —— 按了加速就一路推, 车翻了/横滑也照推 (限速和失控闸都撤了)
 		if anch then push = Vector3.zero end -- 锚定: 力无效
 		vf.Force = push
-		dbgThr, dbgGst, dbgUp, dbgLat, dbgPush, dbgSpd, dbgWhy = thr, gst, upY, lat, push.Magnitude, spd, why
+		dbgThr, dbgGst, dbgUp, dbgLat, dbgPush, dbgSpd = thr, gst, upY, lat, push.Magnitude, spd
 	end
 
 	local function carLines()
@@ -759,9 +751,13 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 		if s and s:IsA("VehicleSeat") then
 			L[#L + 1] = string.format("座位: MaxSpeed=%s Torque=%.0f Throttle=%.2f Steer=%.2f 乘员=%s", tostring(s.MaxSpeed), nn(s.Torque), nn(s.Throttle), nn(s.Steer), s.Occupant and (s.Occupant.Parent and s.Occupant.Parent.Name or "?") or "无")
 		end
+		local mv = Vector3.new(p.AssemblyLinearVelocity.X, 0, p.AssemblyLinearVelocity.Z)
+		local lv2 = flat(p.CFrame.LookVector) or Vector3.zAxis
+		local headAng = math.deg(math.acos(math.clamp((mv.Magnitude > 1e-3 and mv.Unit or lv2):Dot(lv2), -1, 1))) -- 车头与"运动方向"差多少度: 自己掉头时这里会一路涨
+		L[#L + 1] = string.format("驱动: 车头与运动方向差=%.0f° 角速度=%.1f/s (掉头就看这两个: 差角涨/角速度不为 0 = 车在自己转)", headAng, p.AssemblyAngularVelocity.Magnitude)
 		L[#L + 1] = string.format("驱动: 面板加速=%s 减速=%s 定速=%s · 游戏座位油门=%.2f 方向=%.2f · 车姿态 up.Y=%.2f · 侧滑=%.1f/s 速度=%.1f · 实际推力=%.0f%s",
 			tostring(F.accel), tostring(F.decel), tostring(F.cruise), dbgThr, dbgGst, dbgUp, dbgLat, dbgSpd, dbgPush,
-			dbgPush <= 0.5 and dbgWhy ~= "" and (" ← 不给推力: " .. dbgWhy) or "")
+			"")
 		if stCmdRate then
 			L[#L + 1] = string.format("转向自检: 滑条=%.2f 命令=%.0f°/s 实测=%.0f°/s %s", steer(), math.deg(stCmdRate), math.deg(stRate or 0),
 				stStuck and "← 写了车没转: 这辆车不算你这边模拟 (服务器或别的玩家在管), 坐进去再开; 不然就是游戏每帧自己写回车的朝向" or "(实测里含游戏自己转的那部分, 只做粗略对照)")
