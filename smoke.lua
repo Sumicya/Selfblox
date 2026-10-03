@@ -1065,7 +1065,7 @@ kd.DragEnd:Fire()
 click(alwaysBtn)
 ok(handle and handle.Visible == false, "关掉 → 回到「折叠才能拖」")
 
-print("\n[6b4] 抓地: 速度方向往车头贴 (不拖滑条也在生效); 速度几乎垂直于车头时不动它 (以前会来回翻方向, 加速时看着像抽风)")
+print("\n[6b4] 抓地: 只在真侧滑时把车头掰回来; 直着开一个字都不写 (加速时方向乱不该是它)")
 local gripBox
 for _, d in ipairs(all()) do
 	if d:IsA("Frame") then
@@ -1079,20 +1079,48 @@ local side = fwd0:Cross(Vector3.yAxis) -- 车头 × 上 = 车右
 seat.props.AssemblyLinearVelocity = fwd0 * 12 + side * 16 -- 斜着滑: 朝前跑, 但带着很大的侧向
 step(1 / 60, 60)
 local v1 = seat.props.AssemblyLinearVelocity
-ok(v1.Unit:Dot(fwd0) > 0.99, "抓地 5 (默认): 一秒后速度基本贴回车头 (与车头余弦 " .. string.format("%.3f", v1.Unit:Dot(fwd0)) .. ")")
+ok(v1.Unit:Dot(fwd0) > 0.95, "抓地 5 (默认): 一秒后速度基本贴回车头 (侧滑小了就撒手; 与车头余弦 " .. string.format("%.3f", v1.Unit:Dot(fwd0)) .. ")")
 gripBox.Text = "0"; gripBox.FocusLost:Fire()
 seat.props.AssemblyLinearVelocity = fwd0 * 12 + side * 16
 step(1 / 60, 30)
 ok(seat.props.AssemblyLinearVelocity.Unit:Dot(fwd0) < 0.8, "抓地 0: 侧滑保持, 不自己贴回去 (与车头余弦 " .. string.format("%.3f", seat.props.AssemblyLinearVelocity.Unit:Dot(fwd0)) .. ")")
 gripBox.Text = "5"; gripBox.FocusLost:Fire()
-seat.props.AssemblyLinearVelocity = side * 20 -- 速度几乎垂直于车头: 前/后方向会抖, 抓地不该插手
-step(1 / 60, 5)
+-- 直着开 (侧滑=0) 时抓地一个字都不写: "不拉转向直接加速方向乱"最怕的就是它在这时乱插手
+seat.props.AssemblyLinearVelocity = fwd0 * 20
+local before = seat.props.AssemblyLinearVelocity
+step(1 / 60, 30)
+ok((seat.props.AssemblyLinearVelocity - before).Magnitude < 1e-6, "直着开 (侧滑=0): 抓地不碰速度 " .. tostring(before) .. " → " .. tostring(seat.props.AssemblyLinearVelocity))
+seat.props.AssemblyLinearVelocity = side * 20 -- 垂直侧滑: 往车头掰, 而且方向固定 (不会一帧一个方向地乱甩)
+step(1 / 60, 30)
 local v2 = seat.props.AssemblyLinearVelocity
-ok(v2.Magnitude > 19 and v2.Unit:Dot(side) > 0.99, "速度几乎垂直于车头: 不动它 (第一帧猛拽 90° 的抽风就是这样来的) " .. tostring(v2))
+ok(v2.Unit:Dot(fwd0) > 0.5 and v2.Unit:Dot(side) < 0.9, "垂直侧滑: 往车头掰, 不是乱甩 " .. tostring(v2))
 seat.props.AssemblyLinearVelocity = side * 1 -- 低速横滑: 也不插手 (不会被瞬停)
 step(1 / 60, 5)
 ok(seat.props.AssemblyLinearVelocity.Magnitude > 0.5, "低速横滑: 速度没被清零/没有 NaN " .. tostring(seat.props.AssemblyLinearVelocity))
 seat.props.AssemblyLinearVelocity = Vector3.zero
+step(1 / 60, 3)
+
+print("\n[6b5] 推力: 只有面板的 ▲加速 才推 (游戏自己的油门由游戏管, 叠两份力 = 加速时方向乱); 倒扣不给力")
+local vfEnt
+for _, d in ipairs(seat:FindFirstChild("SB_SIBS"):GetDescendants()) do if d.ClassName == "VectorForce" then vfEnt = d end end
+ok(vfEnt ~= nil, "找得到那只 VectorForce")
+seat.props.Throttle, seat.props.Steer = 1, 0 -- 游戏自己的油门踩满
+step(1 / 60, 5)
+ok(vfEnt.Force.Magnitude == 0, "游戏油门踩着: 我们不再叠一份推力 (原来两份力打架) " .. tostring(vfEnt.Force))
+local gasB
+for _, b in ipairs(buttons()) do if b.Text == "▲ 加速" then gasB = b end end
+gasB.InputBegan:Fire(input("Touch"))
+step(1 / 60, 5)
+ok(vfEnt.Force.Magnitude > 1000, "面板 ▲加速 踩着: 推力照旧 (" .. string.format("%.0f", vfEnt.Force.Magnitude) .. ")")
+local cf0 = seat.props.CFrame
+seat.props.CFrame = CFrame.fromBasis(Vector3.xAxis, Vector3.new(0, -1, 0), Vector3.new(0, 0, -1), seat.props.Position) -- 倒扣
+step(1 / 60, 5)
+ok(vfEnt.Force.Magnitude == 0, "车倒扣: 不给推力 (那种姿态下车头朝哪都说不清, 推了就是乱转)")
+seat.props.CFrame = cf0
+step(1 / 60, 5)
+ok(vfEnt.Force.Magnitude > 1000, "车正回来: 推力又给上")
+gasB.InputEnded:Fire(input("Touch"))
+seat.props.Throttle = 0
 step(1 / 60, 3)
 
 print("\n[6b3] 转向走角速度: 拖滑条 = 真方向盘, 松手收回; 车不归你这边模拟时状态行直说没生效")
@@ -1323,6 +1351,7 @@ ok(dm and dm:find("MobilePedals", 1, true) ~= nil, "快照里有踏板树")
 ok(dm and dm:find("sibs ", 1, true) ~= nil, "快照里有各模块状态")
 ok(dm and dm:find("PlayerGui 树", 1, true) == nil, "快照里不再带整个 PlayerGui 树 (原来是给「选按钮」准备的)")
 ok(dm and dm:find("CAr", 1, true) == nil and dm:find("=== CAR", 1, true) ~= nil, "快照里有车结构")
+ok(dm and dm:find("驱动: 面板加速", 1, true) ~= nil, "快照里有「驱动」一行 (谁在给力 / 车姿态 / 侧滑, 方向出问题时一眼看得出)")
 ok(CLIP ~= nil and CLIP:find("Selfblox 诊断", 1, true) ~= nil, "快照同时进了剪贴板")
 ok(type(_G.SB_DUMP) == "function", "也可以用 _G.SB_DUMP() 手动打")
 

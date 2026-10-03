@@ -14,7 +14,7 @@
 --            gethui / isfile / writefile 缺失时退回 CoreGui 并跳过存盘, 面板照样起得来
 --   保持 Lua 5.4 可解析子集(不用 +=/continue/字符串插值), 这样 smoke.lua 能离线跑: 可测试性 > 语法糖
 
-local VERSION = "26.10.3.9" -- 单一版本来源: 发布时改成当次 yy.m.d (Asia/Shanghai), 同一天发第二次补 .ci, 再打 v<VERSION> 标签
+local VERSION = "26.10.3.10" -- 单一版本来源: 发布时改成当次 yy.m.d (Asia/Shanghai), 同一天发第二次补 .ci, 再打 v<VERSION> 标签
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
@@ -349,6 +349,8 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 	local stCar, stAvSet = nil, false -- 这套角速度转向是我们写上去的: 松手/下车要收回来, 不然车会一直自转
 	local stCmd, stAct, stWin, stIdle, stLook = 0, 0, 0, 0, nil -- 转向自检: 命令转了多少 vs 车头真的转了多少
 	local stRate, stCmdRate, stStuck = nil, nil, false
+	local upY = 1 -- 车姿态 (UpVector.Y): 抓地与推力都要看它
+	local dbgThr, dbgGst, dbgUp, dbgLat, dbgPush, dbgSpd = 0, 0, 1, 0, 0, 0 -- 诊断打包: 最近一帧的驾驶细节
 	local function yawStep(a, b) local d = math.acos(math.clamp(a:Dot(b), -1, 1)); return (a:Cross(b).Y >= 0) and d or -d end -- a → b 绕 Y 转过的角 (带符号)
 	local function steerRelease() -- 松开滑条 / 下车 / 切飞车: 把角速度收回, 车不会一直自转
 		if not stAvSet then return end
@@ -696,27 +698,29 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 			stLook, stWin, stCmd, stAct, stIdle = nil, 0, 0, 0, stIdle + dt
 			if stIdle > 2 then stRate, stCmdRate, stStuck = nil, nil, false end -- 松手两秒后不再挂着一句"转向"
 		end
-		-- 抓地力: 速度方向往车头贴 (轮胎抓地). 一直生效, 不再只在"我们拖滑条打方向"时管 —— 用游戏自己的方向盘时它照样把侧滑掰直
-		-- 三个保险 (不转向直着加速时最怕的"抽风"就是从这来的): ①速度几乎垂直于车头时不管 (那时前/后方向会一帧一帧地抖, 一抖就把车往两边甩)
-		-- ②单帧最多贴 0.35 (掉帧的 0.2s 一帧不会把车头猛拽过去) ③方向向量长度太小就不写 (避免除零/瞬停)
+		-- 抓地力: 把侧滑掰回车头. 只在"真的在侧滑"时动手 —— 直着开/直着加速时这一行一个字都不写,
+		-- 所以"不拉转向直接加速方向乱"不可能再是它; 侧翻/倒扣时也不动手 (那种姿态下车头朝哪都说不清)
 		local along = hv:Dot(fwd)
-		if spd > 2 and math.abs(along) > 2 and not anch then
-			local dir = along < 0 and -fwd or fwd
+		local lat = math.sqrt(math.max(spd * spd - along * along, 0)) -- 侧滑量: 垂直于车头的那部分速度
+		if S.grip > 0 and spd > 6 and lat > 3 and upY > 0.3 and not anch then
+			local dir = along < 0 and -fwd or fwd -- along 正好 0 时固定取 +fwd: 不来回翻
 			local u = hv.Unit
 			if u:Dot(dir) < 0.9999 then
-				local t = u:Lerp(dir, math.min(dt * S.grip, 0.35))
+				local t = u:Lerp(dir, math.min(dt * S.grip, 0.35)) -- 单帧最多贴 0.35: 掉帧也不会把车猛拽一下
 				if t.Magnitude > 1e-3 then p.AssemblyLinearVelocity = t.Unit * spd + Vector3.yAxis * v.Y end
 			end
 		end
 		local f, push = mass * S.acc, Vector3.zero
-		if F.brake then -- 急刹: 刹到停, 再踩油门自动解除
+		if F.brake then -- 急刹: 刹到停, 再踩油门自动解除 (游戏自己的油门也算踩了油门)
 			if acc then W.brake(false) else brakeNow(p, v) end
 		elseif acc and dec then brakeNow(p, v)
-		elseif acc then push = fwd * f
-		elseif dec then push = -fwd * (f * (hv:Dot(fwd) > 3 and 2 or 1)) -- 前进中双倍刹, 停了就倒车
+		elseif F.accel then push = fwd * f -- 只有面板上的 ▲加速 才推: 游戏自己的油门由游戏自己管, 我们再叠一份力就是两份力打架 (加速时方向乱、被顶得打转就是这个)
+		elseif F.decel then push = -fwd * (f * (hv:Dot(fwd) > 3 and 2 or 1)) -- 前进中双倍刹, 停了就倒车
 		elseif F.cruise then push = fwd * math.clamp((target - hv:Dot(fwd)) * mass * 2, -f, f) end
 		if not F.cruise then target = hv:Dot(fwd) end -- 定速一开就锁当前车速
-		if anch then vf.Force = Vector3.zero else vf.Force = push end -- 锚定: 力无效, 清零等着
+		upY = p.CFrame.UpVector.Y -- 车姿态: 1 = 正着, 0 = 立起来, 负数 = 倒扣
+		if anch or upY < 0.3 then vf.Force = Vector3.zero else vf.Force = push end -- 锚定/侧翻倒扣: 不给推力 (倒扣时车头朝哪都说不清, 推了就是乱转)
+		dbgThr, dbgGst, dbgUp, dbgLat, dbgPush, dbgSpd = thr, gst, upY, lat, vf.Force.Magnitude, spd
 	end
 
 	local function carLines()
@@ -733,6 +737,9 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 		if s and s:IsA("VehicleSeat") then
 			L[#L + 1] = string.format("座位: MaxSpeed=%s Torque=%.0f Throttle=%.2f Steer=%.2f 乘员=%s", tostring(s.MaxSpeed), nn(s.Torque), nn(s.Throttle), nn(s.Steer), s.Occupant and (s.Occupant.Parent and s.Occupant.Parent.Name or "?") or "无")
 		end
+		L[#L + 1] = string.format("驱动: 面板加速=%s 减速=%s 定速=%s · 游戏座位油门=%.2f 方向=%.2f · 车姿态 up.Y=%.2f%s · 侧滑=%.1f/s 速度=%.1f · 实际推力=%.0f",
+			tostring(F.accel), tostring(F.decel), tostring(F.cruise), dbgThr, dbgGst, dbgUp,
+			dbgUp < 0.3 and " (倒扣: 不给推力)" or "", dbgLat, dbgSpd, dbgPush)
 		if stCmdRate then
 			L[#L + 1] = string.format("转向自检: 滑条=%.2f 命令=%.0f°/s 实测=%.0f°/s %s", steer(), math.deg(stCmdRate), math.deg(stRate or 0),
 				stStuck and "← 写了车没转: 这辆车不算你这边模拟 (服务器或别的玩家在管), 坐进去再开; 不然就是游戏每帧自己写回车的朝向" or "(实测里含游戏自己转的那部分, 只做粗略对照)")
