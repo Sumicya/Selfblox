@@ -1061,6 +1061,22 @@ kd.DragEnd:Fire()
 step(1 / 60, 3)
 ok(math.abs(seat.props.AssemblyAngularVelocity.Y) < 1e-6, "松手 → 角速度收回, 车不会一直自转")
 local dumpSteer
+local turnBox
+for _, d in ipairs(all()) do if d:IsA("TextBox") and d.Text == "2.2" then turnBox = d end end
+ok(turnBox ~= nil, "找得到「转向」数值框")
+turnBox.Text = "50"; turnBox.FocusLost:Fire()
+kd.DragContinue:Fire(Vector2.new(999, 0))
+step(1 / 60, 3)
+ok(math.abs(seat.props.AssemblyAngularVelocity.Y) <= 8.001 and math.abs(seat.props.AssemblyAngularVelocity.Y) > 7.9,
+	"转向填 50 (陀螺值) 时被 turnmax 截到 ≈8 rad/s (458°/s) " .. string.format("%.2f", seat.props.AssemblyAngularVelocity.Y))
+local spinText
+step(1 / 60, 60)
+for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" and d.Text:find("转向 ", 1, true) then spinText = d.Text end end
+ok(spinText ~= nil and tonumber(spinText:match("转向 (%-?%d+)°/s")) ~= nil and math.abs(tonumber(spinText:match("转向 (%-?%d+)°/s"))) <= 460,
+	"状态行报的转速也在上限内 (" .. tostring(spinText) .. ")")
+kd.DragEnd:Fire()
+turnBox.Text = "2.2"; turnBox.FocusLost:Fire()
+step(1 / 60, 3)
 local function noSimAll(v) -- 模拟"服务器接管这辆车": 整个装配体都不认我们写的角速度 (只挡座位不够 —— 脚本写的是装配体根)
 	for _, d in ipairs(INSTANCES) do if d.props.AssemblyRootPart == seat.props.AssemblyRootPart then d.props.__noSim = v end end
 end

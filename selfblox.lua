@@ -14,7 +14,7 @@
 --            gethui / isfile / writefile 缺失时退回 CoreGui 并跳过存盘, 面板照样起得来
 --   保持 Lua 5.4 可解析子集(不用 +=/continue/字符串插值), 这样 smoke.lua 能离线跑: 可测试性 > 语法糖
 
-local VERSION = "26.10.3.5" -- 单一版本来源: 发布时改成当次 yy.m.d (Asia/Shanghai), 同一天发第二次补 .ci, 再打 v<VERSION> 标签
+local VERSION = "26.10.3.6" -- 单一版本来源: 发布时改成当次 yy.m.d (Asia/Shanghai), 同一天发第二次补 .ci, 再打 v<VERSION> 标签
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
@@ -338,7 +338,7 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 end
 
 do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配体; 没坐 = 准星"换车"锁定 / 自动绑最近的空座位) ═════════
-	S.turncap, S.hornkey, S.carmaxstuds, S.carswap = opt("turncap", 1), opt("hornkey", "H"), opt("carmaxstuds", 150), opt("carswap", true) -- 只读配置 (没有面板控件) -- maxstuds: 装配体外径超过这个数就不当成车(是地图/大容器). 量装配体不量 Model 容器: 车直接挂在超大容器里也认得出来
+	S.turncap, S.turnmax, S.hornkey, S.carmaxstuds, S.carswap = opt("turncap", 1), opt("turnmax", 8), opt("hornkey", "H"), opt("carmaxstuds", 150), opt("carswap", true) -- turnmax: 有效转速上限 (rad/s). 转向填 50 这种大数字时截到这里, 不然原地打方向就像陀螺 -- 只读配置 (没有面板控件) -- maxstuds: 装配体外径超过这个数就不当成车(是地图/大容器). 量装配体不量 Model 容器: 车直接挂在超大容器里也认得出来
 	local picked, pickSeat, pickPath, autoPick, curSeat, curMax, att, vf, lv, clipCar, lastCar, lastAnch
 	local target, statT, autoT = 0, 0, 0
 	local lamps, lampSaved, col = {}, setmetatable({}, { __mode = "k" }), setmetatable({}, { __mode = "k" })
@@ -669,7 +669,7 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 		-- 转向: 游戏自己的 Steer 那部分让它自己转, 我们只转滑条多出来的部分, 不重复
 		local mine = st - gst
 		if math.abs(mine) > 0.02 then -- 停着也能转(原地打方向), 不再等车动起来
-			local rate = -mine * S.turn * math.clamp(spd / 25, 0.2, S.turncap) -- rad/s (turncap = 转向速率随速度放大的上限)
+			local rate = math.clamp(-mine * S.turn * math.clamp(spd / 25, 0.2, S.turncap), -S.turnmax, S.turnmax) -- rad/s (turncap = 随速度放大的上限; turnmax = 硬上限: 2.2 ≈ 126°/s, 8 ≈ 458°/s, 再大就是陀螺)
 			if anch then
 				p.CFrame = CFrame.fromAxisAngle(Vector3.yAxis, rate * dt) * p.CFrame.Rotation + p.Position -- 锚定/游戏锁着的车: 引擎不让推, 只能本地硬转 (解锁后自动改走下面角速度那条)
 			else
