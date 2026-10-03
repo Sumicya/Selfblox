@@ -14,7 +14,7 @@
 --            gethui / isfile / writefile 缺失时退回 CoreGui 并跳过存盘, 面板照样起得来
 --   保持 Lua 5.4 可解析子集(不用 +=/continue/字符串插值), 这样 smoke.lua 能离线跑: 可测试性 > 语法糖
 
-local VERSION = "26.10.3.4" -- 单一版本来源: 发布时改成当次 yy.m.d (Asia/Shanghai), 同一天发第二次补 .ci, 再打 v<VERSION> 标签
+local VERSION = "26.10.3.5" -- 单一版本来源: 发布时改成当次 yy.m.d (Asia/Shanghai), 同一天发第二次补 .ci, 再打 v<VERSION> 标签
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
@@ -346,6 +346,21 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 	rp.FilterType = Enum.RaycastFilterType.Exclude
 	local track, knob, handle, kd, dragX -- 方向盘控件 (init 里建)
 	local live = false
+	local stCar, stAvSet = nil, false -- 这套角速度转向是我们写上去的: 松手/下车要收回来, 不然车会一直自转
+	local stCmd, stAct, stWin, stIdle, stLook = 0, 0, 0, 0, nil -- 转向自检: 命令转了多少 vs 车头真的转了多少
+	local stRate, stCmdRate, stStuck = nil, nil, false
+	local function yawStep(a, b) local d = math.acos(math.clamp(a:Dot(b), -1, 1)); return (a:Cross(b).Y >= 0) and d or -d end -- a → b 绕 Y 转过的角 (带符号)
+	local function steerRelease() -- 松开滑条 / 下车 / 切飞车: 把角速度收回, 车不会一直自转
+		if not stAvSet then return end
+		stAvSet = false
+		local c = stCar
+		if c and c.Parent then local av = c.AssemblyAngularVelocity; c.AssemblyAngularVelocity = Vector3.new(av.X, 0, av.Z) end
+	end
+	local function steerText() -- 状态行里那半句
+		if not stCmdRate then return "" end
+		if stStuck then return " · 转向没生效(车不由你这边模拟, 坐进去再试)" end
+		return string.format(" · 转向 %.0f°/s", math.deg(stRate or 0))
+	end
 	local function seat() local h = hum(); return h and h.SeatPart end
 	local function seatIn(m) return m:FindFirstChildWhichIsA("VehicleSeat", true) or m:FindFirstChildWhichIsA("Seat", true) end -- 官方继承链: VehicleSeat 和 Seat 互不相干 (都挂在 BasePart 下), 只查 "Seat" 会把带 VehicleSeat 的车当成"没座位"
 	local function findByPath(path) -- 锁的那件被游戏换掉后按路径捞回来 (只在 workspace 底下找)
@@ -624,7 +639,7 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 			end
 		end
 		track.Visible = p ~= nil
-		if not p then detach(); if clipCar then reclip() end; return end
+		if not p then steerRelease(); detach(); if clipCar then reclip() end; return end
 		attach(p) -- 锚定的车照样绑: 早先的实现一锚定就直接 return, 所以"要动一会(等游戏解锁)才能绑上"
 		local anch = p.Anchored -- 锚定 = 引擎不让推, 只能等游戏自己解锁; 滑条转向走 CFrame 照样有效
 		if anch ~= lastAnch then
@@ -639,7 +654,7 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 		local gst, thr, st = 0, 0, steer()
 		if sp and sp:IsA("VehicleSeat") then gst, thr, st = sp.Steer, sp.Throttle, math.clamp(st + sp.Steer, -1, 1) end -- 游戏自带的手机油门/方向盘也吃
 		local acc, dec = F.accel or thr > 0, F.decel or thr < 0
-		if os.clock() - statT > 0.2 then statT = os.clock(); say("car_status", (m and m.Name or p.Name) .. " · " .. math.floor(spd + 0.5) .. (s and "" or " · 准星锁定") .. (anch and " · 锚定(等游戏解锁)" or "") .. (F.carclip and #clipList > 0 and (" · 穿墙(车) " .. clipText()) or "")) end
+		if os.clock() - statT > 0.2 then statT = os.clock(); say("car_status", (m and m.Name or p.Name) .. " · " .. math.floor(spd + 0.5) .. (s and "" or " · 准星锁定") .. (anch and " · 锚定(等游戏解锁)" or "") .. (F.carclip and #clipList > 0 and (" · 穿墙(车) " .. clipText()) or "") .. steerText()) end
 		if F.carclip then noclip(p) elseif clipCar then reclip() end
 		if F.cfly then -- 飞车: 摇杆(前后左右) + 面板按钮都吃; 松手悬停
 			if not lv then lv = mk("LinearVelocity", { Attachment0 = att, MaxForce = math.huge, VectorVelocity = Vector3.zero, RelativeTo = Enum.ActuatorRelativeTo.World }, att) end
@@ -648,16 +663,36 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 			if dir.Magnitude > 1 then dir = dir.Unit end
 			lv.VectorVelocity = anch and Vector3.zero or (dir * S.carfly + Vector3.yAxis * (S.carfly * ((F.cup and 1 or 0) - (F.cdown and 1 or 0))))
 			vf.Force = Vector3.zero
+			steerRelease() -- 飞车模式不吃滑条转向: 别把角速度留着让车自转
 			return
 		elseif lv then lv:Destroy(); lv = nil end
 		-- 转向: 游戏自己的 Steer 那部分让它自己转, 我们只转滑条多出来的部分, 不重复
 		local mine = st - gst
 		if math.abs(mine) > 0.02 then -- 停着也能转(原地打方向), 不再等车动起来
-			p.CFrame = CFrame.fromAxisAngle(Vector3.yAxis, -mine * S.turn * math.clamp(spd / 25, 0.2, S.turncap) * dt) * p.CFrame.Rotation + p.Position -- turncap = 转向速率随速度放大的上限
+			local rate = -mine * S.turn * math.clamp(spd / 25, 0.2, S.turncap) -- rad/s (turncap = 转向速率随速度放大的上限)
+			if anch then
+				p.CFrame = CFrame.fromAxisAngle(Vector3.yAxis, rate * dt) * p.CFrame.Rotation + p.Position -- 锚定/游戏锁着的车: 引擎不让推, 只能本地硬转 (解锁后自动改走下面角速度那条)
+			else
+				local av = p.AssemblyAngularVelocity
+				p.AssemblyAngularVelocity = Vector3.new(av.X, rate, av.Z) -- 自己这边模拟的车: 直接给绕 Y 的角速度 = 真的方向盘 (轮胎抓地、不穿墙, 也比每帧传送更能顶住引擎回弹)
+				stCar, stAvSet = p, true
+			end
 			if spd > 1 then
 				local dir = hv:Dot(fwd) < 0 and -fwd or fwd
 				p.AssemblyLinearVelocity = hv.Unit:Lerp(dir, math.min(dt * S.grip, 1)).Unit * spd + Vector3.yAxis * v.Y
 			end
+			-- 自检: 命令了多少 vs 车头真的转了多少 (服务器接管的车, 写了也白写 → 状态行/快照里说清)
+			stCmd, stWin, stIdle = stCmd + rate * dt, stWin + dt, 0
+			if stLook then stAct = stAct + yawStep(stLook, p.CFrame.LookVector) end
+			stLook = p.CFrame.LookVector
+			if stWin >= 0.5 then
+				stRate, stCmdRate, stWin, stCmd, stAct = stAct / stWin, stCmd / stWin, 0, 0, 0
+				stStuck = math.abs(stCmdRate) > 0.4 and math.abs(stRate) < math.abs(stCmdRate) * 0.25 -- 命令不小, 车头却几乎没动
+			end
+		else
+			steerRelease()
+			stLook, stWin, stCmd, stAct, stIdle = nil, 0, 0, 0, stIdle + dt
+			if stIdle > 2 then stRate, stCmdRate, stStuck = nil, nil, false end -- 松手两秒后不再挂着一句"转向"
 		end
 		local f, push = mass * S.acc, Vector3.zero
 		if F.brake then -- 急刹: 刹到停, 再踩油门自动解除
@@ -683,6 +718,10 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 			string.format("根部件 质量=%.0f 锚定=%s 速度=%.1f 尺寸=(%.0f,%.0f,%.0f)", p.AssemblyMass, tostring(p.Anchored), p.AssemblyLinearVelocity.Magnitude, p.Size.X, p.Size.Y, p.Size.Z) }
 		if s and s:IsA("VehicleSeat") then
 			L[#L + 1] = string.format("座位: MaxSpeed=%s Torque=%.0f Throttle=%.2f Steer=%.2f 乘员=%s", tostring(s.MaxSpeed), nn(s.Torque), nn(s.Throttle), nn(s.Steer), s.Occupant and (s.Occupant.Parent and s.Occupant.Parent.Name or "?") or "无")
+		end
+		if stCmdRate then
+			L[#L + 1] = string.format("转向自检: 滑条=%.2f 命令=%.0f°/s 实测=%.0f°/s %s", steer(), math.deg(stCmdRate), math.deg(stRate or 0),
+				stStuck and "← 写了车没转: 这辆车不算你这边模拟 (服务器或别的玩家在管), 坐进去再开; 不然就是游戏每帧自己写回车的朝向" or "(实测里含游戏自己转的那部分, 只做粗略对照)")
 		end
 		if clipCar then
 			local kept, off, back = clipInfo()

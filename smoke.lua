@@ -525,6 +525,24 @@ _G.__SVC.HttpService.props.JSONDecode = function(_, s) return jsonDecode(s) end
 -- ───────── 断言 + 步进 ─────────
 local FAILS = 0
 local function ok(cond, msg) if cond then print("  ✓ " .. msg) else FAILS = FAILS + 1; print("  ✗ " .. msg) end end
+local function physics(dt) -- 假引擎的角速度积分: 真引擎里 AssemblyAngularVelocity 让整个装配体绕 Y 转, 这里至少把 CFrame 转起来 (转向断言全靠它). __noSim = 模拟"服务器接管这辆车": 我们写什么引擎都不认
+	local spinning = {}
+	for _, d in ipairs(INSTANCES) do
+		local av = d.props.AssemblyAngularVelocity
+		if not d.destroyed and rawget(d, "parent") and d.props.CFrame and av and not d.props.Anchored and not d.props.__noSim and av.Magnitude > 1e-6 then spinning[#spinning + 1] = d end
+	end
+	for _, d in ipairs(spinning) do
+		local av, root = d.props.AssemblyAngularVelocity, d.props.AssemblyRootPart
+		local turn = CFrame.fromAxisAngle(Vector3.new(0, 1, 0), av.Y * dt)
+		for _, e in ipairs(INSTANCES) do
+			if not e.destroyed and rawget(e, "parent") and e.props.CFrame and (e == d or (root ~= nil and e.props.AssemblyRootPart == root)) then
+				e.props.CFrame = turn * e.props.CFrame.Rotation + e.props.Position
+				e.props.Position = e.props.CFrame.Position -- 真引擎里 Position 就是 CFrame 的位置, 这里得跟着同步
+			end
+		end
+	end
+end
+
 local function step(dt, n)
 	for _ = 1, (n or 1) do
 		NOW = NOW + dt
@@ -538,6 +556,7 @@ local function step(dt, n)
 			end
 		end
 		_G.__SVC.RunService.props.PreSimulation:Fire(dt)
+		physics(dt) -- 物理在脚本 tick 之后跑 (真引擎的顺序)
 		_G.__SVC.RunService.props.PreRender:Fire(dt)
 		if _G.__SVC.UserInputService.props.JumpRequest then _G.__SVC.UserInputService.props.JumpRequest:Fire() end
 	end
@@ -1026,6 +1045,34 @@ ok((seat.props.CFrame.LookVector - lookA2).Magnitude > 0.03, "面板开着也能
 kd.DragEnd:Fire()
 click(alwaysBtn)
 ok(handle and handle.Visible == false, "关掉 → 回到「折叠才能拖」")
+
+print("\n[6b3] 转向走角速度: 拖滑条 = 真方向盘, 松手收回; 车不归你这边模拟时状态行直说没生效")
+tapTitle() -- 折起来才能拖滑条
+local lookS = seat.props.CFrame.LookVector
+kd.DragContinue:Fire(Vector2.new(999, 0))
+step(1 / 60, 3)
+ok(math.abs(seat.props.AssemblyAngularVelocity.Y) > 1e-3, "非锚定车: 拖滑条给的是绕 Y 的角速度 (不是每帧硬传送车头) " .. string.format("%.2f rad/s", seat.props.AssemblyAngularVelocity.Y))
+step(1 / 60, 30)
+ok((seat.props.CFrame.LookVector - lookS).Magnitude > 0.1, "车真的跟着转 (假引擎按角速度积分)")
+local stTxt
+for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" and d.Text:find("转向 ", 1, true) and d.Text:find("°/s", 1, true) then stTxt = d.Text end end
+ok(stTxt ~= nil, "状态行报实测转速 (" .. tostring(stTxt) .. ")")
+kd.DragEnd:Fire()
+step(1 / 60, 3)
+ok(math.abs(seat.props.AssemblyAngularVelocity.Y) < 1e-6, "松手 → 角速度收回, 车不会一直自转")
+local dumpSteer
+local function noSimAll(v) -- 模拟"服务器接管这辆车": 整个装配体都不认我们写的角速度 (只挡座位不够 —— 脚本写的是装配体根)
+	for _, d in ipairs(INSTANCES) do if d.props.AssemblyRootPart == seat.props.AssemblyRootPart then d.props.__noSim = v end end
+end
+noSimAll(true)
+kd.DragContinue:Fire(Vector2.new(999, 0))
+step(1 / 60, 60) -- 自检窗口 0.5s 满一次, 再等状态行按 0.2s 的节奏刷出来
+for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" and d.Text:find("转向没生效", 1, true) then dumpSteer = d.Text end end
+ok(dumpSteer ~= nil, "车不归你这边模拟时, 状态行直说\"转向没生效\" (" .. tostring(dumpSteer) .. ")")
+kd.DragEnd:Fire()
+noSimAll(nil)
+step(1 / 60, 3)
+tapTitle()
 
 print("\n[6d2] 按住类按钮: 按住字变亮, 松手变回白色")
 local btnGas
