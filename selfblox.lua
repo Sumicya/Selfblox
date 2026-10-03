@@ -14,7 +14,7 @@
 --            gethui / isfile / writefile 缺失时退回 CoreGui 并跳过存盘, 面板照样起得来
 --   保持 Lua 5.4 可解析子集(不用 +=/continue/字符串插值), 这样 smoke.lua 能离线跑: 可测试性 > 语法糖
 
-local VERSION = "26.10.3.2" -- 单一版本来源: 发布时改成当次 yy.m.d (Asia/Shanghai), 同一天发第二次补 .ci, 再打 v<VERSION> 标签
+local VERSION = "26.10.3.3" -- 单一版本来源: 发布时改成当次 yy.m.d (Asia/Shanghai), 同一天发第二次补 .ci, 再打 v<VERSION> 标签
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
