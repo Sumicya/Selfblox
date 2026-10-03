@@ -14,7 +14,7 @@
 --            gethui / isfile / writefile 缺失时退回 CoreGui 并跳过存盘, 面板照样起得来
 --   保持 Lua 5.4 可解析子集(不用 +=/continue/字符串插值), 这样 smoke.lua 能离线跑: 可测试性 > 语法糖
 
-local VERSION = "26.10.3.1" -- 单一版本来源: 发布时改成当次 yy.m.d (Asia/Shanghai), 同一天发第二次补 .ci, 再打 v<VERSION> 标签
+local VERSION = "26.10.3.2" -- 单一版本来源: 发布时改成当次 yy.m.d (Asia/Shanghai), 同一天发第二次补 .ci, 再打 v<VERSION> 标签
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
@@ -51,17 +51,49 @@ local function flat(v) v = Vector3.new(v.X, 0, v.Z); if v.Magnitude > 1e-3 then 
 local function reclipAll(col) for d in pairs(col) do if d.Parent then d.CanCollide = true end end; table.clear(col) end -- 穿墙还原: moc/sibs 原来各写了一份一模一样的
 local ocol = setmetatable({}, { __mode = "k" }) -- 穿墙附带: 别人的部件 -> 改之前的 CanCollide
 local oT = -math.huge
--- 「穿墙」开着时, 本地把别的玩家当不碰撞. 只改自己这一份: 服务器和对方客户端都不受影响,
+local function oStats() -- 现在还忽略着别人多少块: 人物 / 载具分开数 (诊断里用, 只有点打包时才跑)
+	local ch, veh = 0, 0
+	for d in pairs(ocol) do
+		if d.Parent then
+			local inChar = false
+			for _, pl in ipairs(Players:GetPlayers()) do
+				local c = pl ~= me and pl.Character
+				if c and d:IsDescendantOf(c) then inChar = true; break end
+			end
+			if inChar then ch = ch + 1 else veh = veh + 1 end
+		end
+	end
+	return ch, veh
+end
+-- 「穿墙」开着时, 本地把别的玩家和他的车当不碰撞. 只改自己这一份: 服务器和对方客户端都不受影响,
 -- 所以他们照样会被你的车撞开/压过 (推开挡路的小屁孩就是这个效果), 只是挡不住你.
--- 半秒一轮: 顺带补上刚加入/刚重生的玩家, 也自愈游戏把 CanCollide 改回来的情况. 别人的车、没人开的车和地图不动.
+-- 别人正坐着的载具整辆一起忽略 (开公交时前车不再顶住你); 没人开的车、地图和锚定件不动.
+-- 我自己也坐同一辆车时不动作: 那会把自己的座位一起穿掉, 人会从车上掉下去.
+-- 半秒一轮: 顺带补上刚加入/刚重生的玩家, 也自愈游戏把 CanCollide 改回来的情况.
 local function othersNoclip()
 	local t = os.clock()
 	if t - oT < 0.5 then return end
 	oT = t
+	local h = hum()
+	local ms = h and h.SeatPart
+	if ms then -- 我自己坐进某辆车了: 这辆车(和它的装配体)必须还给我, 不然刚上别人的车就穿掉座位掉下去
+		local mr = ms.AssemblyRootPart
+		for d in pairs(ocol) do
+			if d.Parent and d.AssemblyRootPart == mr then d.CanCollide = true; ocol[d] = nil end
+		end
+	end
 	for _, pl in ipairs(Players:GetPlayers()) do
 		if pl ~= me then
 			local c = pl.Character
-			if c then for _, d in ipairs(c:GetDescendants()) do if d:IsA("BasePart") and d.CanCollide then ocol[d] = true; d.CanCollide = false end end end
+			if c then
+				for _, d in ipairs(c:GetDescendants()) do if d:IsA("BasePart") and d.CanCollide then ocol[d] = true; d.CanCollide = false end end
+				local s = (c:FindFirstChildOfClass("Humanoid") or {}).SeatPart
+				if s and (not ms or s.AssemblyRootPart ~= ms.AssemblyRootPart) then
+					for _, d in ipairs(s:GetConnectedParts(true)) do
+						if d:IsA("BasePart") and not d.Anchored and not mine(d) and d.CanCollide then ocol[d] = true; d.CanCollide = false end
+					end
+				end
+			end
 		end
 	end
 end
@@ -295,7 +327,7 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 	feature{ key = "jump", label = "高跳", num = { "jump", 50 }, tick = jumpTick, off = restore }
 	feature{ key = "spin", label = "旋转", num = { "spin", 50 }, tick = spinTick, off = stopSpin }
 	feature{ key = "infjump", label = "无限跳", init = function() on(UIS.JumpRequest, function() local h = hum(); if F.infjump and h then h:ChangeState(Enum.HumanoidStateType.Jumping) end end) end }
-	feature{ key = "clip", label = "穿墙", tick = clipTick, off = function() reclipAll(col); if not (F.clip or F.carclip) then othersBack() end end }
+	feature{ key = "clip", label = "穿墙", tick = clipTick, off = function() local still = F.carclip; reclipAll(col); if not still then othersBack() end end } -- 先取同伙的值: 关一个穿墙不能把另一个开着的连带放掉
 	feature{ key = "nv", label = "夜视", tick = nvTick, set = function(v) if v then nvOn() end end, off = nvOff }
 	feature{ kind = "cycle", key = "nocd", def = "off", cycle = { "off", "normal", "force" }, text = { off = "秒互动 关", normal = "秒互动 普通", force = "秒互动 强制" }, lit = true, set = setNocd, off = function() setNocd("off") end,
 		init = function() on(workspace.DescendantAdded, function(p) if F.nocd ~= "off" then patch(p) end end) end }
@@ -389,11 +421,28 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 		local c, z = d.CFrame, d.Size
 		return d.Position.Y - 0.5 * (math.abs(c.RightVector.Y) * z.X + math.abs(c.UpVector.Y) * z.Y + math.abs(c.LookVector.Y) * z.Z)
 	end
-	local function keepRule(d) -- 只留轮胎碰撞; 一个轮子名都认不到时才退回"整车最低 0.5 格内"兜底, 不然车直接掉出世界
-		if clipWheels then return wheelish(d) end
-		return (clipBottom[d] or math.huge) <= (clipLow or math.huge) + 0.5
+	local function keepRule(d) -- 保留谁: 「全穿」一块不留; 否则只留轮胎; 一个轮子名都认不到才退回"整车最低 0.5 格内"(不然车直接掉出世界). 返回保留原因, 诊断里照抄
+		if F.carnokeep then return nil end
+		if clipWheels then return wheelish(d) and "轮子" or nil end
+		return ((clipBottom[d] or math.huge) <= (clipLow or math.huge) + 0.5) and "最低" or nil
 	end
-	local function rejudge() for _, d in ipairs(clipList) do clipKeep[d] = keepRule(d) or nil end end -- 高度用第一次看到时的值: 悬挂压缩 / 车翻身都不改判, 不然轮子会被自己穿掉
+	local function rejudge() for _, d in ipairs(clipList) do clipKeep[d] = keepRule(d) end end -- 高度用第一次看到时的值: 悬挂压缩 / 车翻身都不改判, 不然轮子会被自己穿掉
+	local function clipInfo() -- 穿墙现状: 留了几块 / 穿掉几块 / 游戏改回来几块 (状态行 / 日志 / 诊断共用)
+		local kept, off, back = 0, 0, 0
+		for _, d in ipairs(clipList) do
+			if not d.Parent then -- 已经被游戏销毁的零件不算
+			elseif clipKeep[d] then kept = kept + 1
+			elseif d.CanCollide then if col[d] then back = back + 1 end -- 穿过又被改回 true = 游戏在自己管这块, 这就是"穿墙看着不管用"的一种原因
+			else off = off + 1 end
+		end
+		return kept, off, back
+	end
+	local function clipText() -- 穿墙一句话 (带模式和块数): 光写 穿墙=true 看不出到底穿没穿
+		if not F.carclip then return "关" end
+		local kept, off, back = clipInfo()
+		local mode = F.carnokeep and "全穿" or (clipWheels and "只留轮子" or "没认到轮子,按最低块兜底")
+		return "开·" .. mode .. " 穿" .. off .. "/留" .. kept .. (back > 0 and ("/游戏改回" .. back) or "")
+	end
 	local function noclip(p) -- 穿墙: 范围只有本车装配体(不是整个 Model 容器, 免得穿掉同容器里别的车和地图件); 锚定的(地面/平台)和人物的不碰. 不悬浮: 探地推起会把车托高、轮子悬空 = "开启上浮"
 		if p ~= clipCar then reclip(); clipCar = p end
 		if os.clock() - clipT > 0.5 then -- 半秒补一批新零件
@@ -567,7 +616,7 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 		local gst, thr, st = 0, 0, steer()
 		if sp and sp:IsA("VehicleSeat") then gst, thr, st = sp.Steer, sp.Throttle, math.clamp(st + sp.Steer, -1, 1) end -- 游戏自带的手机油门/方向盘也吃
 		local acc, dec = F.accel or thr > 0, F.decel or thr < 0
-		if os.clock() - statT > 0.2 then statT = os.clock(); say("car_status", (m and m.Name or p.Name) .. " · " .. math.floor(spd + 0.5) .. (s and "" or " · 准星锁定") .. (anch and " · 锚定(等游戏解锁)" or "") .. (F.carclip and #clipList > 0 and not clipWheels and " · 穿墙没认到轮子(按最低块兜底)" or "")) end
+		if os.clock() - statT > 0.2 then statT = os.clock(); say("car_status", (m and m.Name or p.Name) .. " · " .. math.floor(spd + 0.5) .. (s and "" or " · 准星锁定") .. (anch and " · 锚定(等游戏解锁)" or "") .. (F.carclip and #clipList > 0 and (" · 穿墙 " .. clipText()) or "")) end
 		if F.carclip then noclip(p) elseif clipCar then reclip() end
 		if F.cfly then -- 飞车: 摇杆(前后左右) + 面板按钮都吃; 松手悬停
 			if not lv then lv = mk("LinearVelocity", { Attachment0 = att, MaxForce = math.huge, VectorVelocity = Vector3.zero, RelativeTo = Enum.ActuatorRelativeTo.World }, att) end
@@ -613,9 +662,35 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 			L[#L + 1] = string.format("座位: MaxSpeed=%s Torque=%.0f Throttle=%.2f Steer=%.2f 乘员=%s", tostring(s.MaxSpeed), nn(s.Torque), nn(s.Throttle), nn(s.Steer), s.Occupant and (s.Occupant.Parent and s.Occupant.Parent.Name or "?") or "无")
 		end
 		if clipCar then
-			local kept, off = 0, 0
-			for _, d in ipairs(clipList) do if clipKeep[d] then kept = kept + 1 elseif d.Parent and not d.CanCollide then off = off + 1 end end
-			L[#L + 1] = string.format("穿墙: 认到轮子=%s 保留碰撞=%d 块 已穿=%d 块 (范围=本车装配体, 不是整个 Model 容器)", tostring(clipWheels), kept, off)
+			local kept, off, back = clipInfo()
+			L[#L + 1] = string.format("穿墙: %s · 认到轮子=%s · 保留碰撞=%d 块 · 已穿=%d 块 · 游戏改回=%d 块 (范围=本车装配体, 不是整个 Model 容器)", clipText(), tostring(clipWheels), kept, off, back)
+			local shown = 0
+			for _, d in ipairs(clipList) do
+				if clipKeep[d] and d.Parent and shown < 12 then -- 还碰撞的到底是哪几块: "穿墙不管用"的报告里最缺的就是这一条
+					shown = shown + 1
+					L[#L + 1] = string.format("    留着 %-22s 原因=%s 底=%.1f 尺寸=(%.0f,%.0f,%.0f)", d.Name, clipKeep[d], clipBottom[d] or -1, d.Size.X, d.Size.Y, d.Size.Z)
+				end
+			end
+			if shown == 0 then L[#L + 1] = "    一块都没留 (全穿): 车要么被自己的悬浮力撑住, 要么会往下掉" end
+			local mm = p:FindFirstAncestorOfClass("Model")
+			local out = 0
+			if mm then
+				for _, d in ipairs(mm:GetDescendants()) do -- 范围外还碰撞的大件: 同 Model 里不属于本车装配体的东西照样挡车
+					if out < 8 and d:IsA("BasePart") and d.CanCollide and not clipSeen[d] and not mine(d) then
+						out = out + 1
+						L[#L + 1] = string.format("    范围外仍碰撞 %-22s 距离=%.0f 尺寸=(%.0f,%.0f,%.0f)", d.Name, (d.Position - p.Position).Magnitude, d.Size.X, d.Size.Y, d.Size.Z)
+					end
+				end
+			end
+			if out == 0 then L[#L + 1] = "    范围外没有还碰撞的部件" end
+			local skip = 0
+			for _, d in ipairs(p:GetConnectedParts(true)) do -- 本车装配体里被跳过的(锚定/人物的): 车卡住时也可能是这几块
+				if skip < 8 and d:IsA("BasePart") and d.CanCollide and (d.Anchored or mine(d)) then
+					skip = skip + 1
+					L[#L + 1] = string.format("    跳过没穿 %-22s 锚=%s 尺寸=(%.0f,%.0f,%.0f)", d.Name, tostring(d.Anchored), d.Size.X, d.Size.Y, d.Size.Z)
+				end
+			end
+			if skip == 0 then L[#L + 1] = "    本车装配体里没有被跳过的部件" end
 		end
 		L[#L + 1] = "-- 装配体部件 (含游戏自己的约束/灯/脚本钩子)"
 		for _, d in ipairs(p:GetConnectedParts(true)) do
@@ -632,6 +707,9 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 		rp.FilterDescendantsInstances = { me.Character }
 		local hit = workspace:Raycast(cam.CFrame.Position, cam.CFrame.LookVector * 5000, rp)
 		L[#L + 1] = "-- 准星射线: " .. (hit and (hit.Instance.ClassName .. " " .. hit.Instance:GetFullName()) or "没打到东西")
+		if hit and clipCar then
+			L[#L + 1] = "    在穿墙范围内吗: " .. (clipSeen[hit.Instance] and "在(穿墙会处理它)" or "不在(穿墙不管它)") .. " · 这块 CanCollide=" .. tostring(hit.Instance.CanCollide) .. " 锚定=" .. tostring(hit.Instance.Anchored)
+		end
 		if hit then
 			local chain, x = {}, hit.Instance
 			while x and x ~= workspace do chain[#chain + 1] = x.Name .. "(" .. x.ClassName .. ")"; x = x.Parent end
@@ -682,9 +760,11 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 	feature{ kind = "num", key = "grip", def = 5, label = "抓地" }
 	feature{ kind = "num", key = "turn", def = 2.2, label = "转向" }
 	feature{ kind = "btn", label = "换车(准星)", fn = pick }
+	local function reclipNow() if clipCar then reclip() end end -- 「全穿」开关: 改保留规则后整车立刻重判, 不用等下一批 (0.5 秒) 才生效
 	feature{ key = "carclip", save = "carclip", label = "穿墙",
 		set = function() if F.carclip or F.clip then othersNoclip() else othersBack() end end,
-		off = function() if not (F.carclip or F.clip) then othersBack() end end }
+		off = function() local still = F.clip; if not still then othersBack() end end } -- 先取同伙的值: 上车里的开关时 handler 已经把 F.carclip 置 false 了, 直接读会把还在开的那个穿墙也一起放掉
+	feature{ key = "carnokeep", save = "carnokeep", label = "全穿", set = reclipNow, off = reclipNow } -- 一块都不留: 悬浮车/游戏自己撑车的用; 普通车会掉出世界
 	feature{ key = "cruise", label = "定速" }
 	feature{ key = "cfly", label = "飞车" }
 	feature{ kind = "btn", label = "翻转 180°", fn = flipCar }
@@ -1200,11 +1280,13 @@ pageInfos = function() -- 各页状态, 一页一行 (给日志 / 诊断快照�
 end
 
 local function dumpLines()
+	local oc, ov = oStats()
 	local L = { "==== Selfblox 诊断 " .. os.date("%Y-%m-%d ") .. clock(true) .. " ====",
 		"脚本=" .. VERSION .. " 页签=" .. tostring(saved.tab) .. " place=" .. game.PlaceId .. " 地图=" .. tostring(game.Name),
 		"配置 " .. Http:JSONEncode(saved),
 		"执行器 isfile=" .. tostring(isfile ~= nil) .. " writefile=" .. tostring(writefile ~= nil) .. " appendfile=" .. tostring(appendfile ~= nil) .. " setclipboard=" .. tostring(setclipboard ~= nil) .. " gethui=" .. tostring(gethui ~= nil) .. " hookmetamethod=" .. tostring(hookmetamethod ~= nil) .. " newcclosure=" .. tostring(newcclosure ~= nil) .. " getnamecallmethod=" .. tostring(getnamecallmethod ~= nil),
-		"角色 " .. tostring(me.Name) .. " 队=" .. tostring(me.Team and me.Team.Name) .. " 坐=" .. tostring(hum() and hum().SeatPart and (hum().SeatPart:GetFullName())) .. " 根=" .. tostring(root() and root().Anchored) }
+		"角色 " .. tostring(me.Name) .. " 队=" .. tostring(me.Team and me.Team.Name) .. " 坐=" .. tostring(hum() and hum().SeatPart and (hum().SeatPart:GetFullName())) .. " 根=" .. tostring(root() and root().Anchored),
+		"别人穿墙: 人物 " .. oc .. " 块 · 载具 " .. ov .. " 块 (关着就是 0; 载具 = 别人正坐着的车, 不含没人开的)" }
 	local r = root()
 	if r then L[#L + 1] = string.format("角色 位置=(%.0f,%.0f,%.0f) 速度=%.0f 血=%s", r.Position.X, r.Position.Y, r.Position.Z, r.AssemblyLinearVelocity.Magnitude, tostring(hum() and hum().Health)) end
 	L[#L + 1] = "-- 模块状态"

@@ -784,6 +784,32 @@ ok(CP.wheelL.CanCollide == true and CP.wheelR.CanCollide == true, "穿墙开着:
 ok(CP.wheelUp.CanCollide == true, "悬挂抬高、不在最低那圈的轮子, 名字带 wheel 仍然保留")
 ok(CP.hubL.CanCollide == false and CP.hubR.CanCollide == false, "认到轮子名以后只留轮胎: 名字里没有 wheel/tire 的低位零件 RL/RR 也穿掉 (兜底只在整车一个轮子名都认不到时才用)")
 ok(CP.pad.CanCollide == true and CP.fence.CanCollide == true, "穿墙不碰同一个 Model 里锚定的停车台 / 栏杆 (地面/平台不是车)")
+
+do local function pureClip() -- 包进函数: 主函数的局部变量已经快到 200 个上限
+	print("\n[6a3] 「全穿」 + 诊断快照里的穿墙明细 (「穿墙不管用」的报告就是缺这一块)")
+	local function status() for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" and starts(d.Text, "Car · ") then return d.Text end end end
+	ok(findBtn("全穿") ~= nil, "车页有「全穿」开关")
+	step(1 / 60, 20)
+	ok(status() ~= nil and status():find("只留轮子", 1, true) ~= nil, "状态行写明保留规则和实测块数: " .. tostring(status()))
+	_G.__rayHit = { Instance = CP.wheelL, Distance = 1 } -- 待会儿快照里的准星射线: 打到穿墙范围内的轮子
+	if _G.SB_DUMP then _G.SB_DUMP() end
+	local d1 = VFS["selfblox_dump.txt"]
+	_G.__rayHit = nil
+	ok(d1 and d1:find("穿墙: 开·只留轮子", 1, true) ~= nil and d1:find("游戏改回=", 1, true) ~= nil, "快照的穿墙一行带模式和块数 (留 / 穿 / 游戏改回)")
+	ok(d1 and d1:find("留着 Wheel", 1, true) ~= nil and d1:find("原因=轮子", 1, true) ~= nil, "快照列出还碰撞的是哪几块、为什么留")
+	ok(d1 and d1:find("范围外仍碰撞", 1, true) ~= nil, "快照列出同 Model 里范围外还碰撞的大件 (车卡住时先看这条)")
+	ok(d1 and (d1:find("跳过没穿", 1, true) ~= nil or d1:find("本车装配体里没有被跳过的部件", 1, true) ~= nil), "快照说明本车装配体里有没有被跳过的部件 (锚定/人物的)")
+	ok(d1 and d1:find("在穿墙范围内吗: 在", 1, true) ~= nil, "快照的准星射线标出这块在不在穿墙范围内")
+	click(findBtn("全穿"))
+	step(1 / 60, 20)
+	ok(CP.wheelL.CanCollide == false and CP.wheelR.CanCollide == false and CP.wheelUp.CanCollide == false, "全穿开着: 轮子也一块不留 (左 / 右 / 抬高的那个都穿了)")
+	ok(seat.CanCollide == false and carBody.CanCollide == false, "全穿开着: 座位 / 车身照旧穿")
+	ok(status() ~= nil and status():find("全穿", 1, true) ~= nil, "状态行写明是全穿: " .. tostring(status()))
+	click(findBtn("全穿"))
+	step(1 / 60, 20)
+	ok(CP.wheelL.CanCollide == true and CP.wheelR.CanCollide == true and CP.wheelUp.CanCollide == true, "关掉全穿: 轮子又保留碰撞")
+	ok(CP.hubL.CanCollide == false and CP.hubR.CanCollide == false, "关掉全穿: 名字里没有 wheel 的低位零件照样穿")
+end pureClip() end
 seat.props.AssemblyLinearVelocity = Vector3.new(0, -5, 0)
 _G.__rayHit = { Instance = CP.fence, Distance = 1.2 } -- 老逻辑: 离地只剩 0.7 → 把竖直速度顶到 +3 (上浮); 新逻辑根本不探地
 step(1 / 60, 3)
@@ -1012,6 +1038,7 @@ ok(dumpCar and dumpCar:find("座位: -", 1, true) ~= nil, "快照里座位一栏
 ok(dumpCar and dumpCar:find("准星射线", 1, true) ~= nil and dumpCar:find("祖先: ", 1, true) ~= nil, "快照里有准星射线 + 祖先链")
 ok(dumpCar and dumpCar:find("周围的座位", 1, true) ~= nil, "快照里有周围座位(半径扫描)")
 ok(dumpCar and dumpCar:find("车周围 25 格里的部件", 1, true) ~= nil, "快照里有周围部件")
+
 do local function mapGuard() -- 打中街道路面(横跨 3000 格的装配体): 不能当成车
 	_G.__rayHit = { Instance = CP.road }
 	click(findBtn("换车"))
@@ -1203,6 +1230,42 @@ ok(latecomer.CanCollide == false, "开了以后新加 / 重生的部件最迟半
 click(clipCar)
 step(1 / 60, 5)
 ok(bobRoot.CanCollide == true and latecomer.CanCollide == true, "关掉「车」穿墙 → 连后补的那块也还原")
+
+do local function clipVeh() -- 包进函数: 主函数的局部变量已经快到 200 个上限
+	print("\n[7c1] 别人正坐着的载具一起忽略 (开公交时被前车顶住的就是这个)")
+	local bus = T(inst("Model", { Name = "Bus" }))
+	local busSeat = T(inst("VehicleSeat", { Name = "Driver", CanCollide = true, Anchored = false, Size = Vector3.new(2, 1, 2), CFrame = CFrame.new(Vector3.new(60, 5, 60)), Position = Vector3.new(60, 5, 60), AssemblyLinearVelocity = Vector3.zero, AssemblyMass = 30, Occupant = bobHum, Throttle = 0, Steer = 0, MaxSpeed = 50 }))
+	busSeat.props.AssemblyRootPart = busSeat
+	busSeat.Parent = bus
+	local busBody = T(inst("Part", { Name = "Body", CanCollide = true, Anchored = false, Size = Vector3.new(6, 4, 16), CFrame = CFrame.new(Vector3.new(60, 5, 60)), Position = Vector3.new(60, 5, 60), AssemblyLinearVelocity = Vector3.zero, AssemblyMass = 30 }))
+	busBody.props.AssemblyRootPart = busSeat
+	busBody.Parent = bus
+	local busAnch = T(inst("Part", { Name = "Rack", CanCollide = true, Anchored = true, Size = Vector3.new(5, 1, 5), CFrame = CFrame.new(Vector3.new(60, 9, 60)), Position = Vector3.new(60, 9, 60), AssemblyMass = 900 })) -- 焊在车上的锚定件: 该跳过的就是它
+	busAnch.props.AssemblyRootPart = busSeat
+	busAnch.Parent = bus
+	bus.Parent = workspace
+	bobHum.props.SeatPart = busSeat -- 鲍勃在开这辆公交
+	ok(busBody.CanCollide == true, "起点: 别人的车还是能碰的")
+	click(clipMoc)
+	step(1 / 60, 45)
+	ok(busBody.CanCollide == false and busSeat.CanCollide == false, "别人开的车: 车身 / 座位在本地不碰撞 (前车顶不住你)")
+	ok(busAnch.CanCollide == true, "同一装配体里锚定的那块不动 (免得把焊着的地图件一起穿掉)")
+	ok(seat.CanCollide == true, "我自己的车不受影响 (不同装配体)")
+	humanoid.props.SeatPart = busSeat -- 我也坐这辆车: 同一装配体, 不能连我自己的座位一起穿
+	step(1 / 60, 45)
+	ok(busSeat.CanCollide == true, "我和别人在同一辆车里 → 这块不动 (否则我从自己的座位掉下去)")
+	humanoid.props.SeatPart = nil
+	step(1 / 60, 45)
+	ok(busSeat.CanCollide == false, "我下车后: 又是别人开的车, 重新忽略")
+	if _G.SB_DUMP then _G.SB_DUMP() end
+	local dv = VFS["selfblox_dump.txt"]
+	ok(dv and dv:find("别人穿墙: 人物 2 块 · 载具 2 块", 1, true) ~= nil, "诊断快照如实报别人那边改了几块 (人物 / 载具): " .. tostring(dv and dv:match("别人穿墙: [^\n]*")))
+	click(clipMoc)
+	step(1 / 60, 5)
+	ok(busBody.CanCollide == true and busSeat.CanCollide == true, "关掉穿墙 → 别人的车还原")
+	bobHum.props.SeatPart = nil
+	bus:Destroy() -- 收掉: 一辆带座位的车留在场景里会进飞机侦察的「疑似」名单, 把后面的断言带偏
+end clipVeh() end
 
 -- ── plane: 飞机侦察 ──
 local spawnRemote = T(inst("RemoteEvent", { Name = "SpawnPlane" })); spawnRemote.Parent = RSv
