@@ -189,9 +189,9 @@ function methods.SendKeyEvent(self, down, key, rep, layer)
 	vimArgs("SendKeyEvent", type(down) == "boolean" and type(key) == "table" and key.EnumType == "KeyCode" and type(rep) == "boolean" and type(layer) == "table", "(isPressed: bool, keyCode: KeyCode, isRepeatedKey: bool, layerCollector: Instance)")
 	self.props.keys = (self.props.keys or 0) + 1
 end
-function methods.GetConnectedParts(self) -- 假装配体: 同 Model 里 AssemblyRootPart 相同的 BasePart (真引擎只返回焊在一起的, 锚定的停车台/另一个装配体不算)
+function methods.GetConnectedParts(self) -- 假装配体: 同一容器里 AssemblyRootPart 相同的 BasePart (真引擎只返回焊在一起的, 锚定的停车台/另一个装配体不算). 没有 Model 父级时退回父级容器, 真引擎里那就是"直接挂在 workspace 下的装配体"
 	local o, seen = {}, {}
-	local m = methods.FindFirstAncestorOfClass(self, "Model") or self
+	local m = methods.FindFirstAncestorOfClass(self, "Model") or rawget(self, "parent") or self
 	local ra = self.props.AssemblyRootPart or self
 	for _, d in ipairs(methods.GetDescendants(m)) do if not seen[d] and methods.IsA(d, "BasePart") and (d.props.AssemblyRootPart or d) == ra then seen[d] = true; o[#o + 1] = d end end
 	if not seen[self] then o[#o + 1] = self end
@@ -1114,6 +1114,28 @@ do local function lockedCar()
 	lc:Destroy()
 	_G.__radius, _G.__rayHit = nil, nil
 end lockedCar() end
+
+do local function noModelCar() -- 车没有 Model 父级 (零件直接挂在 workspace 下): 范围要退回本车装配体, 不能变成"只穿自己一个零件"
+	print("\n[6g1] 没有 Model 父级的车 (零件直接挂在 workspace 下)")
+	local froot = inst("Part", { Name = "FlatRoot", CanCollide = true, Anchored = false, Size = Vector3.new(4, 1, 16), Position = Vector3.new(500, 5, 0), CFrame = CFrame.new(Vector3.new(500, 5, 0)), AssemblyLinearVelocity = Vector3.zero, AssemblyMass = 900 })
+	froot.props.AssemblyRootPart = froot
+	local froof = inst("Part", { Name = "FlatRoof", CanCollide = true, Anchored = false, Size = Vector3.new(4, 1, 4), Position = Vector3.new(500, 8, 0), CFrame = CFrame.new(Vector3.new(500, 8, 0)), AssemblyLinearVelocity = Vector3.zero, AssemblyMass = 2 })
+	froof.props.AssemblyRootPart = froot
+	froot.Parent, froof.Parent = workspace, workspace
+	local clipBtn1
+	for _, b in ipairs(buttons()) do if starts(b.Text, "穿墙(车)") then clipBtn1 = b end end
+	local clipWasOff = clipBtn1 and ends(clipBtn1.Text, " 关")
+	if clipWasOff then click(clipBtn1) end -- 前面 [7] 把所有开关点关过一遍, 这里要穿墙开着 (测完自己关回去)
+	_G.__rayHit = { Instance = froot }
+	click(findBtn("换车"))
+	step(1 / 60, 40)
+	ok(froot:FindFirstChild("SB_SIBS") ~= nil, "没有 Model 也能绑上")
+	ok(froof.CanCollide == false, "本车装配体里的其他件照样穿 (没有 Model 时退回装配体, 不是只穿一个零件)")
+	froot:Destroy()
+	froof:Destroy()
+	_G.__rayHit = nil
+	if clipWasOff and clipBtn1 then click(clipBtn1) end -- 还原成关: 后面的 [7c] 从"关着"开始测
+end noModelCar() end
 
 print("\n[6g] 锁定自愈: 车被换掉 / 锁到锚定件")
 humanoid.props.SeatPart = nil

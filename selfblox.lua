@@ -441,6 +441,10 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 		end
 		return sc
 	end
+	local function scopeList() -- 容器里的部件; 车没有 Model 父级(零件直接挂在 workspace 下)时退回本车装配体, 不然等于没穿
+		if clipScope:IsA("BasePart") then return clipCar:GetConnectedParts(true) end
+		return clipScope:GetDescendants()
+	end
 	local function rejudge() for _, d in ipairs(clipList) do clipKeep[d] = keepRule(d) end end -- 高度用第一次看到时的值: 悬挂压缩 / 车翻身都不改判, 不然轮子会被自己穿掉
 	local function clipInfo() -- 穿墙现状: 留了几块 / 穿掉几块 / 游戏改回来几块 (状态行 / 日志 / 诊断共用)
 		local kept, off, back = 0, 0, 0
@@ -463,7 +467,7 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 		if os.clock() - clipT > 0.5 then -- 半秒补一批新零件
 			clipT = os.clock()
 			local fresh, n = {}, 0
-			for _, d in ipairs(clipScope:GetDescendants()) do
+			for _, d in ipairs(scopeList()) do
 				if n >= 300 then break end -- 大容器分几轮扫完, 不卡帧
 				if d:IsA("BasePart") and not clipSeen[d] and not d.Anchored and not mine(d) then
 					n = n + 1
