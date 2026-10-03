@@ -75,7 +75,7 @@ local VERIFIED = {
 	UIDragDetector = words("BoundingUI DragAxis DragContinue DragEnd DragStart DragStyle"),
 	UIListLayout = words("FillDirection Padding"),
 	UIPadding = words("PaddingLeft PaddingRight"),
-	UserInputService = words("JumpRequest"),
+	UserInputService = words("InputBegan InputEnded JumpRequest"),
 	VectorForce = words("ApplyAtCenterOfMass Attachment0 Force RelativeTo"),
 	VehicleSeat = words("Anchored AssemblyAngularVelocity AssemblyLinearVelocity AssemblyMass AssemblyRootPart CFrame CanCollide GetConnectedParts MaxSpeed Occupant Position Size Steer Throttle Torque"),
 	VirtualInputManager = words("SendKeyEvent"),
@@ -1123,22 +1123,20 @@ gasB.InputEnded:Fire(input("Touch"))
 seat.props.Throttle = 0
 step(1 / 60, 3)
 
-print("\n[6b6] 推力四道闸: 顶速 (carvmax) / 侧翻 / 横滑 / 打转 (实测 acc=1000 把车顶到 1005 格/秒后翻着滑 = 方向乱)")
+print("\n[6b6] 推力不限速, 但车失控 (侧翻/横滑/打转) 时不给力 (实测 acc=1000 把车顶翻后, 力还在按车头方向一脚一脚踹 = 方向乱)")
 local fwdA = seat.props.CFrame.LookVector; fwdA = Vector3.new(fwdA.X, 0, fwdA.Z).Unit
 local sideA = fwdA:Cross(Vector3.yAxis)
 gasB.InputBegan:Fire(input("Touch"))
 seat.props.AssemblyLinearVelocity = fwdA * 280 -- 接近顶速 (300): 力要开始收
 step(1 / 60, 3)
-local pNear = vfEnt.Force.Magnitude
-seat.props.AssemblyLinearVelocity = fwdA * 320 -- 过顶速: 一点力都不给
+seat.props.AssemblyLinearVelocity = fwdA * 900 -- 不限速: 再快也照样给推力 (车翻/横滑/打转才收)
 step(1 / 60, 3)
-ok(pNear > 0 and pNear < 10000, "接近顶速开始收力 (" .. string.format("%.0f", pNear) .. " < 10000)")
-ok(vfEnt.Force.Magnitude == 0, "过顶速不再推 (300 格/秒 ≈ 300 km/h, 再快车会翻) " .. tostring(vfEnt.Force))
+ok(vfEnt.Force.Magnitude > 1000, "不限速: 900 格/秒 照样推 (" .. string.format("%.0f", vfEnt.Force.Magnitude) .. ")")
 seat.props.AssemblyLinearVelocity = sideA * 60 -- 横着滑: 推它只会越滑越歪
 step(1 / 60, 3)
-ok(vfEnt.Force.Magnitude == 0, "横着滑不给推力 (侧滑 60 > max(15, 0.6×速度))")
+ok(vfEnt.Force.Magnitude == 0, "横着滑不给推力 (侧滑 60 > max(20, 0.8×速度))")
 seat.props.AssemblyLinearVelocity = fwdA * 20
-seat.props.AssemblyAngularVelocity = Vector3.new(0, 5, 0) -- 自己在打转
+seat.props.AssemblyAngularVelocity = Vector3.new(0, 7, 0) -- 自己在打转
 step(1 / 60, 3)
 ok(vfEnt.Force.Magnitude == 0 and seat.props.CFrame.UpVector.Y >= 0, "打转中不给推力 (等它稳下来)")
 seat.props.AssemblyAngularVelocity = Vector3.zero
@@ -1147,6 +1145,19 @@ step(1 / 60, 5)
 ok(vfEnt.Force.Magnitude > 1000, "稳下来、速度归零: 推力又给上 (" .. string.format("%.0f", vfEnt.Force.Magnitude) .. ")")
 gasB.InputEnded:Fire(input("Touch"))
 step(1 / 60, 3)
+
+print("\n[6b7] 松手兜底: 真机上 DragEnd 丢了, 手指抬起也一定停转")
+local knob7
+for _, d in ipairs(all()) do if d.Name == "SB_Knob" then knob7 = d end end
+if bd.Visible then tapTitle() end -- 折起来才是可拖状态
+kd.DragContinue:Fire(Vector2.new(999, 0)) -- 拖着: 在转
+step(1 / 60, 5)
+ok(math.abs(seat.props.AssemblyAngularVelocity.Y) > 1e-3, "拖着滑条: 车在转")
+_G.__SVC.UserInputService.props.InputEnded:Fire(input("Touch")) -- 手指抬起 (DragEnd 故意不发: 模拟它丢了)
+step(1 / 60, 3)
+ok(math.abs(seat.props.AssemblyAngularVelocity.Y) < 1e-6, "DragEnd 没来, 手指抬起也立刻停转 (原来会一直转)")
+ok(knob7 and knob7.Position.X.Offset == 0, "圆点也回中, 不假装还拖着")
+if not bd.Visible then tapTitle() end -- 展开回去, 后面 [6b3] 自己会折
 
 print("\n[6b3] 转向走角速度: 拖滑条 = 真方向盘, 松手收回; 车不归你这边模拟时状态行直说没生效")
 tapTitle() -- 折起来才能拖滑条
@@ -1377,7 +1388,7 @@ ok(dm and dm:find("sibs ", 1, true) ~= nil, "快照里有各模块状态")
 ok(dm and dm:find("PlayerGui 树", 1, true) == nil, "快照里不再带整个 PlayerGui 树 (原来是给「选按钮」准备的)")
 ok(dm and dm:find("CAr", 1, true) == nil and dm:find("=== CAR", 1, true) ~= nil, "快照里有车结构")
 ok(dm and dm:find("驱动: 面板加速", 1, true) ~= nil, "快照里有「驱动」一行 (谁在给力 / 车姿态 / 侧滑, 方向出问题时一眼看得出)")
-ok(dm and dm:find("顶速 carvmax=", 1, true) ~= nil, "快照的「驱动」一行写明顶速设置")
+ok(dm and dm:find("驱动: 面板加速", 1, true) ~= nil, "快照里有「驱动」一行")
 ok(CLIP ~= nil and CLIP:find("Selfblox 诊断", 1, true) ~= nil, "快照同时进了剪贴板")
 ok(type(_G.SB_DUMP) == "function", "也可以用 _G.SB_DUMP() 手动打")
 
