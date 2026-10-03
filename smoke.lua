@@ -1196,6 +1196,12 @@ ok(tt:find("车自己在转", 1, true) ~= nil, "自己转起来会弹一次提�
 ok(tt:find("滑条=", 1, true) ~= nil, "提示里带上滑条值 (收没收回去直接看得到) " .. tostring(tt))
 seat.props.AssemblyAngularVelocity = Vector3.zero
 step(1 / 60, 5)
+
+print("\n[6b10] 报告读数: 静止时不量差角 (噪声), 车头转速要进日志/诊断")
+_G.SB_DUMP()
+yawTxt = VFS["selfblox_dump.txt"] or "" -- 复用上面的局部名: 顶层 local 已经到 200 个上限, 不能再加新的 (Lua 5.4 限制)
+ok(yawTxt:find("车头与运动方向差=—", 1, true) ~= nil, "速度太低时不量差角 (上一份报告静止却写 47°, 就是噪声)")
+ok(yawTxt:find("车头=%+", 1) ~= nil, "日志/诊断的 sibs 行带车头实测转速 (掉头时 1 秒一条的时间线里看得到)")
 if not bd.Visible then tapTitle() end -- 展开回去, 后面 [6b3] 自己会折
 
 print("\n[6b3] 转向走角速度: 拖滑条 = 真方向盘, 松手收回; 车不归你这边模拟时状态行直说没生效")

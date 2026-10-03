@@ -14,7 +14,7 @@
 --            gethui / isfile / writefile 缺失时退回 CoreGui 并跳过存盘, 面板照样起得来
 --   保持 Lua 5.4 可解析子集(不用 +=/continue/字符串插值), 这样 smoke.lua 能离线跑: 可测试性 > 语法糖
 
-local VERSION = "26.10.3.15" -- 单一版本来源: 发布时改成当次 yy.m.d (Asia/Shanghai), 同一天发第二次补 .ci, 再打 v<VERSION> 标签
+local VERSION = "26.10.3.16" -- 单一版本来源: 发布时改成当次 yy.m.d (Asia/Shanghai), 同一天发第二次补 .ci, 再打 v<VERSION> 标签
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
@@ -783,8 +783,9 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 		end
 		local mv = Vector3.new(p.AssemblyLinearVelocity.X, 0, p.AssemblyLinearVelocity.Z)
 		local lv2 = flat(p.CFrame.LookVector) or Vector3.zAxis
-		local headAng = math.deg(math.acos(math.clamp((mv.Magnitude > 1e-3 and mv.Unit or lv2):Dot(lv2), -1, 1))) -- 车头与"运动方向"差多少度: 自己掉头时这里会一路涨
-		L[#L + 1] = string.format("驱动: 车头与运动方向差=%.0f° 角速度=%.1f/s (掉头就看这两个: 差角涨/角速度不为 0 = 车在自己转)", headAng, p.AssemblyAngularVelocity.Magnitude)
+		local headTxt = "—(速度太低, 量出来是噪声)" -- 速度接近 0 时"运动方向"是随机方向: 上一份报告静止却写着差 47°, 就是这么来的
+		if mv.Magnitude >= 2 then headTxt = string.format("%.0f°", math.deg(math.acos(math.clamp(mv.Unit:Dot(lv2), -1, 1)))) end -- 车头与"运动方向"差多少度: 自己掉头时这里会一路涨
+		L[#L + 1] = string.format("驱动: 车头与运动方向差=%s 角速度=%.1f/s (掉头就看这两个: 差角涨/角速度不为 0 = 车在自己转)", headTxt, p.AssemblyAngularVelocity.Magnitude)
 		L[#L + 1] = string.format("滑条: %s · 现在 手指=%d 拖着=%s 圆点位移=%.0fpx · 滑条转向值=%+.2f (0 = 没收到) · 车头实测 %+.0f°/s (拖不了/自己掉头看这一行)", dbgSteer ~= "" and dbgSteer or "(还没摸过)", held or 0, dragX ~= nil and "是" or "否", (knob and knob.Position.X.Offset) or 0, stMine, math.deg(yawRate))
 		L[#L + 1] = string.format("驱动: 面板加速=%s 减速=%s 定速=%s · 游戏座位油门=%.2f 方向=%.2f · 车姿态 up.Y=%.2f · 侧滑=%.1f/s 速度=%.1f · 实际推力=%.0f%s",
 			tostring(F.accel), tostring(F.decel), tostring(F.cruise), dbgThr, dbgGst, dbgUp, dbgLat, dbgSpd, dbgPush,
@@ -877,12 +878,13 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 	local function holdInfo() return (F.accel and " 按加速" or "") .. (F.decel and " 按减速" or "") .. (F.cup and " 按升" or "") .. (F.cdown and " 按降" or "") end
 	local function carInfo()
 		local p, s = part()
+		local spin = string.format(" 车头=%+.0f°/s", math.deg(yawRate)) .. (math.abs(stMine) > 0.02 and string.format(" 滑条=%+.0f%%", stMine * 100) or "") -- 写进日志/诊断: 掉头时时间线里直接看得到 (第 0.2 秒的状态行也会写, 那个不进文件)
 		if p and vf then
 			return string.format("抓地=%s/转向=%s/过弯上限=%s 部件=%s%s 推力=%.0f(%.1f/kg) 质量=%.0f 速度=%.0f%s%s%s",
 				S.grip, S.turn, S.turncap, p:GetFullName(), seatInfo(s), vf.Force.Magnitude, vf.Force.Magnitude / math.max(p.AssemblyMass, 1), p.AssemblyMass,
-				p.AssemblyLinearVelocity.Magnitude, p.Anchored and " 锚定(引擎不让推)" or "", F.cruise and string.format(" 定速@%.0f", target) or "", holdInfo())
+				p.AssemblyLinearVelocity.Magnitude, p.Anchored and " 锚定(引擎不让推)" or "", F.cruise and string.format(" 定速@%.0f", target) or "", holdInfo() .. spin)
 		end
-		return "抓地=" .. S.grip .. "/转向=" .. S.turn .. "/过弯上限=" .. S.turncap .. " 部件=-" .. seatInfo(nil) .. (F.cruise and string.format(" 定速@%.0f", target) or "") .. holdInfo()
+		return "抓地=" .. S.grip .. "/转向=" .. S.turn .. "/过弯上限=" .. S.turncap .. " 部件=-" .. seatInfo(nil) .. (F.cruise and string.format(" 定速@%.0f", target) or "") .. holdInfo() .. spin
 	end
 	local function carStop() detach(); reclip(); dropLamps(); horn(false); if curSeat and curMax then curSeat.MaxSpeed = curMax end end
 	feature{ kind = "page", id = "sibs", tab = "车", info = carInfo }
