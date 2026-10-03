@@ -14,7 +14,7 @@
 --            gethui / isfile / writefile 缺失时退回 CoreGui 并跳过存盘, 面板照样起得来
 --   保持 Lua 5.4 可解析子集(不用 +=/continue/字符串插值), 这样 smoke.lua 能离线跑: 可测试性 > 语法糖
 
-local VERSION = "26.10.3.8" -- 单一版本来源: 发布时改成当次 yy.m.d (Asia/Shanghai), 同一天发第二次补 .ci, 再打 v<VERSION> 标签
+local VERSION = "26.10.3.9" -- 单一版本来源: 发布时改成当次 yy.m.d (Asia/Shanghai), 同一天发第二次补 .ci, 再打 v<VERSION> 标签
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
@@ -849,9 +849,9 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 	feature{ key = "carauto", save = "carauto", def = true, label = "自动绑车", w = 1 }
 	feature{ key = "hornon", label = "常声(" .. S.hornkey .. ")", set = horn }
 	feature{ kind = "hold", label = "声", set = horn }
+	feature{ key = "brake", label = "急刹", w = 1, h = 36 } -- 单独一行, 在 加减速 上面; 行高和它们一样 (上下对齐)
 	feature{ kind = "hold", key = "accel", label = "▲ 加速", h = 36 }
 	feature{ kind = "hold", key = "decel", label = "▼ 减速", h = 36 }
-	feature{ key = "brake", label = "急刹", w = 1, h = 36 } -- 紧跟着 加减速: 单独一行, 行高和它们一样 (上下对齐)
 	feature{ kind = "hold", key = "cup", label = "飞 ↑", h = 36 }
 	feature{ kind = "hold", key = "cdown", label = "飞 ↓", h = 36 }
 	feature{ kind = "text", key = "car_status", label = "上车即控; 没车就对准它按 换车" }

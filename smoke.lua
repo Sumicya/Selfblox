@@ -924,17 +924,23 @@ ok(seat:FindFirstChild("SB_SIBS"):FindFirstChildOfClass("LinearVelocity") ~= nil
 click(findBtn("飞车"))
 click(findBtn("急刹"))
 
-print("\n[6a4] 车页排布: 急刹跟着 加减速 (单独一行, 上下一致)")
-local brakeBtn, decBtn, flipBtn, upBtn
+print("\n[6a4] 车页排布: 急刹放在 加减速 上面 (单独一行, 上下一致)")
+local brakeBtn, accBtn, decBtn, flipBtn
 for _, b in ipairs(buttons()) do
-	if starts(b.Text, "急刹") then brakeBtn = b elseif b.Text == "▼ 减速" then decBtn = b elseif b.Text == "翻转 180°" then flipBtn = b elseif b.Text == "飞 ↑" then upBtn = b end
+	if starts(b.Text, "急刹") then brakeBtn = b elseif b.Text == "▲ 加速" then accBtn = b elseif b.Text == "▼ 减速" then decBtn = b elseif b.Text == "翻转 180°" then flipBtn = b end
 end
-ok(brakeBtn and decBtn and flipBtn and upBtn, "急刹 / 减速 / 翻转 / 飞↑ 都在")
+ok(brakeBtn and accBtn and decBtn and flipBtn, "急刹 / 加速 / 减速 / 翻转 都在")
 ok(brakeBtn.Parent ~= flipBtn.Parent, "急刹不再和 翻转 挤一行")
-ok(brakeBtn.Parent ~= decBtn.Parent and brakeBtn.Parent.LayoutOrder > decBtn.Parent.LayoutOrder and brakeBtn.Parent.LayoutOrder < upBtn.Parent.LayoutOrder,
-	"急刹在 加减速 和 飞↑/飞↓ 之间, 单独占一行")
-ok(brakeBtn.Parent.Size.Y.Offset == decBtn.Parent.Size.Y.Offset, "急刹那行和 加减速 行一样高 (" .. tostring(brakeBtn.Parent.Size.Y.Offset) .. "px)")
-ok(brakeBtn.Size.Y.Scale == 1 and decBtn.Size.Y.Scale == 1, "按钮都铺满各自的行高 (上下对齐)")
+ok(accBtn.Parent == decBtn.Parent, "▲加速/▼减速 同一行")
+local page = brakeBtn.Parent.Parent
+local ib, ia
+for i, c in ipairs(page:GetChildren()) do
+	if c == brakeBtn.Parent then ib = i elseif c == accBtn.Parent then ia = i end
+end
+ok(brakeBtn.Parent ~= accBtn.Parent and ib and ia and ia == ib + 1,
+	"急刹是 加减速 上面紧挨着的那一行 (行序 " .. tostring(ib) .. " → " .. tostring(ia) .. ")")
+ok(brakeBtn.Parent.Size.Y.Offset == accBtn.Parent.Size.Y.Offset, "急刹那行和 加减速 行一样高 (" .. tostring(brakeBtn.Parent.Size.Y.Offset) .. "px)")
+ok(brakeBtn.Size.Y.Scale == 1 and accBtn.Size.Y.Scale == 1, "按钮都铺满各自的行高 (上下对齐)")
 
 print("\n[6b] 方向盘: 整条能拖 / 松手回中 / 位置钉死")
 click(findBtn("急刹")) -- 先关急刹: 开着的话水平速度每帧被清零, 车转不动
