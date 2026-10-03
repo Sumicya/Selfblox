@@ -420,7 +420,7 @@ CP.pad.props.AssemblyRootPart = CP.pad -- 锚定的停车台自己一个装配�
 CP.fence = carPart("Fence", Vector3.new(1, 6, 20), Vector3.new(30, 6, 0), { Anchored = true }) -- 锚定的栏杆, 在高处: 不是"最低", 碰了就会被穿掉
 CP.fence.props.AssemblyRootPart = CP.fence
 car.Parent = workspace
-local street = inst("Model", { Name = "Street", __extents = Vector3.new(4000, 200, 4000) }) -- 整个街区: 绝不能当成一辆车
+local street = inst("Model", { Name = "Street", __extents = Vector3.new(4000, 200, 4000) }) -- 超大容器 (真游戏里 Spawned.Street 是用户手拼的车, 名字撞了而已): 它自己不能当成一辆车
 local truck = inst("Model", { Name = "Truck", __extents = Vector3.new(6, 2, 12) })
 local truckBed = inst("Part", { Name = "Primary", CanCollide = true, Anchored = false, Size = Vector3.new(4, 1, 16), Position = Vector3.new(60, 5, 0), CFrame = CFrame.new(Vector3.new(60, 5, 0)), AssemblyLinearVelocity = Vector3.zero, AssemblyMass = 1 })
 truckBed.props.AssemblyRootPart = truckBed
@@ -434,7 +434,7 @@ do -- 街道路面 = 一个横跨 3000 格的装配体; 另有一件"车"直接�
 		d.Parent = street
 		return d
 	end
-	CP.road = streetPart("Primary", Vector3.new(40, 1, 40), Vector3.new(0, 0, 900), 1549) -- 真游戏里 Workspace.Spawned.Street.Primary 就是这种: 质量 1549, 还能被推着跑到 70
+	CP.road = streetPart("Primary", Vector3.new(40, 1, 40), Vector3.new(0, 0, 900), 1549) -- 借用户那辆车的数字(质量 1549): 但这里是"横跨几千格的地图件", 用来测拒绝绑地图那条路
 	CP.roadFar = streetPart("RoadFar", Vector3.new(40, 1, 40), Vector3.new(3000, 0, 900), 1549, CP.road) -- 和 road 同一个装配体 → 外径 ~6000 格
 	CP.looseCar = streetPart("Loose", Vector3.new(6, 2, 12), Vector3.new(120, 5, 900), 800) -- 没有自己的小 Model: 上一版量容器(4000 格) → 误判成地图 → "新构建绑不上车"
 end
@@ -625,8 +625,11 @@ if _G.SB_DUMP then _G.SB_DUMP() end
 ok(VFS["selfblox_dump.txt"]:find("油门=true", 1, true) == nil, "松手 → 油门状态回假")
 pedals2:Destroy() -- 这套假踏板是测试自己造的, 用完自己收, 不然算漏实例
 
--- 漂移页只剩原来的: 重绑踏板 / ▲ 油门 / ▼ 刹车 (v13 多出来的「选刹车」「选油门」整套删了)
-ok(findBtn("重绑踏板") ~= nil and findBtn("▲ 油门") ~= nil and findBtn("▼ 刹车") ~= nil, "漂页有 重绑踏板 / ▲ 油门 / ▼ 刹车")
+-- 漂移页: 自定义按钮全删, 只剩数值输入 (加速 / 刹车 / 摩擦)
+ok(findBtn("重绑踏板") == nil and findBtn("▲ 油门") == nil and findBtn("▼ 刹车") == nil and findBtn("推进") ~= nil, "漂页没有自定义按钮了 (只剩 推进 + 数值)")
+local fric0
+for _, d in ipairs(all()) do if d:IsA("TextLabel") and d.Text == "摩擦" then fric0 = d end end
+ok(fric0 ~= nil, "漂页有「摩擦」系数输入")
 local oldBtns = 0
 for _, d in ipairs(all()) do if d:IsA("TextButton") and (starts(d.Text, "选") or starts(d.Text, "绑") or starts(d.Text, "自动找踏板") or starts(d.Text, "扫车") or starts(d.Text, "复制状态")) then oldBtns = oldBtns + 1 end end
 ok(oldBtns == 0, "面板里没有「选…」「绑…」「自动找踏板」「扫车」「复制状态」 (剩 " .. oldBtns .. " 个)")
@@ -779,11 +782,11 @@ ok(seat.MaxSpeed == math.huge, "上车后座位限速抬到无穷")
 local clipOn = 0
 for _, b in ipairs(buttons()) do if starts(b.Text, "穿墙") and ends(b.Text, " 开") then clipOn = clipOn + 1 end end
 ok(seat.CanCollide == false and carBody.CanCollide == false, "穿墙开着: 座位 / 车身都穿 (穿墙开着 " .. clipOn .. " 个 · 座=" .. tostring(seat.CanCollide) .. " 身=" .. tostring(carBody.CanCollide) .. ")")
-ok(CP.sur.CanCollide == true, "穿墙范围只有本车装配体: 同 Model 里另一个装配体的装饰件 Sur 不再被穿掉 (" .. tostring(CP.sur.CanCollide) .. ")")
+ok(CP.sur.CanCollide == false, "穿墙范围 = 本车 + 同容器里的自由件: 另一个装配体的装饰件 Sur 一起穿 (这就是\"能穿别人的车\"那层, " .. tostring(CP.sur.CanCollide) .. ")")
 ok(CP.wheelL.CanCollide == true and CP.wheelR.CanCollide == true, "穿墙开着: 只有轮胎底(整车最低的)保留碰撞, 车才不会掉下去 (左=" .. tostring(CP.wheelL.CanCollide) .. " 右=" .. tostring(CP.wheelR.CanCollide) .. ")")
 ok(CP.wheelUp.CanCollide == true, "悬挂抬高、不在最低那圈的轮子, 名字带 wheel 仍然保留")
 ok(CP.hubL.CanCollide == false and CP.hubR.CanCollide == false, "认到轮子名以后只留轮胎: 名字里没有 wheel/tire 的低位零件 RL/RR 也穿掉 (兜底只在整车一个轮子名都认不到时才用)")
-ok(CP.pad.CanCollide == true and CP.fence.CanCollide == true, "穿墙不碰同一个 Model 里锚定的停车台 / 栏杆 (地面/平台不是车)")
+ok(CP.pad.CanCollide == true and CP.fence.CanCollide == true, "穿墙不碰锚定的停车台 / 栏杆 (地面/平台/焊死的装饰不是车)")
 
 do local function pureClip() -- 包进函数: 主函数的局部变量已经快到 200 个上限
 	print("\n[6a3] 「全穿」 + 诊断快照里的穿墙明细 (「穿墙不管用」的报告就是缺这一块)")
@@ -797,7 +800,7 @@ do local function pureClip() -- 包进函数: 主函数的局部变量已经快�
 	_G.__rayHit = nil
 	ok(d1 and d1:find("穿墙: 开·只留轮子", 1, true) ~= nil and d1:find("游戏改回=", 1, true) ~= nil, "快照的穿墙一行带模式和块数 (留 / 穿 / 游戏改回)")
 	ok(d1 and d1:find("留着 Wheel", 1, true) ~= nil and d1:find("原因=轮子", 1, true) ~= nil, "快照列出还碰撞的是哪几块、为什么留")
-	ok(d1 and d1:find("范围外仍碰撞", 1, true) ~= nil, "快照列出同 Model 里范围外还碰撞的大件 (车卡住时先看这条)")
+	ok(d1 and d1:find("范围=", 1, true) ~= nil and (d1:find("还在碰撞", 1, true) ~= nil or d1:find("容器里没有还碰撞的自由件", 1, true) ~= nil), "快照写明穿墙范围, 并列出容器里还碰撞的件 (车卡住时先看这条)")
 	ok(d1 and (d1:find("跳过没穿", 1, true) ~= nil or d1:find("本车装配体里没有被跳过的部件", 1, true) ~= nil), "快照说明本车装配体里有没有被跳过的部件 (锚定/人物的)")
 	ok(d1 and d1:find("在穿墙范围内吗: 在", 1, true) ~= nil, "快照的准星射线标出这块在不在穿墙范围内")
 	click(findBtn("全穿"))
@@ -836,7 +839,17 @@ do local function noWheelCar() -- 包进函数: 主函数的局部变量已经�
 	local nwLowL = nwPart("RL", Vector3.new(1, 3, 3), Vector3.new(197, 1.5, 3)) -- 底 y=0
 	local nwLowR = nwPart("RR", Vector3.new(1, 3, 3), Vector3.new(203, 1.5, 3)) -- 底 y=0
 	local nwRoof = nwPart("Roof", Vector3.new(4, 1, 4), Vector3.new(200, 8, 0)) -- 底 y=7.5
-	nw.Parent = workspace
+	local yard = inst("Folder", { Name = "Yard" })
+	local sib = inst("Model", { Name = "Sibling" }) -- 同一个容器里的"别人的车": 自由件也该一起穿
+	local sibBody = inst("Part", { Name = "Body", CanCollide = true, Anchored = false, Size = Vector3.new(6, 2, 12), Position = Vector3.new(260, 5, 0), CFrame = CFrame.new(Vector3.new(260, 5, 0)), AssemblyLinearVelocity = Vector3.zero, AssemblyMass = 30 })
+	sibBody.props.AssemblyRootPart = sibBody
+	sibBody.Parent = sib
+	local sibAnch = inst("Part", { Name = "Rack", CanCollide = true, Anchored = true, Size = Vector3.new(4, 1, 4), Position = Vector3.new(260, 9, 0), CFrame = CFrame.new(Vector3.new(260, 9, 0)), AssemblyMass = 900 })
+	sibAnch.props.AssemblyRootPart = sibAnch
+	sibAnch.Parent = sib
+	sib.Parent = yard
+	yard.Parent = workspace
+	nw.Parent = yard
 	local function status() for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" and starts(d.Text, "NoWheel · ") then return d.Text end end end
 	_G.__rayHit = { Instance = nwSeat }
 	click(findBtn("换车"))
@@ -850,7 +863,10 @@ do local function noWheelCar() -- 包进函数: 主函数的局部变量已经�
 	ok(nwWheel.CanCollide == true, "晚出现的轮子按名字保留碰撞")
 	ok(nwLowL.CanCollide == false and nwLowR.CanCollide == false, "认到轮子后整车重判: 之前靠兜底留下的 RL/RR 也穿掉 (只留轮胎)")
 	ok(status() ~= nil and not status():find("没认到轮子", 1, true), "认到轮子后状态行不再报兜底")
-	nw:Destroy()
+	step(1 / 60, 40)
+	ok(sibBody.CanCollide == false, "同一个容器(Folder)里另一辆车的自由件一起穿 (这就是\"能穿别人的车\")")
+	ok(sibAnch.CanCollide == true, "同一容器里锚定的那块不动 (焊死的件不碰)")
+	yard:Destroy()
 	_G.__rayHit = { Instance = seat } -- 锁回原来那辆, 后面的测试要用
 	click(findBtn("换车"))
 	step(1 / 60, 5)
@@ -1022,7 +1038,7 @@ btnGas.InputEnded:Fire(input("Touch"))
 step(1 / 60, 3)
 ok(btnGas.TextColor3.R == 1 and btnGas.TextColor3.G == 1, "松手后字变回白色")
 
-print("\n[6f] 载具范围: 街区的 Model 不能当车 (你的游戏就是这种结构)")
+print("\n[6f] 载具范围: 超大容器 Model 不能当车 (车直接挂在里面时, 量的是装配体)")
 humanoid.props.SeatPart = nil -- 走"准星锁定"这条路(你那台卡车就是这样), 不然 part() 会优先用座位
 step(1 / 60, 3)
 _G.__rayHit = { Instance = truckBed }
@@ -1069,6 +1085,35 @@ local toastSeat = toastText()
 if _G.SB_DUMP then _G.SB_DUMP() end
 ok(toastSeat:find("座位 Seat", 1, true) ~= nil, "有座位时提示带座位名 (当时提示: " .. toastSeat .. ")")
 _G.__rayHit = nil
+
+print("\n[6g0] 原地绑车: 锚定的车照样绑上, 不被自动改绑换掉")
+humanoid.props.SeatPart = nil
+do local function lockedCar()
+	local lc = inst("Model", { Name = "Locked" })
+	local lcRoot = inst("Part", { Name = "Chassis", CanCollide = true, Anchored = true, Size = Vector3.new(4, 1, 16), Position = Vector3.new(400, 5, 0), CFrame = CFrame.new(Vector3.new(400, 5, 0)), AssemblyLinearVelocity = Vector3.zero, AssemblyMass = 1549 })
+	lcRoot.props.AssemblyRootPart = lcRoot
+	lcRoot.Parent = lc
+	local lcWheel = inst("Part", { Name = "Wheel_L", CanCollide = true, Anchored = true, Size = Vector3.new(1, 3, 3), Position = Vector3.new(398, 1.5, 0), CFrame = CFrame.new(Vector3.new(398, 1.5, 0)), AssemblyLinearVelocity = Vector3.zero, AssemblyMass = 2 })
+	lcWheel.props.AssemblyRootPart = lcRoot -- 和车身同一个装配体
+	lcWheel.Parent = lc
+	local lcLight = inst("SpotLight", { Name = "Head", Enabled = false }) -- 有灯 = 像车, 不该被当成装饰件改绑掉
+	lcLight.Parent = lcRoot
+	lc.Parent = workspace
+	_G.__radius = { lcRoot } -- 附近最重的那件就是它自己: 老逻辑会"就近改绑"到别的自由件上
+	_G.__rayHit = { Instance = lcRoot }
+	click(findBtn("换车"))
+	step(1 / 60, 20)
+	ok(lcRoot:FindFirstChild("SB_SIBS") ~= nil, "游戏还锁着(锚定)的车: 照样绑上 (之前直接拒绝 = \"原地绑不上, 要开一会\")")
+	ok(toastText():find("锚定", 1, true) ~= nil, "提示写明还锁着, 等解锁 (当时提示: " .. toastText() .. ")")
+	local st2
+	for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" and starts(d.Text, "Locked · ") then st2 = d.Text end end
+	ok(st2 ~= nil and st2:find("锚定", 1, true) ~= nil, "状态行写明锚定等解锁 (" .. tostring(st2) .. ")")
+	lcRoot.props.Anchored = false
+	step(1 / 60, 5)
+	ok(toastText():find("解锁", 1, true) ~= nil, "车解锁 → 提示推力生效 (当时提示: " .. toastText() .. ")")
+	lc:Destroy()
+	_G.__radius, _G.__rayHit = nil, nil
+end lockedCar() end
 
 print("\n[6g] 锁定自愈: 车被换掉 / 锁到锚定件")
 humanoid.props.SeatPart = nil

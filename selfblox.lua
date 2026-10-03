@@ -14,7 +14,7 @@
 --            gethui / isfile / writefile 缺失时退回 CoreGui 并跳过存盘, 面板照样起得来
 --   保持 Lua 5.4 可解析子集(不用 +=/continue/字符串插值), 这样 smoke.lua 能离线跑: 可测试性 > 语法糖
 
-local VERSION = "26.10.3.3" -- 单一版本来源: 发布时改成当次 yy.m.d (Asia/Shanghai), 同一天发第二次补 .ci, 再打 v<VERSION> 标签
+local VERSION = "26.10.3.4" -- 单一版本来源: 发布时改成当次 yy.m.d (Asia/Shanghai), 同一天发第二次补 .ci, 再打 v<VERSION> 标签
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
@@ -386,7 +386,7 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 		end
 		if picked and picked:IsDescendantOf(workspace) then return picked, pickSeat end
 	end
-	local function scopeOf(p) -- 载具范围: 往上第一个"带座位"的 Model; 没有就取最近一个"尺寸像载具"的 Model; 绝不爬到整个街区
+	local function scopeOf(p) -- 载具范围: 往上第一个"带座位"的 Model; 没有就取最近一个"尺寸像载具"的 Model; 绝不爬到整张地图的大容器
 		if not p then return nil end
 		local best, node = nil, p:FindFirstAncestorOfClass("Model")
 		while node do
@@ -414,17 +414,32 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 		lv = nil
 	end
 	local function detach() if att then att:Destroy(); att, vf, lv = nil, nil, nil end end
-	local clipList, clipSeen, clipKeep, clipBottom, clipLow, clipT, clipWheels = {}, {}, {}, {}, nil, -1, false
+	local clipList, clipSeen, clipKeep, clipBottom, clipLow, clipT, clipWheels, clipScope = {}, {}, {}, {}, nil, -1, false, nil
 	local function wheelish(d) local nm = d.Name:lower(); return (nm:find("wheel") or nm:find("tire") or nm:find("tyre") or nm:find("轮")) ~= nil end
-	local function reclip() reclipAll(col); clipCar, clipList, clipSeen, clipKeep, clipBottom, clipLow, clipT, clipWheels = nil, {}, {}, {}, {}, nil, -1, false end
+	local function carish(p) -- 有轮子/座位/灯/约束的装配体 = 载具本体 (哪怕游戏现在把它锁着): 不能被"就近改绑"换成别的东西
+		for _, d in ipairs(p:GetConnectedParts(true)) do
+			if wheelish(d) or d:IsA("Seat") then return true end
+			for _, c in ipairs(d:GetChildren()) do if c:IsA("Light") or c:IsA("Constraint") then return true end end
+		end
+	end
+	local function reclip() reclipAll(col); clipCar, clipList, clipSeen, clipKeep, clipBottom, clipLow, clipT, clipWheels, clipScope = nil, {}, {}, {}, {}, nil, -1, false, nil end
 	local function bottomY(d) -- 零件在世界坐标里的最低点 (按旋转后的包围盒算)
 		local c, z = d.CFrame, d.Size
 		return d.Position.Y - 0.5 * (math.abs(c.RightVector.Y) * z.X + math.abs(c.UpVector.Y) * z.Y + math.abs(c.LookVector.Y) * z.Z)
 	end
-	local function keepRule(d) -- 保留谁: 「全穿」一块不留; 否则只留轮胎; 一个轮子名都认不到才退回"整车最低 0.5 格内"(不然车直接掉出世界). 返回保留原因, 诊断里照抄
+	local function keepRule(d) -- 保留谁: 别人的车 / 同容器的自由件一律全穿; 本车才谈保留 ——「全穿」一块不留, 否则只留轮胎, 一个轮子名都认不到才退回"整车最低 0.5 格内"(不然车直接掉出世界)
+		if d.AssemblyRootPart ~= clipCar then return nil end -- 只有本车装配体才谈保留: 别人的车 / 同容器的自由件一律全穿
 		if F.carnokeep then return nil end
 		if clipWheels then return wheelish(d) and "轮子" or nil end
 		return ((clipBottom[d] or math.huge) <= (clipLow or math.huge) + 0.5) and "最低" or nil
+	end
+	local function scopeNode(p) -- 穿墙范围 = 本车所在的容器: 从控制部件往上爬到最外层 Model / Folder (最多两级, 不碰 workspace 本身)
+		local sc = p:FindFirstAncestorOfClass("Model") or p
+		for _ = 1, 2 do
+			local up = sc.Parent
+			if up and up ~= workspace and (up:IsA("Model") or up:IsA("Folder")) then sc = up else break end
+		end
+		return sc
 	end
 	local function rejudge() for _, d in ipairs(clipList) do clipKeep[d] = keepRule(d) end end -- 高度用第一次看到时的值: 悬挂压缩 / 车翻身都不改判, 不然轮子会被自己穿掉
 	local function clipInfo() -- 穿墙现状: 留了几块 / 穿掉几块 / 游戏改回来几块 (状态行 / 日志 / 诊断共用)
@@ -443,17 +458,21 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 		local mode = F.carnokeep and "全穿" or (clipWheels and "只留轮子" or "没认到轮子,按最低块兜底")
 		return "开·" .. mode .. " 穿" .. off .. "/留" .. kept .. (back > 0 and ("/游戏改回" .. back) or "")
 	end
-	local function noclip(p) -- 穿墙: 范围只有本车装配体(不是整个 Model 容器, 免得穿掉同容器里别的车和地图件); 锚定的(地面/平台)和人物的不碰. 不悬浮: 探地推起会把车托高、轮子悬空 = "开启上浮"
-		if p ~= clipCar then reclip(); clipCar = p end
+	local function noclip(p) -- 穿墙: 范围 = 本车装配体 + 本车所在容器里的自由件 (别人的车、同容器的杂件一起穿, 这就是"能穿别人的车"); 锚定的(地面/平台/地图件)和人物的不碰. 不悬浮: 探地推起会把车托高、轮子悬空 = "开启上浮"
+		if p ~= clipCar then reclip(); clipCar = p; clipScope = scopeNode(p) end
 		if os.clock() - clipT > 0.5 then -- 半秒补一批新零件
 			clipT = os.clock()
-			local fresh = {}
-			for _, d in ipairs(p:GetConnectedParts(true)) do
+			local fresh, n = {}, 0
+			for _, d in ipairs(clipScope:GetDescendants()) do
+				if n >= 300 then break end -- 大容器分几轮扫完, 不卡帧
 				if d:IsA("BasePart") and not clipSeen[d] and not d.Anchored and not mine(d) then
+					n = n + 1
 					clipSeen[d] = true; clipList[#clipList + 1] = d; fresh[#fresh + 1] = d
-					clipBottom[d] = bottomY(d)
-					if d.CanCollide then clipLow = math.min(clipLow or math.huge, clipBottom[d]) end -- 本来就不碰撞的(影子/玻璃)不参与"最低"
-					if wheelish(d) then clipWheels = true end -- 轮子可能晚一批才出现: 认到就整车重判一次
+					if d.AssemblyRootPart == clipCar then -- 只有本车的零件才参与"最低 / 轮胎"的判断 (按装配体根判, 晚出现的轮子也算本车)
+						clipBottom[d] = bottomY(d)
+						if d.CanCollide then clipLow = math.min(clipLow or math.huge, clipBottom[d]) end -- 本来就不碰撞的(影子/玻璃)不参与"最低"
+						if wheelish(d) then clipWheels = true end -- 轮子可能晚一批才出现: 认到就整车重判一次
+					end
 				end
 			end
 			if #fresh > 0 then rejudge() end
@@ -512,11 +531,11 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 			local span, mass = asmDims(r)
 			if span > S.carmaxstuds then toast(string.format("打中的是地图/大容器, 不是车 (装配体外径 %.0f 格 > 上限 %d, 质量 %.0f)", span, S.carmaxstuds, mass)); return end -- 数字打进提示: 下次误拒/漏拒, 报告自己就能说明为什么
 		end
-		if r.Anchored then toast("这个还锁着(锚定), 等游戏解锁"); return end
 		picked, pickSeat, pickPath, autoPick = r, s, r:GetFullName(), false
 		dropLamps()
-		if s then toast("锁定 " .. seatM.Name .. " · 座位 " .. s.Name)
-		else toast("锁定 " .. inst.Name .. " · 没座位(只能推/飞/翻转, 没油门)") end
+		local lock = r.Anchored and " · 还锁着(锚定), 等游戏解锁" or "" -- 锚定不等于绑不上: 绑着等它解锁, 解锁后推力自己生效 (之前这里直接拒绝, 表现就是"原地绑不上, 要开一会才行")
+		if s then toast("锁定 " .. seatM.Name .. " · 座位 " .. s.Name .. lock)
+		else toast("锁定 " .. inst.Name .. " · 没座位(只能推/飞/翻转, 没油门)" .. lock) end
 	end
 	local function autoBind() -- 没坐没锁: 找最近的"空载具座位"绑上. ponytail: 每秒一次 150 格球查询; 极稠密的地图可改成 DescendantAdded 注册表
 		local r = root()
@@ -592,7 +611,7 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 		if s and autoPick then picked, pickSeat, pickPath, autoPick = nil, nil, nil, false end -- 坐下了: 座位优先, 自动绑的作废; 下车后再找最近的
 		local p, sp = part()
 		if not p and not s and F.carauto and os.clock() - autoT > 1 then autoT = os.clock(); autoBind(); p, sp = part() end -- 一进游戏就绑: 没坐没锁时每秒找一次
-		if p and not sp and p.Anchored and S.carswap then -- 没座位的锚定件(还没解锁/装饰件): 就近改绑到能推的那件. 有座位的车不改绑: 座位所在装配体就是车, 锚着就等游戏解锁
+		if p and not sp and p.Anchored and S.carswap and not carish(p) then -- 没座位、锚定、又不像车(没有轮子/灯/力)的才当装饰件改绑; 拼出来的车哪怕正锁着也绑住等解锁
 			local cand = heavyNear(p)
 			if cand and cand ~= p then
 				picked, pickSeat, pickPath = cand, nil, cand:GetFullName()
@@ -663,7 +682,7 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 		end
 		if clipCar then
 			local kept, off, back = clipInfo()
-			L[#L + 1] = string.format("穿墙: %s · 认到轮子=%s · 保留碰撞=%d 块 · 已穿=%d 块 · 游戏改回=%d 块 (范围=本车装配体, 不是整个 Model 容器)", clipText(), tostring(clipWheels), kept, off, back)
+			L[#L + 1] = string.format("穿墙: %s · 认到轮子=%s · 保留碰撞=%d 块 · 已穿=%d 块 · 游戏改回=%d 块 (范围=%s + 里面的自由件)", clipText(), tostring(clipWheels), kept, off, back, clipScope and clipScope.Name or "-")
 			local shown = 0
 			for _, d in ipairs(clipList) do
 				if clipKeep[d] and d.Parent and shown < 12 then -- 还碰撞的到底是哪几块: "穿墙不管用"的报告里最缺的就是这一条
@@ -672,17 +691,16 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 				end
 			end
 			if shown == 0 then L[#L + 1] = "    一块都没留 (全穿): 车要么被自己的悬浮力撑住, 要么会往下掉" end
-			local mm = p:FindFirstAncestorOfClass("Model")
 			local out = 0
-			if mm then
-				for _, d in ipairs(mm:GetDescendants()) do -- 范围外还碰撞的大件: 同 Model 里不属于本车装配体的东西照样挡车
+			if clipScope then
+				for _, d in ipairs(clipScope:GetDescendants()) do -- 容器里没被穿到的: 锚定的(地面/平台/焊死的装饰)穿墙管不了
 					if out < 8 and d:IsA("BasePart") and d.CanCollide and not clipSeen[d] and not mine(d) then
 						out = out + 1
-						L[#L + 1] = string.format("    范围外仍碰撞 %-22s 距离=%.0f 尺寸=(%.0f,%.0f,%.0f)", d.Name, (d.Position - p.Position).Magnitude, d.Size.X, d.Size.Y, d.Size.Z)
+						L[#L + 1] = string.format("    还在碰撞 %-22s 锚=%s 距离=%.0f 尺寸=(%.0f,%.0f,%.0f)", d.Name, tostring(d.Anchored), (d.Position - p.Position).Magnitude, d.Size.X, d.Size.Y, d.Size.Z)
 					end
 				end
 			end
-			if out == 0 then L[#L + 1] = "    范围外没有还碰撞的部件" end
+			if out == 0 then L[#L + 1] = "    容器里没有还碰撞的自由件 (锚定的不算)" end
 			local skip = 0
 			for _, d in ipairs(p:GetConnectedParts(true)) do -- 本车装配体里被跳过的(锚定/人物的): 车卡住时也可能是这几块
 				if skip < 8 and d:IsA("BasePart") and d.CanCollide and (d.Anchored or mine(d)) then
@@ -830,7 +848,7 @@ do -- ═════════ 漂: 人物推进 (自动找踏板; 找不到�
 		local b = {}
 		for _, c in ipairs(f:GetDescendants()) do if c:IsA("GuiButton") then b[#b + 1] = c end end -- 框名/嵌套深度每个游戏不一样, 整个子树找按钮
 		table.sort(b, function(x, y) return (x.AbsolutePosition or Vector2.zero).X < (y.AbsolutePosition or Vector2.zero).X end)
-		if #b < 2 then if force then say("drift_status", "MobilePedals 里只找到 " .. #b .. " 个按钮 → 用下面的 ▲ 油门 / ▼ 刹车") end; return end
+		if #b < 2 then if force then say("drift_status", "MobilePedals 里只找到 " .. #b .. " 个按钮, 没法绑") end; return end
 		bindSlot(1, b[1])
 		bindSlot(2, b[2])
 		pedalRoot = f
@@ -847,11 +865,16 @@ do -- ═════════ 漂: 人物推进 (自动找踏板; 找不到�
 			vf = mk("VectorForce", { Attachment0 = att, Force = Vector3.zero, RelativeTo = Enum.ActuatorRelativeTo.World, ApplyAtCenterOfMass = true }, att)
 		end
 		local look = flat(r.CFrame.LookVector) or Vector3.zAxis
-		local m, fs = r.AssemblyMass, r.AssemblyLinearVelocity:Dot(look)
+		local v = r.AssemblyLinearVelocity
+		local m, fs = r.AssemblyMass, v:Dot(look)
 		local push = Vector3.zero
 		if F.dgas and F.dbrake then if math.abs(fs) > 0.1 then push = -look * (math.sign(fs) * S.dbrake * m) end
 		elseif F.dgas then push = look * (S.dacc * m)
 		elseif F.dbrake then push = -look * ((fs > 0.1 and S.dbrake or S.dacc) * m) end -- 前进中刹车, 停了倒退
+		if S.dfric > 0 then -- 摩擦系数: 横向滑动速度越大, 反向力越大 (越大越不滑; 0 = 原样)
+			local side = flat(r.CFrame.RightVector) or Vector3.xAxis
+			push = push - side * (v:Dot(side) * m * S.dfric)
+		end
 		vf.Force = push
 	end
 	local function driftOff() if att then att:Destroy(); att = nil end end
@@ -870,10 +893,8 @@ do -- ═════════ 漂: 人物推进 (自动找踏板; 找不到�
 	feature{ kind = "page", id = "drift", tab = "漂", info = function() return "油门=" .. tostring(F.dgas) .. " 刹车=" .. tostring(F.dbrake) .. " " .. slotsText() .. " 状态=" .. tostring(W.drift_status and W.drift_status.Text) end }
 	feature{ kind = "num", key = "dacc", def = 5, label = "加速" }
 	feature{ kind = "num", key = "dbrake", def = 10, label = "刹车" }
+	feature{ kind = "num", key = "dfric", def = 0, label = "摩擦" } -- 摩擦系数: 横向滑动阻尼, 0 = 原样
 	feature{ key = "drift", save = "drift", def = true, label = "推进", tick = driftTick, off = driftOff }
-	feature{ kind = "btn", label = "重绑踏板", fn = function() autoBind(true) end }
-	feature{ kind = "hold", key = "dgas", label = "▲ 油门", h = 36 }
-	feature{ kind = "hold", key = "dbrake", label = "▼ 刹车", h = 36 }
 	feature{ kind = "text", key = "drift_status", label = "…" }
 	feature{ kind = "dump", key = "pedals", dump = pedalLines }
 	feature{ kind = "tick", loop = pedalPoll, every = 1, init = pedalInit, off = pedalStop }
