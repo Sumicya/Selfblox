@@ -1123,6 +1123,31 @@ gasB.InputEnded:Fire(input("Touch"))
 seat.props.Throttle = 0
 step(1 / 60, 3)
 
+print("\n[6b6] 推力四道闸: 顶速 (carvmax) / 侧翻 / 横滑 / 打转 (实测 acc=1000 把车顶到 1005 格/秒后翻着滑 = 方向乱)")
+local fwdA = seat.props.CFrame.LookVector; fwdA = Vector3.new(fwdA.X, 0, fwdA.Z).Unit
+local sideA = fwdA:Cross(Vector3.yAxis)
+gasB.InputBegan:Fire(input("Touch"))
+seat.props.AssemblyLinearVelocity = fwdA * 280 -- 接近顶速 (300): 力要开始收
+step(1 / 60, 3)
+local pNear = vfEnt.Force.Magnitude
+seat.props.AssemblyLinearVelocity = fwdA * 320 -- 过顶速: 一点力都不给
+step(1 / 60, 3)
+ok(pNear > 0 and pNear < 10000, "接近顶速开始收力 (" .. string.format("%.0f", pNear) .. " < 10000)")
+ok(vfEnt.Force.Magnitude == 0, "过顶速不再推 (300 格/秒 ≈ 300 km/h, 再快车会翻) " .. tostring(vfEnt.Force))
+seat.props.AssemblyLinearVelocity = sideA * 60 -- 横着滑: 推它只会越滑越歪
+step(1 / 60, 3)
+ok(vfEnt.Force.Magnitude == 0, "横着滑不给推力 (侧滑 60 > max(15, 0.6×速度))")
+seat.props.AssemblyLinearVelocity = fwdA * 20
+seat.props.AssemblyAngularVelocity = Vector3.new(0, 5, 0) -- 自己在打转
+step(1 / 60, 3)
+ok(vfEnt.Force.Magnitude == 0 and seat.props.CFrame.UpVector.Y >= 0, "打转中不给推力 (等它稳下来)")
+seat.props.AssemblyAngularVelocity = Vector3.zero
+seat.props.AssemblyLinearVelocity = Vector3.zero
+step(1 / 60, 5)
+ok(vfEnt.Force.Magnitude > 1000, "稳下来、速度归零: 推力又给上 (" .. string.format("%.0f", vfEnt.Force.Magnitude) .. ")")
+gasB.InputEnded:Fire(input("Touch"))
+step(1 / 60, 3)
+
 print("\n[6b3] 转向走角速度: 拖滑条 = 真方向盘, 松手收回; 车不归你这边模拟时状态行直说没生效")
 tapTitle() -- 折起来才能拖滑条
 local lookS = seat.props.CFrame.LookVector
@@ -1352,6 +1377,7 @@ ok(dm and dm:find("sibs ", 1, true) ~= nil, "快照里有各模块状态")
 ok(dm and dm:find("PlayerGui 树", 1, true) == nil, "快照里不再带整个 PlayerGui 树 (原来是给「选按钮」准备的)")
 ok(dm and dm:find("CAr", 1, true) == nil and dm:find("=== CAR", 1, true) ~= nil, "快照里有车结构")
 ok(dm and dm:find("驱动: 面板加速", 1, true) ~= nil, "快照里有「驱动」一行 (谁在给力 / 车姿态 / 侧滑, 方向出问题时一眼看得出)")
+ok(dm and dm:find("顶速 carvmax=", 1, true) ~= nil, "快照的「驱动」一行写明顶速设置")
 ok(CLIP ~= nil and CLIP:find("Selfblox 诊断", 1, true) ~= nil, "快照同时进了剪贴板")
 ok(type(_G.SB_DUMP) == "function", "也可以用 _G.SB_DUMP() 手动打")
 
