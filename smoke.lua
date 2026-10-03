@@ -72,7 +72,7 @@ local VERIFIED = {
 	TextButton = words("Activated AutoButtonColor BackgroundColor3 BackgroundTransparency BorderSizePixel Font InputBegan InputEnded LayoutOrder Position Size Text TextColor3 TextSize TextXAlignment TextYAlignment"),
 	TextLabel = words("AbsolutePosition AnchorPoint AutomaticSize BackgroundColor3 BackgroundTransparency BorderSizePixel Font InputBegan InputEnded LayoutOrder Position RichText Size Text TextColor3 TextSize TextStrokeTransparency TextWrapped TextXAlignment TextYAlignment Visible"),
 	UICorner = words("CornerRadius"),
-	UIDragDetector = words("BoundingUI DragAxis DragContinue DragEnd DragStart DragStyle"),
+	UIDragDetector = words("BoundingUI DragAxis DragContinue DragEnd DragStart DragStyle Enabled SetDragStyleFunction"),
 	UIListLayout = words("FillDirection Padding"),
 	UIPadding = words("PaddingLeft PaddingRight"),
 	UserInputService = words("InputBegan InputEnded JumpRequest"),
@@ -93,7 +93,7 @@ local ENUM_OK = { -- 枚举字面量 (KeyCode 是按配置字符串动态取的,
 	RaycastFilterType = words("Exclude"),
 	TextXAlignment = words("Center"),
 	TextYAlignment = words("Center"),
-	UIDragDetectorDragStyle = words("TranslateLine"),
+	UIDragDetectorDragStyle = words("TranslateLine Scriptable"),
 	UserInputType = words("MouseButton1 Touch"),
 }
 local function guardMember(t, k) -- 读/写实例成员时调用
@@ -197,6 +197,7 @@ function methods.GetConnectedParts(self) -- 假装配体: 同一容器里 Assemb
 	if not seen[self] then o[#o + 1] = self end
 	return o
 end
+function methods.SetDragStyleFunction(self, f) rawget(self, "props").StyleFn = f end -- 官方文档: DragStyle=Scriptable 时用它算位移, 返回 nil = 不动
 function methods.SetNetworkOwner() error("SetNetworkOwner 客户端不让调 (上一版就是这一句把车搞成完全绑不上)") end
 function methods.GetPartBoundsInRadius() return _G.__radius or {} end
 
@@ -957,29 +958,42 @@ ok(track ~= nil, "滑条建出来了")
 local knob, kd = track and track:FindFirstChild("SB_Knob"), nil
 for _, d in ipairs(track:GetDescendants()) do if d.ClassName == "UIDragDetector" then kd = d end end
 ok(knob ~= nil and kd ~= nil, "圆点 + 全宽拖拽手柄都在")
+ok(kd and kd.props.DragStyle and kd.props.DragStyle.Name == "Scriptable", "拖拽器是 Scriptable: 引擎只报事件、一个像素都不动 (没有 BoundingUI 绑定 → 手柄不会被引擎挪出轨道, 整条都能按)")
+local testHeld = false
+local function fingerDown() _G.__SVC.UserInputService.props.InputBegan:Fire(input("Touch")) end
+local function fingerUp() _G.__SVC.UserInputService.props.InputEnded:Fire(input("Touch")) end
+local function dragTo(x) -- 真机顺序: 手指按下 → DragStart → DragContinue
+	if not testHeld then testHeld = true; fingerDown() end
+	kd.DragStart:Fire(Vector2.new(x, 0))
+	kd.DragContinue:Fire(Vector2.new(x, 0))
+end
+local function dragEnd() -- 松手: DragEnd + 手指抬起 (真机的 DragEnd 一定带抬手位置)
+	kd.DragEnd:Fire(Vector2.new(999, 0))
+	if testHeld then testHeld = false; fingerUp() end
+end
 local handle
 for _, d in ipairs(track:GetDescendants()) do if d.Name == "SB_Handle" then handle = d end end
 ok(track.AnchorPoint.X == 0 and track.Position.X.Scale == 0 and track.Position.X.Offset == 18 and track.Position.Y.Scale == 0.5,
 	"滑条放在屏幕左侧、上下居中 (底部正中会被手机的手势条和游戏自己的按钮吃掉)")
 ok(handle and handle.Visible == false, "面板开着 → 滑条固定, 不接管触摸")
 local look0 = seat.props.CFrame.LookVector
-kd.DragContinue:Fire(Vector2.new(999, 0))
+dragTo(999)
 step(1 / 60, 12)
 ok((seat.props.CFrame.LookVector - look0).Magnitude < 0.01, "面板开着时拖它 → 车不动")
-kd.DragEnd:Fire()
+dragEnd()
 tapTitle() -- 折起来 → 才可拖
 ok(handle.Visible == true, "面板折起来 → 滑条可拖")
-kd.DragContinue:Fire(Vector2.new(999, 0))
+dragTo(999)
 step(1 / 60, 12)
 local turned = (seat.props.CFrame.LookVector - look0).Magnitude
 ok(turned > 0.05, "拖到最右 → 车真的转了 " .. string.format("%.2f", turned))
 ok(knob.Position.X.Offset > 10, "圆点跟着手指跑 (偏 " .. knob.Position.X.Offset .. "px)")
 seat.props.AssemblyLinearVelocity = Vector3.zero -- 停着也要能打方向
 local look1 = seat.props.CFrame.LookVector
-kd.DragContinue:Fire(Vector2.new(999, 0))
+dragTo(999)
 step(1 / 60, 10)
 ok((seat.props.CFrame.LookVector - look1).Magnitude > 0.02, "车停着, 拖滑条照样转")
-kd.DragEnd:Fire()
+dragEnd()
 step(1 / 60, 2)
 ok(knob.Position.X.Offset == 0 and knob.Position.X.Scale == 0.5, "松手回中, 平时固定")
 ok(handle.Position.X.Scale == 0 and handle.Position.X.Offset == 0 and handle.Position.Y.Scale == 0 and handle.Position.Y.Offset == 0, "松手后手柄回到原位, 仍盖满整条轨道 (没被推到右下半格)")
@@ -1005,10 +1019,10 @@ for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" 
 ok(stTxt ~= nil, "状态行直接标出锚定 (" .. tostring(stTxt) .. ")")
 tapTitle() -- 面板状态与拖动无关了, 这里只是顺手折一下
 local lookA = seat.props.CFrame.LookVector
-kd.DragContinue:Fire(Vector2.new(999, 0))
+dragTo(999)
 step(1 / 60, 10)
 ok((seat.props.CFrame.LookVector - lookA).Magnitude > 0.02, "锚定车的转向照样有效 (走 CFrame)")
-kd.DragEnd:Fire()
+dragEnd()
 tapTitle()
 seat.props.Anchored = false
 step(1 / 60, 3)
@@ -1063,10 +1077,10 @@ ok(alwaysBtn ~= nil, "车页有「滑条常可拖」")
 click(alwaysBtn)
 ok(handle and handle.Visible == true, "开了之后面板开着也能拖")
 local lookA2 = seat.props.CFrame.LookVector
-kd.DragContinue:Fire(Vector2.new(999, 0))
+dragTo(999)
 step(1 / 60, 10)
 ok((seat.props.CFrame.LookVector - lookA2).Magnitude > 0.03, "面板开着也能转向了")
-kd.DragEnd:Fire()
+dragEnd()
 click(alwaysBtn)
 ok(handle and handle.Visible == false, "关掉 → 回到「折叠才能拖」")
 
@@ -1155,19 +1169,26 @@ print("\n[6b7] 松手兜底: 真机上 DragEnd 丢了, 手指抬起也一定停�
 local knob7
 for _, d in ipairs(all()) do if d.Name == "SB_Knob" then knob7 = d end end
 if bd.Visible then tapTitle() end -- 折起来才是可拖状态
-kd.DragContinue:Fire(Vector2.new(999, 0)) -- 拖着: 在转
+dragTo(999) -- 拖着: 在转
 step(1 / 60, 5)
 ok(math.abs(seat.props.AssemblyAngularVelocity.Y) > 1e-3, "拖着滑条: 车在转")
 _G.__SVC.UserInputService.props.InputEnded:Fire(input("Touch")) -- 手指抬起 (DragEnd 故意不发: 模拟它丢了)
+testHeld = false -- 手指已被这一行抬起, 测试自己的记账跟上
 step(1 / 60, 3)
 ok(math.abs(seat.props.AssemblyAngularVelocity.Y) < 1e-6, "DragEnd 没来, 手指抬起也立刻停转 (原来会一直转)")
 ok(knob7 and knob7.Position.X.Offset == 0, "圆点也回中, 不假装还拖着")
+
+print("\n[6b8] 幽灵拖拽: 手指早抬了, 引擎还发 DragContinue 也不能拐车 (\"不按转向按加速自己掉头\"的根)")
+kd.DragContinue:Fire(Vector2.new(999, 0)) -- 真机上就是这么卡的: 事件不停, 手指早没了
+step(1 / 60, 10)
+ok(math.abs(seat.props.AssemblyAngularVelocity.Y) < 1e-6, "没手指按着 → 拖拽事件被忽略, 车不转")
+ok(knob7 and knob7.Position.X.Offset == 0, "圆点也不跟着跑 (不会假装还在拖)")
 if not bd.Visible then tapTitle() end -- 展开回去, 后面 [6b3] 自己会折
 
 print("\n[6b3] 转向走角速度: 拖滑条 = 真方向盘, 松手收回; 车不归你这边模拟时状态行直说没生效")
 tapTitle() -- 折起来才能拖滑条
 local lookS = seat.props.CFrame.LookVector
-kd.DragContinue:Fire(Vector2.new(999, 0))
+dragTo(999)
 step(1 / 60, 3)
 ok(math.abs(seat.props.AssemblyAngularVelocity.Y) > 1e-3, "非锚定车: 拖滑条给的是绕 Y 的角速度 (不是每帧硬传送车头) " .. string.format("%.2f rad/s", seat.props.AssemblyAngularVelocity.Y))
 step(1 / 60, 30)
@@ -1176,7 +1197,7 @@ step(1 / 60, 20) -- 自检窗口 0.5s 满上后, 再等状态行按 0.2s 的节�
 local stTxt
 for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" and d.Text:find("转向 ", 1, true) and d.Text:find("°/s", 1, true) then stTxt = d.Text end end
 ok(stTxt ~= nil, "状态行报实测转速 (" .. tostring(stTxt) .. ")")
-kd.DragEnd:Fire()
+dragEnd()
 step(1 / 60, 3)
 ok(math.abs(seat.props.AssemblyAngularVelocity.Y) < 1e-6, "松手 → 角速度收回, 车不会一直自转")
 local dumpSteer
@@ -1184,7 +1205,7 @@ local turnBox
 for _, d in ipairs(all()) do if d:IsA("TextBox") and d.Text == "2.2" then turnBox = d end end
 ok(turnBox ~= nil, "找得到「转向」数值框")
 turnBox.Text = "50"; turnBox.FocusLost:Fire()
-kd.DragContinue:Fire(Vector2.new(999, 0))
+dragTo(999)
 step(1 / 60, 3)
 ok(math.abs(seat.props.AssemblyAngularVelocity.Y) <= 8.001 and math.abs(seat.props.AssemblyAngularVelocity.Y) > 7.9,
 	"转向填 50 (陀螺值) 时被 turnmax 截到 ≈8 rad/s (458°/s) " .. string.format("%.2f", seat.props.AssemblyAngularVelocity.Y))
@@ -1193,18 +1214,18 @@ step(1 / 60, 60)
 for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" and d.Text:find("转向 ", 1, true) then spinText = d.Text end end
 ok(spinText ~= nil and tonumber(spinText:match("转向 (%-?%d+)°/s")) ~= nil and math.abs(tonumber(spinText:match("转向 (%-?%d+)°/s"))) <= 460,
 	"状态行报的转速也在上限内 (" .. tostring(spinText) .. ")")
-kd.DragEnd:Fire()
+dragEnd()
 turnBox.Text = "2.2"; turnBox.FocusLost:Fire()
 step(1 / 60, 3)
 local function noSimAll(v) -- 模拟"服务器接管这辆车": 整个装配体都不认我们写的角速度 (只挡座位不够 —— 脚本写的是装配体根)
 	for _, d in ipairs(INSTANCES) do if d.props.AssemblyRootPart == seat.props.AssemblyRootPart then d.props.__noSim = v end end
 end
 noSimAll(true)
-kd.DragContinue:Fire(Vector2.new(999, 0))
+dragTo(999)
 step(1 / 60, 60) -- 自检窗口 0.5s 满一次, 再等状态行按 0.2s 的节奏刷出来
 for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" and d.Text:find("转向没生效", 1, true) then dumpSteer = d.Text end end
 ok(dumpSteer ~= nil, "车不归你这边模拟时, 状态行直说\"转向没生效\" (" .. tostring(dumpSteer) .. ")")
-kd.DragEnd:Fire()
+dragEnd()
 noSimAll(nil)
 step(1 / 60, 3)
 tapTitle()

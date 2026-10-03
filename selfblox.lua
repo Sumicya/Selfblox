@@ -14,7 +14,7 @@
 --            gethui / isfile / writefile 缺失时退回 CoreGui 并跳过存盘, 面板照样起得来
 --   保持 Lua 5.4 可解析子集(不用 +=/continue/字符串插值), 这样 smoke.lua 能离线跑: 可测试性 > 语法糖
 
-local VERSION = "26.10.3.13" -- 单一版本来源: 发布时改成当次 yy.m.d (Asia/Shanghai), 同一天发第二次补 .ci, 再打 v<VERSION> 标签
+local VERSION = "26.10.3.14" -- 单一版本来源: 发布时改成当次 yy.m.d (Asia/Shanghai), 同一天发第二次补 .ci, 再打 v<VERSION> 标签
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
@@ -344,7 +344,7 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 	local lamps, lampSaved, col = {}, setmetatable({}, { __mode = "k" }), setmetatable({}, { __mode = "k" })
 	local rp = RaycastParams.new()
 	rp.FilterType = Enum.RaycastFilterType.Exclude
-	local track, knob, handle, kd, dragX -- 方向盘控件 (init 里建)
+	local track, knob, handle, kd, dragX, held, HOME, dbgSteer -- 方向盘控件 (init 里建); held = 正按着的手指/鼠标数, HOME = 手柄原位, dbgSteer = 最近一次拖动事件 (诊断)
 	local live = false -- 现在能不能拖: 面板折起来 (或开了「滑条常可拖」) 才是 true
 	local stCar, stAvSet = nil, false -- 这套角速度转向是我们写上去的: 松手/下车要收回来, 不然车会一直自转
 	local stCmd, stAct, stWin, stIdle, stLook = 0, 0, 0, 0, nil -- 转向自检: 命令转了多少 vs 车头真的转了多少
@@ -616,21 +616,30 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 		mk("UICorner", { CornerRadius = UDim.new(1, 0) }, track)
 		knob = mk("Frame", { Name = "SB_Knob", AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(KH, KH), BackgroundColor3 = Color3.fromRGB(95, 65, 135), BorderSizePixel = 0, ZIndex = 11 }, track)
 		mk("UICorner", { CornerRadius = UDim.new(1, 0) }, knob)
-		local HOME = UDim2.new(0, 0, 0, 0) -- 手柄的家: 全宽 + 锚点(0,0). 松手要回到这里; 原来照抄圆点的 fromScale(0.5,0.5), 一松手整条手柄被推到右下半格, 左半条就按不到了
+		HOME = UDim2.new(0, 0, 0, 0) -- 手柄的家: 全宽 + 锚点(0,0). 松手要回到这里; 原来照抄圆点的 fromScale(0.5,0.5), 一松手整条手柄被推到右下半格, 左半条就按不到了
 		handle = mk("Frame", { Name = "SB_Handle", Position = HOME, Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Active = true, ZIndex = 12 }, track) -- 看不见的手柄盖在最上面, 整条都能按
-		kd = mk("UIDragDetector", { DragStyle = Enum.UIDragDetectorDragStyle.TranslateLine, DragAxis = Vector2.new(1, 0), BoundingUI = track }, handle)
-		on(kd.DragContinue, function(p) dragX = p.X end) -- 官方文档: DragContinue 给的是 inputPosition: Vector2 (屏幕坐标), 不是 InputObject; 原来按 i.Position 读, 在 Vector2 上会直接抛错
-		on(kd.DragEnd, function() dragX = nil; handle.Position = HOME end)
+		-- 拖拽器改成 Scriptable: 引擎只报事件, 一个像素都不动 (官方文档: Scriptable 的位移由 SetDragStyleFunction 算, 返回 nil = 不动).
+		-- 原来是 TranslateLine + BoundingUI = track: 引擎去挪"手柄", 而手柄和轨道一样大 → 挪一次就偏出轨道, 轨道其余部分从此按不到
+		-- (= 用户报的"背景不动, 只有圆点动" / "折叠时拖不了"; 那个 BoundingUI 绑定我们根本不需要, 圆点位置是自己按手指算的)
+		kd = mk("UIDragDetector", { DragStyle = Enum.UIDragDetectorDragStyle.Scriptable }, handle)
+		kd:SetDragStyleFunction(function() return nil end) -- nil = 别让引擎挪任何东西
+		on(kd.DragStart, function(p) handle.Position = HOME; dragX = nil; dbgSteer = string.format("按住 x=%.0f @%s", (p and p.X) or 0, clock(true)) end) -- 诊断: 有"按住"这一行 = 摸到滑条了
+		on(kd.DragContinue, function(p) if held > 0 then dragX = p.X end end) -- 只认"有手指按着"的拖动: 手指抬了以后引擎再乱发 DragContinue 也拐不动车 (残留一个事件 = 车一直自己转)
+		on(kd.DragEnd, function(p) dragX = nil; handle.Position = HOME; dbgSteer = string.format("松手 x=%.0f @%s", (p and p.X) or 0, clock(true)) end)
 		-- 兜底: 真机上 DragEnd 会丢 (触摸被别的 UI 抢走/手指滑出边界), 丢一个就"松手了车还在转".
 		-- 自己数按下的手指: 全抬起 = 一定松手, 不管 DragEnd 来没来
-		local held = 0
+		held = 0
 		on(UIS.InputBegan, function(i)
 			if i.UserInputType == Enum.UserInputType.Touch or i.UserInputType == Enum.UserInputType.MouseButton1 then held = held + 1 end
 		end)
 		on(UIS.InputEnded, function(i)
 			if i.UserInputType == Enum.UserInputType.Touch or i.UserInputType == Enum.UserInputType.MouseButton1 then
 				held = math.max(held - 1, 0)
-				if held == 0 then dragX = nil; handle.Position = HOME; steerRelease() end -- 松手: 转向立刻收回, 车不停在转
+				if held == 0 then
+					if dragX ~= nil then dbgSteer = "手指抬起 → 收回转向 (DragEnd 没来) @" .. clock(true) end
+					dragX = nil; handle.Position = HOME; steerRelease()
+					kd.Enabled = false; kd.Enabled = true -- 拖拽器也硬重置一下: 引擎那边的拖拽要是没结束, 新手按上去会没反应 ("折叠时拖不了")
+				end
 			end
 		end)
 		foldHooks[#foldHooks + 1] = function(open) setLive(F.steeropen or not open) end -- 钩子收到的是"面板开着吗", 滑条要的是"能不能拖"
@@ -755,6 +764,7 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 		local lv2 = flat(p.CFrame.LookVector) or Vector3.zAxis
 		local headAng = math.deg(math.acos(math.clamp((mv.Magnitude > 1e-3 and mv.Unit or lv2):Dot(lv2), -1, 1))) -- 车头与"运动方向"差多少度: 自己掉头时这里会一路涨
 		L[#L + 1] = string.format("驱动: 车头与运动方向差=%.0f° 角速度=%.1f/s (掉头就看这两个: 差角涨/角速度不为 0 = 车在自己转)", headAng, p.AssemblyAngularVelocity.Magnitude)
+		L[#L + 1] = string.format("滑条: %s · 现在 手指=%d 拖着=%s 圆点位移=%.0fpx (拖不了/自己掉头看这一行: 没「按住」=触摸没到滑条上)", dbgSteer ~= "" and dbgSteer or "(还没摸过)", held or 0, dragX ~= nil and "是" or "否", (knob and knob.Position.X.Offset) or 0)
 		L[#L + 1] = string.format("驱动: 面板加速=%s 减速=%s 定速=%s · 游戏座位油门=%.2f 方向=%.2f · 车姿态 up.Y=%.2f · 侧滑=%.1f/s 速度=%.1f · 实际推力=%.0f%s",
 			tostring(F.accel), tostring(F.decel), tostring(F.cruise), dbgThr, dbgGst, dbgUp, dbgLat, dbgSpd, dbgPush,
 			"")
