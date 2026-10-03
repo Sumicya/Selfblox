@@ -773,7 +773,7 @@ ok(findBtn("模式") ~= nil, "模式按钮循环后还在")
 print("\n[6] 车模块: 坐进假车")
 humanoid.props.SeatPart = seat
 seat.props.Throttle, seat.props.Steer = 1, 0.5
-for _, b in ipairs(buttons()) do if starts(b.Text, "穿墙") and ends(b.Text, " 关") then click(b) end end -- moc + sibs 两个穿墙都开
+for _, b in ipairs(buttons()) do if starts(b.Text, "穿墙") and ends(b.Text, " 关") then click(b) end end -- 穿墙(人) + 穿墙(车) 两个都开
 step(1 / 60, 10)
 ok(seat.MaxSpeed == math.huge, "上车后座位限速抬到无穷")
 local clipOn = 0
@@ -1207,7 +1207,7 @@ bob.props.Team = teamRed
 
 -- ── 穿墙附带: 别人挡不住你 (只改本地那几份; 关掉穿墙 / 卸载都要还原) ──
 local clips = {}
-for _, b in ipairs(buttons()) do if starts(b.Text, "穿墙 ") then clips[#clips + 1] = b end end -- 开关按钮的文字带 " 开" / " 关"
+for _, b in ipairs(buttons()) do if starts(b.Text, "穿墙") then clips[#clips + 1] = b end end -- 开关按钮的文字带 " 开" / " 关"; 标签是 穿墙(人) / 穿墙(车)
 ok(#clips == 2, "「动」和「车」各有一个「穿墙」开关 (找到 " .. #clips .. " 个)")
 local clipMoc, clipCar = clips[1], clips[2] -- 树里的顺序 = 建页顺序: 动 在前, 车 在后
 ok(bobRoot.CanCollide == true and hrp.CanCollide == true, "起点: 别人的部件和我自己的都还能碰撞")

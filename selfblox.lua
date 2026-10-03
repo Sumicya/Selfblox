@@ -318,7 +318,7 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 	local function flyTick() local _, h, r = body(); if h then if h.SeatPart then W.fly(false) else doFly(r, h) end end end
 	local function jumpTick() local _, h = body(); if h then baseOf(h); if h.UseJumpPower then h.JumpPower = S.jump else h.JumpHeight = S.jump end end end
 	local function spinTick() local _, h, r = body(); if h then if h.SeatPart then if spinAV then stopSpin() end else doSpin(r) end end end
-	local function clipTick() othersNoclip(); local c = body(); if c then noclip(c) end end -- 人穿墙开着时连别人一起忽略 (开车也能用)
+	local function clipTick() othersNoclip(); local c = body(); if c then noclip(c) end end -- 「穿墙(人)」开着时连别人一起忽略 (开车也能用)
 	local function nvTick() if body() and os.clock() - nvT > 0.5 then nvT = os.clock(); nvOn() end end -- 游戏会重置光照, 半秒补一次
 	feature{ kind = "page", id = "moc", tab = "动" }
 	feature{ key = "speed", label = "速度", num = { "spd", 16 }, tick = speedTick, set = function() moving = false end, off = restore }
@@ -327,7 +327,7 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 	feature{ key = "jump", label = "高跳", num = { "jump", 50 }, tick = jumpTick, off = restore }
 	feature{ key = "spin", label = "旋转", num = { "spin", 50 }, tick = spinTick, off = stopSpin }
 	feature{ key = "infjump", label = "无限跳", init = function() on(UIS.JumpRequest, function() local h = hum(); if F.infjump and h then h:ChangeState(Enum.HumanoidStateType.Jumping) end end) end }
-	feature{ key = "clip", label = "穿墙", tick = clipTick, off = function() local still = F.carclip; reclipAll(col); if not still then othersBack() end end } -- 先取同伙的值: 关一个穿墙不能把另一个开着的连带放掉
+	feature{ key = "clip", label = "穿墙(人)", tick = clipTick, off = function() local still = F.carclip; reclipAll(col); if not still then othersBack() end end } -- 先取同伙的值: 关一个穿墙不能把另一个开着的连带放掉
 	feature{ key = "nv", label = "夜视", tick = nvTick, set = function(v) if v then nvOn() end end, off = nvOff }
 	feature{ kind = "cycle", key = "nocd", def = "off", cycle = { "off", "normal", "force" }, text = { off = "秒互动 关", normal = "秒互动 普通", force = "秒互动 强制" }, lit = true, set = setNocd, off = function() setNocd("off") end,
 		init = function() on(workspace.DescendantAdded, function(p) if F.nocd ~= "off" then patch(p) end end) end }
@@ -616,7 +616,7 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 		local gst, thr, st = 0, 0, steer()
 		if sp and sp:IsA("VehicleSeat") then gst, thr, st = sp.Steer, sp.Throttle, math.clamp(st + sp.Steer, -1, 1) end -- 游戏自带的手机油门/方向盘也吃
 		local acc, dec = F.accel or thr > 0, F.decel or thr < 0
-		if os.clock() - statT > 0.2 then statT = os.clock(); say("car_status", (m and m.Name or p.Name) .. " · " .. math.floor(spd + 0.5) .. (s and "" or " · 准星锁定") .. (anch and " · 锚定(等游戏解锁)" or "") .. (F.carclip and #clipList > 0 and (" · 穿墙 " .. clipText()) or "")) end
+		if os.clock() - statT > 0.2 then statT = os.clock(); say("car_status", (m and m.Name or p.Name) .. " · " .. math.floor(spd + 0.5) .. (s and "" or " · 准星锁定") .. (anch and " · 锚定(等游戏解锁)" or "") .. (F.carclip and #clipList > 0 and (" · 穿墙(车) " .. clipText()) or "")) end
 		if F.carclip then noclip(p) elseif clipCar then reclip() end
 		if F.cfly then -- 飞车: 摇杆(前后左右) + 面板按钮都吃; 松手悬停
 			if not lv then lv = mk("LinearVelocity", { Attachment0 = att, MaxForce = math.huge, VectorVelocity = Vector3.zero, RelativeTo = Enum.ActuatorRelativeTo.World }, att) end
@@ -747,11 +747,11 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 	local function carInfo()
 		local p, s = part()
 		if p and vf then
-			return string.format("抓地=%s/转向=%s/过弯上限=%s 部件=%s%s 推力=%.0f(%.1f/kg) 质量=%.0f 速度=%.0f%s 定速=%s@%.0f 飞车=%s 穿墙=%s 急刹=%s%s",
+			return string.format("抓地=%s/转向=%s/过弯上限=%s 部件=%s%s 推力=%.0f(%.1f/kg) 质量=%.0f 速度=%.0f%s%s%s",
 				S.grip, S.turn, S.turncap, p:GetFullName(), seatInfo(s), vf.Force.Magnitude, vf.Force.Magnitude / math.max(p.AssemblyMass, 1), p.AssemblyMass,
-				p.AssemblyLinearVelocity.Magnitude, p.Anchored and " 锚定(引擎不让推)" or "", tostring(F.cruise), target, tostring(F.cfly), tostring(F.carclip), tostring(F.brake), holdInfo())
+				p.AssemblyLinearVelocity.Magnitude, p.Anchored and " 锚定(引擎不让推)" or "", F.cruise and string.format(" 定速@%.0f", target) or "", holdInfo())
 		end
-		return "抓地=" .. S.grip .. "/转向=" .. S.turn .. "/过弯上限=" .. S.turncap .. " 部件=-" .. seatInfo(nil) .. " 定速=" .. tostring(F.cruise) .. "@" .. math.floor(target) .. " 飞车=" .. tostring(F.cfly) .. " 穿墙=" .. tostring(F.carclip) .. " 急刹=" .. tostring(F.brake) .. holdInfo()
+		return "抓地=" .. S.grip .. "/转向=" .. S.turn .. "/过弯上限=" .. S.turncap .. " 部件=-" .. seatInfo(nil) .. (F.cruise and string.format(" 定速@%.0f", target) or "") .. holdInfo()
 	end
 	local function carStop() detach(); reclip(); dropLamps(); horn(false); if curSeat and curMax then curSeat.MaxSpeed = curMax end end
 	feature{ kind = "page", id = "sibs", tab = "车", info = carInfo }
@@ -761,7 +761,7 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 	feature{ kind = "num", key = "turn", def = 2.2, label = "转向" }
 	feature{ kind = "btn", label = "换车(准星)", fn = pick }
 	local function reclipNow() if clipCar then reclip() end end -- 「全穿」开关: 改保留规则后整车立刻重判, 不用等下一批 (0.5 秒) 才生效
-	feature{ key = "carclip", save = "carclip", label = "穿墙",
+	feature{ key = "carclip", save = "carclip", label = "穿墙(车)",
 		set = function() if F.carclip or F.clip then othersNoclip() else othersBack() end end,
 		off = function() local still = F.clip; if not still then othersBack() end end } -- 先取同伙的值: 上车里的开关时 handler 已经把 F.carclip 置 false 了, 直接读会把还在开的那个穿墙也一起放掉
 	feature{ key = "carnokeep", save = "carnokeep", label = "全穿", set = reclipNow, off = reclipNow } -- 一块都不留: 悬浮车/游戏自己撑车的用; 普通车会掉出世界
@@ -1288,7 +1288,7 @@ local function dumpLines()
 		"角色 " .. tostring(me.Name) .. " 队=" .. tostring(me.Team and me.Team.Name) .. " 坐=" .. tostring(hum() and hum().SeatPart and (hum().SeatPart:GetFullName())) .. " 根=" .. tostring(root() and root().Anchored),
 		"别人穿墙: 人物 " .. oc .. " 块 · 载具 " .. ov .. " 块 (关着就是 0; 载具 = 别人正坐着的车, 不含没人开的)" }
 	local r = root()
-	if r then L[#L + 1] = string.format("角色 位置=(%.0f,%.0f,%.0f) 速度=%.0f 血=%s", r.Position.X, r.Position.Y, r.Position.Z, r.AssemblyLinearVelocity.Magnitude, tostring(hum() and hum().Health)) end
+	if r then L[#L + 1] = string.format("位置=(%.0f,%.0f,%.0f) 速度=%.0f 血=%s", r.Position.X, r.Position.Y, r.Position.Z, r.AssemblyLinearVelocity.Magnitude, tostring(hum() and hum().Health)) end
 	L[#L + 1] = "-- 模块状态"
 	for _, line in ipairs(pageInfos()) do L[#L + 1] = "  " .. line end
 	for _, f in ipairs(FAILED) do L[#L + 1] = "  ✗ " .. f end
