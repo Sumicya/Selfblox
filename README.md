@@ -25,14 +25,15 @@ _G.SB = { spd = 60, flyspd = 120, hornkey = "H", only = { "moc", "sibs" } }
 ```bash
 cd /sdcard/Download
 curl -fLO https://raw.githubusercontent.com/Sumicya/Selfblox/HEAD/selfblox.lua
-mv selfblox.lua Selfblox-26.10.5.31.31.lua
-ls -l Selfblox-26.10.5.31.31.lua   # 有字节数才是真的下来了
+V=$(sed -n 's/^local VERSION = "\([^"]*\)".*/\1/p' selfblox.lua | head -1)   # 版本从刚下的脚本里现取, 不写死
+mv selfblox.lua "Selfblox-$V.lua"
+ls -l "Selfblox-$V.lua"   # 有字节数才是真的下来了
 ```
 
-`readfile` 只读 Delta 的工作目录，所以离线加载前要把副本放进去（Termux 需要存储权限，先跑 `termux-setup-storage`），再在执行器里用 `loadstring(readfile("Selfblox-26.10.5.31.31.lua"))()` 加载：
+`readfile` 只读 Delta 的工作目录，所以离线加载前要把副本放进去（Termux 需要存储权限，先跑 `termux-setup-storage`），再在执行器里用 `loadstring(readfile("Selfblox-<版本>.lua"))()` 加载（`<版本>` 换成你刚复制进去的那个文件名，例如 `Selfblox-26.10.5.32.32.lua`，仅为格式示例）：
 
 ```bash
-cp /sdcard/Download/Selfblox-26.10.5.31.31.lua /storage/emulated/0/Delta/workspace/
+cp "$(ls -t /sdcard/Download/Selfblox-*.lua | head -1)" /storage/emulated/0/Delta/workspace/   # 取最新那份备份
 ```
 
 不用了按名字前缀清掉本次下载和工作目录里的副本，不删别的东西：
@@ -101,7 +102,7 @@ luau smoke.lua    # 要官方 Luau(工作流里钉的是 0.741); 本地怎么编
 
 `selfblox.lua` 用的是 Luau 专属语法（字符串插值、`+=`），Lua 5.4 解析不了这份自检；Termux 上没有现成的 Luau 包，手机上就以 CI 结果为准。
 
-CI 跑的是同一份自检：`.github/workflows/build.yml`（全程 `contents: read`）在 push 与 pull request 上下载官方 Luau 0.741 执行 `smoke.lua`。规范自检不在 CI 里（`4115ed3` 起改由 agent 每轮自己做）。
+CI 跑的是同一份自检：`.github/workflows/build.yml` 在 push 与 pull request 上下载官方 Luau 0.741 执行 `smoke.lua`，通过后把 `selfblox.lua` 打包成 artifact `Selfblox-<版本>`（保留 5 天，并自动只留最近 5 个）。构建与检查 job 只读（`contents: read`），只有清理 job 有 `actions: write`。规范自检不在 CI 里，由 agent 每轮自己做。
 
 ## 版本
 
@@ -118,7 +119,7 @@ gh api repos/Sumicya/Selfblox/tags --jq '.[0].name'
 没有发行需求时不打标签、不建 Release。获准发版后再打 `v` 加版本号的标签（下例仅为格式示例，不代表已经发行）：
 
 ```bash
-git tag v26.10.5.31.31
+git tag v"$(sed -n 's/^local VERSION = "\([^"]*\)".*/\1/p' selfblox.lua | head -1)"
 ```
 
 ## 许可
