@@ -120,7 +120,8 @@ local ENUM_OK = { -- 枚举字面量 (KeyCode 是按配置字符串动态取的,
 	UserInputType = words("MouseButton1 Touch"),
 }
 local MDLOG = {} -- MoveDirection 的读取记录(只留最近 4 条)
-local CFLOG = {} -- CFrame.RightVector 的读取记录(只留最近 3 条)
+local CFLOG, RID = {}, 0 -- CFrame.RightVector 的读取记录(带全局读序号, 只留最近 8 条)
+local CAMREF, CAMW, STEPLOG = nil, {}, {} -- 相机本体 / 相机 CFrame 的写入 / 每帧开始时相机的 CFrame
 local function guardMember(t, k) -- 读/写实例成员时调用
 	local cls = rawget(t, "ClassName")
 	local allow = VERIFIED[cls]
@@ -261,6 +262,10 @@ local mt = {
 			rawset(t, "parent", v)
 			if v then v.children[#v.children + 1] = t end
 		else
+			if k == "CFrame" and CAMREF ~= nil and t == CAMREF then -- 诊断: 谁改了相机的 CFrame
+				CAMW[#CAMW + 1] = tostring(v and v.x) .. "/z=" .. tostring(v and v.z)
+				if #CAMW > 4 then table.remove(CAMW, 1) end
+			end
 			rawget(t, "props")[k] = v
 		end
 	end,
@@ -320,8 +325,9 @@ local cfmt = {
 		if k == "Position" then return t.p end
 		if k == "LookVector" then return -t.z end
 		if k == "RightVector" then -- 诊断: 记下每次读到的右向量与当时的基向量, 看脚本读到的是不是同一份
-			CFLOG[#CFLOG + 1] = tostring(t.x) .. "/z=" .. tostring(t.z)
-			if #CFLOG > 6 then table.remove(CFLOG, 1) end
+			RID = RID + 1
+			CFLOG[#CFLOG + 1] = "#" .. RID .. ":" .. tostring(t.x) .. "/z=" .. tostring(t.z)
+			if #CFLOG > 8 then table.remove(CFLOG, 1) end
 			return t.x
 		end
 		if k == "UpVector" then return t.y end
@@ -392,6 +398,7 @@ local function svc(name, o) o = o or inst(name); _G.__SVC[name] = o; return o en
 local workspace = svc("Workspace", inst("Workspace", sig()))
 local camera = inst("Camera", { CFrame = CFrame.new(Vector3.zero), ViewportSize = Vector2.new(1080, 2400) })
 workspace.props.CurrentCamera = camera
+CAMREF = camera -- 诊断用: 认出"读到的到底是不是这台相机"
 _G.workspace = workspace
 exposeGlobals()
 
@@ -564,7 +571,11 @@ _G.__SVC.HttpService.props.JSONDecode = function(_, s) return jsonDecode(s) end
 local FAILS = 0
 local function ok(cond, msg) if cond then print("  ✓ " .. msg) else FAILS = FAILS + 1; print("  ✗ " .. msg) end end
 local function step(dt, n)
-	for _ = 1, (n or 1) do
+	for i2 = 1, (n or 1) do
+		if CAMREF ~= nil then -- 诊断: 这一帧开始时相机的 CFrame 是什么
+			STEPLOG[#STEPLOG + 1] = "帧" .. i2 .. "=" .. tostring(rawget(CAMREF, "props").CFrame.x)
+			if #STEPLOG > 4 then table.remove(STEPLOG, 1) end
+		end
 		NOW = NOW + dt
 		local due = {}; local keep = {}
 		for _, w in ipairs(WAITERS) do if w.t <= NOW then due[#due + 1] = w else keep[#keep + 1] = w end end
@@ -1000,6 +1011,8 @@ step(1 / 60, 3)
 ok(lvc and lvc.VectorVelocity.X > 10, "摇杆右推 → 车右方向 " .. tostring(lvc and lvc.VectorVelocity))
 for i = #MDLOG, 1, -1 do MDLOG[i] = nil end
 for i = #CFLOG, 1, -1 do CFLOG[i] = nil end
+for i = #CAMW, 1, -1 do CAMW[i] = nil end
+for i = #STEPLOG, 1, -1 do STEPLOG[i] = nil end
 camera.CFrame = CFrame.new(Vector3.zero, Vector3.new(1, 0, 0)) -- 摄像机转到朝 +X: 前推 = 世界 +X, 但车还是该往车头(-Z)飞, 不能跟着相机跑
 humanoid.props.MoveDirection = Vector3.new(1, 0, 0)
 step(1 / 60, 3)
@@ -1017,7 +1030,7 @@ end)
 if not okProbe then probeTxt = "探针自己炸了: " .. tostring(probeTxt) end
 local fw = seat.props.CFrame.LookVector -- 前面方向盘测试已经把假车转过了, 车头不再是 -Z, 所以跟车头的实际朝向比
 fw = Vector3.new(fw.X, 0, fw.Z).Unit
-ok(lvc and lvc.VectorVelocity.Magnitude > 10 and lvc.VectorVelocity.Unit:Dot(fw) > 0.99, "相机转 90° 后, 前推仍是车头方向, 不跟着相机跑 (与车头夹角余弦 " .. string.format("%.3f", lvc and lvc.VectorVelocity.Unit:Dot(fw) or 0) .. ", 速度 " .. tostring(lvc and lvc.VectorVelocity) .. ", 车头 " .. tostring(fw) .. ", 相机 " .. tostring(camera.CFrame.LookVector) .. ", 相机右 " .. tostring(camera.CFrame.RightVector) .. ", MoveDir " .. tostring(humanoid.props.MoveDirection) .. ", 脚本看到的 workspace 是同一个吗 " .. tostring(rawequal(assert(load_chunk("return workspace", "smoke_probe"))(), workspace)) .. ", 本人形 " .. tostring(humanoid) .. ", MoveDirection 读取 " .. table.concat(MDLOG, " | ") .. ", RightVector 读取(x/z) " .. table.concat(CFLOG, " | ") .. " || 脚本环境复算: " .. tostring(probeTxt) .. ")")
+ok(lvc and lvc.VectorVelocity.Magnitude > 10 and lvc.VectorVelocity.Unit:Dot(fw) > 0.99, "相机转 90° 后, 前推仍是车头方向, 不跟着相机跑 (与车头夹角余弦 " .. string.format("%.3f", lvc and lvc.VectorVelocity.Unit:Dot(fw) or 0) .. ", 速度 " .. tostring(lvc and lvc.VectorVelocity) .. ", 车头 " .. tostring(fw) .. ", 相机 " .. tostring(camera.CFrame.LookVector) .. ", 相机右 " .. tostring(camera.CFrame.RightVector) .. ", MoveDir " .. tostring(humanoid.props.MoveDirection) .. ", 脚本看到的 workspace 是同一个吗 " .. tostring(rawequal(assert(load_chunk("return workspace", "smoke_probe"))(), workspace)) .. ", 本人形 " .. tostring(humanoid) .. ", MoveDirection 读取 " .. table.concat(MDLOG, " | ") .. ", RightVector 读取(x/z) " .. table.concat(CFLOG, " | ") .. ", 相机CFrame写入 " .. table.concat(CAMW, " | ") .. ", 每帧开始时相机 " .. table.concat(STEPLOG, " | ") .. " || 脚本环境复算: " .. tostring(probeTxt) .. ")"))
 camera.CFrame = CFrame.new(Vector3.zero)
 humanoid.props.MoveDirection = Vector3.zero
 step(1 / 60, 3)
