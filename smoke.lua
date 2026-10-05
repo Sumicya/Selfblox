@@ -230,6 +230,7 @@ end
 function methods.SetNetworkOwner() error("SetNetworkOwner 客户端不让调 (上一版就是这一句把车搞成完全绑不上)") end
 function methods.GetPartBoundsInRadius() return _G.__radius or {} end
 
+local NCC = 0 -- 诊断: "CurrentCamera" 这个键被 __index 处理过几次
 local MDW = {} -- 诊断: 脚本从 MoveDirection 上读了哪些成员、各读到什么
 local function wrapMD(v) -- 包一层: 转发一切, 但把每次成员读取记下来
 	return setmetatable({}, {
@@ -256,6 +257,7 @@ local mt = {
 			if #MDLOG > 4 then table.remove(MDLOG, 1) end
 		end
 		if k == "CurrentCamera" then -- 诊断: 记 __index 真正会返回什么 (methods 优先于 props)
+			NCC = NCC + 1
 			local pp1 = rawget(t, "props")
 			local mv1 = methods[k]
 			CREAD[#CREAD + 1] = "读→返回" .. tostring(mv1 ~= nil and mv1 or (pp1 and pp1.CurrentCamera))
@@ -1059,6 +1061,7 @@ for i = #CCLOG, 1, -1 do CCLOG[i] = nil end
 for i = #LVLOG, 1, -1 do LVLOG[i] = nil end
 for i = #CREAD, 1, -1 do CREAD[i] = nil end
 for i = #MDW, 1, -1 do MDW[i] = nil end
+NCC = 0 -- 从这行之后重新数
 for i = #CWRITE, 1, -1 do CWRITE[i] = nil end
 for i = #STEPLOG, 1, -1 do STEPLOG[i] = nil end
 camera.CFrame = CFrame.new(Vector3.zero, Vector3.new(1, 0, 0)) -- 摄像机转到朝 +X: 前推 = 世界 +X, 但车还是该往车头(-Z)飞, 不能跟着相机跑
@@ -1092,6 +1095,9 @@ ok(lvc and lvc.VectorVelocity.Magnitude > 10 and lvc.VectorVelocity.Unit:Dot(fw)
  .. ", 座位Anchored " .. tostring(seat.props.Anchored) .. ", 假引擎侧人形 " .. tostring(char:FindFirstChildOfClass("Humanoid"))
  .. ", SeatPart " .. tostring(humanoid.props.SeatPart) .. ", 脚本侧: " .. tostring(humTxt)
  .. ", VectorVelocity 写入 " .. table.concat(LVLOG, " | ") .. ", 本人体 lvc=" .. tostring(lvc)
+ .. ", CurrentCamera被__index处理次数 " .. NCC
+ .. ", workspace上的原始字段CurrentCamera " .. tostring(rawget(workspace, "CurrentCamera"))
+ .. ", props里的CurrentCamera " .. tostring(rawget(workspace, "props").CurrentCamera)
  .. ", 脚本对MoveDirection做了什么 " .. table.concat(MDW, " ")
  .. ", CurrentCamera读 " .. table.concat(CREAD, " | ") .. ", CurrentCamera写 " .. table.concat(CWRITE, " | ")
  .. ", .CFrame读 " .. table.concat(CCLOG, " | ")
