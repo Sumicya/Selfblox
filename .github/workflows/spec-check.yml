@@ -14,35 +14,81 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Check global specification
+      - name: Check specification pointer, stamp and CI policy
         shell: python
         run: |
-          from pathlib import Path
           import re
+          import urllib.request
+          from pathlib import Path
 
-          root = Path(".")
-          agents = root / "AGENTS.md"
+          CN = "零一二三四五六七八九"
+
+          def numeral(text):
+              """第 N 版里的 N：阿拉伯数字或中文数字（GLOBAL.md 与 AGENTS.md 都写中文）"""
+              if text.isdigit():
+                  return int(text)
+              if text == "十":
+                  return 10
+              if text.startswith("十"):
+                  return 10 + CN.index(text[1])
+              if "十" in text:
+                  tens, _, ones = text.partition("十")
+                  return CN.index(tens) * 10 + (CN.index(ones) if ones else 0)
+              total = 0
+              for ch in text:
+                  total = total * 10 + CN.index(ch)
+              return total
+
+          STAMP = re.compile(r"本仓库上次同步 = 第([0-9]+|[零一二三四五六七八九十]+)版")
+
+          agents = Path("AGENTS.md")
           if not agents.exists():
               raise SystemExit("缺少 AGENTS.md")
-          text = agents.read_text(encoding="utf-8")
-          required = [
-              "全局规范同步",
-              "第十五版",
-              "任何本轮本地改动必须最终提交并推送",
-              "CI 不得自动创建 Release",
-              "Release 1 个",
-              "Actions artifact 5 个",
-          ]
-          for item in required:
-              if item not in text:
-                  raise SystemExit(f"AGENTS.md 缺少全局规范条目：{item}")
+          agents_text = agents.read_text(encoding="utf-8")
+          if "GLOBAL.md" not in agents_text or "Sumicya/selfs" not in agents_text:
+              raise SystemExit("AGENTS.md 缺少指向 Sumicya/selfs 的 GLOBAL.md 指针")
+          stamp = STAMP.search(agents_text)
+          if not stamp:
+              raise SystemExit("AGENTS.md 缺少「本仓库上次同步 = 第 N 版」版本戳")
+          local_version = numeral(stamp.group(1))
 
-          workflows = root / ".github" / "workflows"
-          forbidden = re.compile(r"(?i)(softprops/action-gh-release|gh release create|createRelease|create_git_release|actions/create-release)")
-          for path in workflows.glob("*.yml"):
-              if path.name == "spec-check.yml":
-                  continue
+          release = re.compile(r"(?i)(softprops/action-gh-release|gh release create|createRelease|create_git_release|actions/create-release)")
+          write_perm = re.compile(r"(?im)^\s*(contents|actions):\s*write\s*$")
+          for path in sorted(Path(".github/workflows").glob("*.yml")):
               source = path.read_text(encoding="utf-8")
-              if forbidden.search(source):
-                  raise SystemExit(f"{path} 包含自动创建 Release 的实现；第十五版规范禁止 CI 自动发版")
-          print("第十五版全局规范检查通过")
+              # 本文件把禁令写成字符串常量，会自匹配，因此只对它跳过实现检查，写权限照样查
+              if path.name != "spec-check.yml" and release.search(source):
+                  raise SystemExit(f"{path} 包含自动创建 Release 的实现；规范禁止 CI 自动发版")
+              # 本仓库未获发版与滚动清理授权：任何工作流都不该有写权限。
+              # 获准后在这里为该工作流开一处明确的例外，并在 AGENTS.md 记录授权范围。
+              if write_perm.search(source):
+                  raise SystemExit(f"{path} 声明了 contents/actions 写权限；本仓库未获发版或滚动清理授权")
+
+          try:
+              with urllib.request.urlopen("https://api.github.com/repos/Sumicya/selfs/contents/GLOBAL.md", timeout=20) as r:
+                  import base64
+                  import json
+                  title = base64.b64decode(json.load(r)["content"]).decode("utf-8").splitlines()[0]
+          except Exception as exc:  # 网络受限时如实跳过，不假装比对过
+              print(f"取不到 Sumicya/selfs 的 GLOBAL.md（{exc}），跳过版本比对")
+          else:
+              print(f"GLOBAL.md 标题：{title}")
+              head = re.search(r"第([0-9]+|[零一二三四五六七八九十]+)版", title)
+              if not head:
+                  raise SystemExit(f"GLOBAL.md 标题里读不出版本号：{title}")
+              remote_version = numeral(head.group(1))
+              if remote_version != local_version:
+                  raise SystemExit(f"AGENTS.md 版本戳（第 {local_version} 版）落后于 GLOBAL.md（第 {remote_version} 版），先更新版本戳")
+
+          print(f"规范检查通过：版本戳 = 第 {local_version} 版；无自动发版实现；所有工作流只读")
+
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Lua 5.4
+        run: sudo apt-get update -y && sudo apt-get install -y --no-install-recommends lua5.4
+      - name: Run offline self-check
+        run: |
+          lua5.4 -v
+          lua5.4 smoke.lua
