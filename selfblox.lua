@@ -15,7 +15,7 @@
 --   语法基线就是 Luau(运行环境就是它): 26.10.5.28 起本文件用了字符串插值(`{}`)与复合赋值(+= 等)等 Luau 专属写法,
 --            Lua 5.4 / fengari 都解析不了; 自检的权威跑法是 CI 里的官方 Luau 0.741 (本地怎么编同版本见 AGENTS.md)
 
-local VERSION = "26.10.5.29.29" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
+local VERSION = "26.10.5.30.30" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
