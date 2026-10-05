@@ -5,7 +5,7 @@ local SRC = SB_SRC_INJECTED or rawget(_G, "SB_SRC") -- 源码从外面塞进来:
 if not SRC then
 	if not io or not io.open then error("这个 VM 没有 io 库(Luau 就是): 用 .github/workflows/spec-check.yml 的做法把源码拼成 SB_SRC_INJECTED 再跑", 0) end
 	local dir = arg and arg[0] and arg[0]:match("^(.*[/\\])") or ""
-	local fp = io.open(dir .. "selfblox.lua", "rb") or io.open("selfblox.lua", "rb")
+	local fp = io.open(`{dir}selfblox.lua`, "rb") or io.open("selfblox.lua", "rb")
 	SRC = assert(fp, "找不到 selfblox.lua; 在仓库根目录跑: lua5.4 smoke.lua"):read("*a")
 end
 local load_chunk = load or loadstring
@@ -124,7 +124,7 @@ local function guardMember(t, k) -- 读/写实例成员时调用
 	local cls = rawget(t, "ClassName")
 	local allow = VERIFIED[cls]
 	if allow and type(k) == "string" and not allow[k] and not INSTANCE_OK[k] and fromScript() then
-		error(cls .. "." .. k .. " 没对照官方文档核对过 (不在 VERIFIED 里): 先确认它真的存在, 再加进来", 3)
+		error(`{cls}.{k} 没对照官方文档核对过 (不在 VERIFIED 里): 先确认它真的存在, 再加进来`, 3)
 	end
 end
 local Signal = {}
@@ -132,7 +132,7 @@ Signal.__index = Signal
 function Signal.new() return setmetatable({ hs = {} }, Signal) end
 function Signal:Connect(fn)
 	local c = { fn = fn, on = true }
-	LIVE = LIVE + 1
+	LIVE += 1
 	function c:Disconnect() if self.on then self.on = false; LIVE = LIVE - 1 end end
 	self.hs[#self.hs + 1] = c
 	return c
@@ -182,11 +182,11 @@ end
 function methods.WaitForChild(self, name) return methods.FindFirstChild(self, name) end
 function methods.FindFirstAncestorOfClass(self, cls) local p = rawget(self, "parent"); while p do if methods.IsA(p, cls) then return p end; p = rawget(p, "parent") end end
 function methods.IsDescendantOf(self, x) if x == nil then error("Argument 1 missing or nil", 2) end local p = rawget(self, "parent"); while p do if p == x then return true end; p = rawget(p, "parent") end; return false end
-function methods.GetFullName(self) local p = rawget(self, "parent"); return (p and (methods.GetFullName(p) .. ".") or "") .. tostring(self.Name) end
+function methods.GetFullName(self) local p = rawget(self, "parent"); return (p and (`{methods.GetFullName(p)}.`) or "") .. tostring(self.Name) end
 function methods.GetAttribute(self, k) return self.attrs[k] end
 function methods.SetAttribute(self, k, v) self.attrs[k] = v end
 function methods.GetAttributes(self) local o = {}; for k, v in pairs(self.attrs) do o[k] = v end; return o end
-function methods.GetPropertyChangedSignal(self, p) local s = self.props["__pcs_" .. p]; if not s then s = Signal.new(); self.props["__pcs_" .. p] = s end; return s end
+function methods.GetPropertyChangedSignal(self, p) local s = self.props[`__pcs_{p}`]; if not s then s = Signal.new(); self.props[`__pcs_{p}`] = s end; return s end
 function methods.GetPivot(self) return self.props.__pivot or CFrame.new(Vector3.zero) end
 function methods.GetExtentsSize(self)
 	local ext = self.props.__extents
@@ -208,7 +208,7 @@ function methods.Clone(self) return inst(self.ClassName, self.props) end
 function methods.WorldToViewportPoint(self, v) return Vector3.new(100, 200, 10), true end
 function methods.ChangeState() end
 -- VirtualInputManager 官方没有文档, 签名取自 API 清单 (robloxapi.github.io/ref/class/VirtualInputManager): 参数类型不对, 真引擎抛错, 假引擎也抛. 现在只剩喇叭用 SendKeyEvent
-local function vimArgs(name, ok_, spec) if not ok_ then error(name .. " 参数类型不对, 应为 " .. spec, 3) end end
+local function vimArgs(name, ok_, spec) if not ok_ then error(`{name} 参数类型不对, 应为 {spec}`, 3) end end
 function methods.SendKeyEvent(self, down, key, rep, layer)
 	vimArgs("SendKeyEvent", type(down) == "boolean" and type(key) == "table" and key.EnumType == "KeyCode" and type(rep) == "boolean" and type(layer) == "table", "(isPressed: bool, keyCode: KeyCode, isRepeatedKey: bool, layerCollector: Instance)")
 	self.props.keys = (self.props.keys or 0) + 1
@@ -242,7 +242,7 @@ local mt = {
 		local v = props[k]
 		local strict = STRICT[rawget(t, "ClassName")]
 		if v == nil and strict then
-			if not strict[k] then error(tostring(k) .. " is not a valid member of " .. t.ClassName, 2) end
+			if not strict[k] then error(`{tostring(k)} is not a valid member of {t.ClassName}`, 2) end
 			v = Signal.new(); props[k] = v
 		elseif v == nil and SIGNALS[k] then v = Signal.new(); props[k] = v end -- 信号字段按需生成
 		return v
@@ -308,7 +308,7 @@ Vector2 = {}
 Vector2.mt = {
 	__index = function(t, k)
 		if k == "Magnitude" then return math.sqrt(t.X * t.X + t.Y * t.Y) end
-		error(tostring(k) .. " is not a valid member of Vector2", 2) -- 真引擎读数据类型上不存在的成员也是直接抛错; 这里不抛, i.Position 就会悄悄变成 nil 溜过去
+		error(`{tostring(k)} is not a valid member of Vector2`, 2) -- 真引擎读数据类型上不存在的成员也是直接抛错; 这里不抛, i.Position 就会悄悄变成 nil 溜过去
 	end,
 	__add = function(a, b) return Vector2.new(a.X + b.X, a.Y + b.Y) end,
 	__sub = function(a, b) return Vector2.new(a.X - b.X, a.Y - b.Y) end,
@@ -371,8 +371,8 @@ setmetatable(UDim2, { __call = function(_, ...) return UDim2.new(...) end })
 for _, f in ipairs({ "new", "fromOffset", "fromScale" }) do local orig = UDim2[f]; UDim2[f] = function(...) return setmetatable(orig(...), udmt) end end
 
 local Enum = setmetatable({}, { __index = function(t, k)
-	if k ~= "KeyCode" and not ENUM_OK[k] and fromScript(3) then error("Enum." .. tostring(k) .. " 没对照官方文档核对过 (不在 ENUM_OK 里)", 2) end
-	local sub = setmetatable({}, { __index = function(_, v) if ENUM_OK[k] and not ENUM_OK[k][v] and fromScript(3) then error("Enum." .. k .. "." .. tostring(v) .. " 没对照官方文档核对过 (不在 ENUM_OK 里)", 2) end; local item = { Name = v, EnumType = k }; rawset(t[k], v, item); return item end })
+	if k ~= "KeyCode" and not ENUM_OK[k] and fromScript(3) then error(`Enum.{tostring(k)} 没对照官方文档核对过 (不在 ENUM_OK 里)`, 2) end
+	local sub = setmetatable({}, { __index = function(_, v) if ENUM_OK[k] and not ENUM_OK[k][v] and fromScript(3) then error(`Enum.{k}.{tostring(v)} 没对照官方文档核对过 (不在 ENUM_OK 里)`, 2) end; local item = { Name = v, EnumType = k }; rawset(t[k], v, item); return item end })
 	rawset(t, k, sub)
 	return sub
 end })
@@ -387,7 +387,7 @@ exposeGlobals()
 
 -- 假引擎: 场景
 local function sig(props) props = props or {}; for _, n in ipairs({ "ChildAdded", "ChildRemoved", "DescendantAdded", "DescendantRemoving" }) do props[n] = Signal.new() end; return props end
-game = { PlaceId = 0, Name = "SmokePlace", GetService = function(_, n) return assert(_G.__SVC[n], "没造的服: " .. n) end }
+game = { PlaceId = 0, Name = "SmokePlace", GetService = function(_, n) return assert(_G.__SVC[n], `没造的服: {n}`) end }
 _G.__SVC = {}
 local function svc(name, o) o = o or inst(name); _G.__SVC[name] = o; return o end
 
@@ -510,7 +510,7 @@ FIXED = FIXED - tonumber(os.date("%M", FIXED)) * 60 - tonumber(os.date("%S", FIX
 os.date = function(f, t) return realdate(f, t or FIXED) end
 event = {}
 task = {
-	spawn = function(f, ...) local co = coroutine.create(f); local ok, err = coroutine.resume(co, ...); if not ok then error("task.spawn: " .. tostring(err), 0) end; return co end,
+	spawn = function(f, ...) local co = coroutine.create(f); local ok, err = coroutine.resume(co, ...); if not ok then error(`task.spawn: {tostring(err)}`, 0) end; return co end,
 	defer = function(f, ...) return task.delay(0, f, ...) end,
 	delay = function(t, f, ...)
 		local a = table.pack(...)
@@ -527,7 +527,7 @@ local function jsonEncode(v)
 	if t == "string" then return '"' .. v:gsub('[%c"\\]', function(c) return string.format("\\u%04x", c:byte()) end) .. '"' end
 	if t == "table" then
 		if #v > 0 or next(v) == nil then local o = {}; for i = 1, #v do o[i] = jsonEncode(v[i]) end; return "[" .. table.concat(o, ",") .. "]" end
-		local o = {}; for k, x in pairs(v) do o[#o + 1] = '"' .. tostring(k) .. '":' .. jsonEncode(x) end; return "{" .. table.concat(o, ",") .. "}"
+		local o = {}; for k, x in pairs(v) do o[#o + 1] = `"{tostring(k)}":{jsonEncode(x)}`end; return "{" .. table.concat(o, ",") .. "}"
 	end
 	return "null"
 end
@@ -541,12 +541,12 @@ local function jsonDecode(s)
 		if i > #s then error("JSON 意外结束") end -- 假解码器也得会报错, 不然死循环吃光内存
 		local c = s:sub(i, i)
 		if c == "{" then
-			i = i + 1; local o = {}; skip()
+			i += 1; local o = {}; skip()
 			if s:sub(i, i) == "}" then i = i + 1; return o end
 			while true do skip(); local k = str(); skip(); i = i + 1; o[k] = parse(); skip(); if s:sub(i, i) == "," then i = i + 1 else i = i + 1; break end end
 			return o
 		elseif c == "[" then
-			i = i + 1; local o = {}; skip()
+			i += 1; local o = {}; skip()
 			if s:sub(i, i) == "]" then i = i + 1; return o end
 			while true do o[#o + 1] = parse(); skip(); if s:sub(i, i) == "," then i = i + 1 else i = i + 1; break end end
 			return o
@@ -554,8 +554,8 @@ local function jsonDecode(s)
 		if s:sub(i, i + 3) == "true" then i = i + 4; return true end
 		if s:sub(i, i + 4) == "false" then i = i + 5; return false end
 		if s:sub(i, i + 3) == "null" then i = i + 4; return nil end
-		local n = assert(s:match("^[%-%d%.eE]+", i), "坏 JSON @" .. i .. ": " .. s:sub(i, i + 20))
-		i = i + #n; return tonumber(n)
+		local n = assert(s:match("^[%-%d%.eE]+", i), `坏 JSON @{i}: {s:sub(i, i + 20)}`)
+		i += #n; return tonumber(n)
 	end
 	return parse()
 end
@@ -564,17 +564,17 @@ _G.__SVC.HttpService.props.JSONDecode = function(_, s) return jsonDecode(s) end
 
 -- ───────── 断言 + 步进 ─────────
 local FAILS = 0
-local function ok(cond, msg) if cond then print("  ✓ " .. msg) else FAILS = FAILS + 1; print("  ✗ " .. msg) end end
+local function ok(cond, msg) if cond then print(`  ✓ {msg}`) else FAILS = FAILS + 1; print(`  ✗ {msg}`) end end
 local function step(dt, n)
 	for i2 = 1, (n or 1) do
-		NOW = NOW + dt
+		NOW += dt
 		local due = {}; local keep = {}
 		for _, w in ipairs(WAITERS) do if w.t <= NOW then due[#due + 1] = w else keep[#keep + 1] = w end end
 		WAITERS = keep
 		for _, w in ipairs(due) do
 			if coroutine.status(w.co) ~= "dead" then
 				local ok2, err = coroutine.resume(w.co)
-				if not ok2 then error("任务里炸了: " .. tostring(err), 0) end
+				if not ok2 then error(`任务里炸了: {tostring(err)}`, 0) end
 			end
 		end
 		_G.__SVC.RunService.props.PreSimulation:Fire(dt)
@@ -593,7 +593,7 @@ local function starts(s, pre) return s:sub(1, #pre) == pre end
 local function click(b) b.Activated:Fire() end
 local function newInstancesFrom(n) local o = {}; for i = n + 1, #INSTANCES do o[#o + 1] = INSTANCES[i] end; return o end
 
-print("── 假引擎就绪: " .. #INSTANCES .. " 个场景实例")
+print(`── 假引擎就绪: {#INSTANCES} 个场景实例`)
 local SNAP = #INSTANCES
 
 -- ───────── 假引擎自己的严格性自检 ─────────
@@ -609,7 +609,7 @@ local function mid() return touch(inst) end
 return mid()
 ]], "selfblox_strict"))
 local okBad, errBad = pcall(wrapper, probe)
-ok(not okBad and tostring(errBad):find("没对照官方文档核对过", 1, true) ~= nil, "selfblox* 的代码碰没核对过的成员会抛错 (" .. tostring(errBad) .. ")")
+ok(not okBad and tostring(errBad):find("没对照官方文档核对过", 1, true) ~= nil, `selfblox* 的代码碰没核对过的成员会抛错 ({tostring(errBad)})`)
 local okMine = pcall(function() return probe.ThisMemberIsInNoDoc end)
 ok(okMine, "白名单不管自检自己的代码, 只拦 selfblox* 的 chunk")
 probe:Destroy() -- 探针也是实例, 不销毁就会算成卸载后漏掉的实例
@@ -618,24 +618,24 @@ probe:Destroy() -- 探针也是实例, 不销毁就会算成卸载后漏掉的�
 print("\n[1] 加载 selfblox.lua")
 local chunk = assert(load_chunk(SRC, "selfblox"))
 local okLoad, errLoad = pcall(chunk)
-ok(okLoad, "脚本跑完没报错 " .. tostring(errLoad or ""))
+ok(okLoad, `脚本跑完没报错 {tostring(errLoad or "")}`)
 ok(type(_G.SB_UNLOAD) == "function", "_G.SB_UNLOAD 有了")
 ok(tabs() ~= nil, "面板建在 gethui() 里")
 local names = {}
 for _, b in ipairs(buttons()) do if #b.Text <= 3 and b.Text ~= "" then names[b.Text] = true end end
 ok(names["动"] and names["车"] and names["漂"] and names["显"] and names["志"] and names["机"] and names["砖"], "七个页签都在")
-ok(#newInstancesFrom(SNAP) > 60, "控件建了 " .. #newInstancesFrom(SNAP) .. " 个实例")
+ok(#newInstancesFrom(SNAP) > 60, `控件建了 {#newInstancesFrom(SNAP)} 个实例`)
 local errs = 0 -- 模块构造时 pcall 兜住了错误会写成一行"出错: ...", 这里要当成失败抓出来
-for _, d in ipairs(all()) do if d.ClassName == "TextLabel" and type(d.Text) == "string" and d.Text:sub(1, 6) == "出错: " then errs = errs + 1; print("       → " .. d.Text) end end
+for _, d in ipairs(all()) do if d.ClassName == "TextLabel" and type(d.Text) == "string" and d.Text:sub(1, 6) == "出错: " then errs = errs + 1; print(`       → {d.Text}`) end end
 ok(errs == 0, "没有模块构造失败")
 local VER = SRC:match('local VERSION = "([^"]+)"') -- 版本单一来源: 面板标题 / 诊断快照 / 启动打印都必须读它
 local vy, vm, vd, vdaily, vtotal -- 五段: yy.m.d.当日序号.总序号 (注意 `x and f()` 只回传一个值, 多返回值不能用 and 接)
 if VER then vy, vm, vd, vdaily, vtotal = VER:match("^(%d%d)%.(%d%d?)%.(%d%d?)%.(%d+)%.(%d+)$") end
-ok(vy ~= nil, "VERSION 是五段 yy.m.d.当日序号.总序号 (" .. tostring(VER) .. ")")
-ok(vy ~= nil and tonumber(vm) >= 1 and tonumber(vm) <= 12 and tonumber(vd) >= 1 and tonumber(vd) <= 31 and tonumber(vdaily) >= 1 and tonumber(vtotal) >= 1, "五段取值合法: 月 1~12 / 日 1~31 / 当日序号与总序号都从 1 起 (" .. tostring(VER) .. ")")
-ok(VER ~= nil and VER:sub(1, 1) ~= "v" and select(2, SRC:gsub('"' .. VER:gsub("%.", "%%.") .. '"', "")) == 1, "展示版本不带 v, 版本号只在 VERSION 一行写死")
+ok(vy ~= nil, `VERSION 是五段 yy.m.d.当日序号.总序号 ({tostring(VER)})`)
+ok(vy ~= nil and tonumber(vm) >= 1 and tonumber(vm) <= 12 and tonumber(vd) >= 1 and tonumber(vd) <= 31 and tonumber(vdaily) >= 1 and tonumber(vtotal) >= 1, `五段取值合法: 月 1~12 / 日 1~31 / 当日序号与总序号都从 1 起 ({tostring(VER)})`)
+ok(VER ~= nil and VER:sub(1, 1) ~= "v" and select(2, SRC:gsub(`"{VER:gsub("%.", "%%.")}"`, "")) == 1, "展示版本不带 v, 版本号只在 VERSION 一行写死")
 local title0 = tabs():FindFirstChild("SB_Title")
-ok(title0 ~= nil and title0.Text == "Selfblox " .. tostring(VER), "面板标题读 VERSION (读到 " .. tostring(title0 and title0.Text) .. ")")
+ok(title0 ~= nil and title0.Text == "Selfblox " .. tostring(VER), `面板标题读 VERSION (读到 {tostring(title0 and title0.Text)})`)
 -- 启动打印改成了 Luau 插值写法(26.10 起 selfblox.lua 以 Luau 为基线), 断言跟着认新写法
 ok(SRC:find('print(`[Selfblox] {VERSION}', 1, true) ~= nil, "启动打印读 VERSION, 不另写一份")
 
@@ -649,13 +649,13 @@ for _, t in ipairs({ "动", "车", "漂", "显", "志", "机", "砖" }) do
 	click(b)
 	local on = 0
 	for _, x in ipairs(buttons()) do if x.Text == t and x.BackgroundColor3.G > 0.4 then on = on + 1 end end
-	ok(on == 1, "点「" .. t .. "」后只有它高亮")
+	ok(on == 1, `点「{t}」后只有它高亮`)
 end
 
 print("\n[3a] 漂移踏板: 嵌套的 MobilePedals 也要绑上 + 间距=0")
 local bound
 for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" and d.Text:find("刹=Brake", 1, true) then bound = d.Text end end
-ok(bound ~= nil, "嵌套 ImageButton 也自动绑上了 (" .. tostring(bound) .. ")")
+ok(bound ~= nil, `嵌套 ImageButton 也自动绑上了 ({tostring(bound)})`)
 local pads = 0
 for _, d in ipairs(all()) do if d.ClassName == "UIListLayout" then pads = pads + d.Padding.Offset + d.Padding.Scale end end
 ok(pads == 0, "所有 UIListLayout 间距 = 0")
@@ -674,7 +674,7 @@ pedals2.Parent = pgui
 step(1 / 60, 130)
 local rebound
 for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" and d.Text:find("刹=Brake", 1, true) then rebound = d.Text end end
-ok(rebound ~= nil, "踏板重建后自动重绑 (" .. tostring(rebound) .. ")")
+ok(rebound ~= nil, `踏板重建后自动重绑 ({tostring(rebound)})`)
 -- 自动绑上的踏板: 按住真的生效 (原来这条是靠手动点选的那套测的; 用重建后的 b2)
 b2.InputBegan:Fire(input("Touch"))
 step(1 / 60, 3)
@@ -691,7 +691,7 @@ pedals2:Destroy() -- 这套假踏板是测试自己造的, 用完自己收, 不�
 ok(findBtn("重绑踏板") ~= nil and findBtn("▲ 油门") ~= nil and findBtn("▼ 刹车") ~= nil, "漂页有 重绑踏板 / ▲ 油门 / ▼ 刹车")
 local oldBtns = 0
 for _, d in ipairs(all()) do if d:IsA("TextButton") and (starts(d.Text, "选") or starts(d.Text, "绑") or starts(d.Text, "自动找踏板") or starts(d.Text, "扫车") or starts(d.Text, "复制状态")) then oldBtns = oldBtns + 1 end end
-ok(oldBtns == 0, "面板里没有「选…」「绑…」「自动找踏板」「扫车」「复制状态」 (剩 " .. oldBtns .. " 个)")
+ok(oldBtns == 0, `面板里没有「选…」「绑…」「自动找踏板」「扫车」「复制状态」 (剩 {oldBtns} 个)`)
 
 print("\n[3b] 点标题条 = 折叠 (+/- 也还能用)")
 local tl, bd = tabs():FindFirstChild("SB_Title"), tabs():FindFirstChild("SB_Body")
@@ -705,14 +705,14 @@ local function tapTitle() -- 真机路线: 拖拽器 DragStart/DragEnd 给的是
 	tdrag.DragEnd:Fire(Vector2.new(50, 20))
 end
 local function dragTitle() -- 拖过 (挪了 110px) = 只挪位置, 不折叠
-	NOW = NOW + 0.5
+	NOW += 0.5
 	tdrag.DragStart:Fire(Vector2.new(50, 20))
 	tdrag.DragContinue:Fire(Vector2.new(90, 30))
 	tdrag.DragContinue:Fire(Vector2.new(160, 60))
 	tdrag.DragEnd:Fire(Vector2.new(160, 60))
 end
 local function jitterTitle() -- 手指必抖: 收到过 DragContinue, 但总共才挪 2px, 仍然是点击
-	NOW = NOW + 0.5
+	NOW += 0.5
 	tdrag.DragStart:Fire(Vector2.new(50, 20))
 	tdrag.DragContinue:Fire(Vector2.new(51, 21))
 	tdrag.DragEnd:Fire(Vector2.new(52, 21))
@@ -739,11 +739,11 @@ ok(bd.Visible == false, "+/- 也还能折叠")
 clickFold()
 ok(bd.Visible == true, "再点展开")
 -- 真机上到底哪几条路会响没法在这里验, 所以三条全响也得只翻一次
-NOW = NOW + 0.5
+NOW += 0.5
 tdrag.DragStart:Fire(Vector2.new(50, 20)); tl.InputBegan:Fire(input("Touch"))
 tdrag.DragEnd:Fire(Vector2.new(50, 20)); tl.InputEnded:Fire(input("Touch"))
 ok(bd.Visible == false, "一次点按同时触发拖拽器 + 标签输入 → 只翻一次 (翻两次 = 没翻)")
-NOW = NOW + 0.5
+NOW += 0.5
 foldBtn.Activated:Fire(); tdrag.DragStart:Fire(Vector2.new(180, 10)); tdrag.DragEnd:Fire(Vector2.new(180, 10))
 ok(bd.Visible == true, "点 +/- 时拖拽器也响 → 仍然只翻一次 (折回去, 后面要面板开着)")
 
@@ -753,14 +753,14 @@ local left, boxes, good = 0, 0, 0
 for _, d in ipairs(all()) do
 	if (d:IsA("TextLabel") or d:IsA("TextButton") or d:IsA("TextBox")) and d.TextXAlignment ~= nil and d.TextXAlignment.Name == "Left" then left = left + 1 end
 	if d:IsA("TextBox") then
-		boxes = boxes + 1
+		boxes += 1
 		local lab = d.Parent:FindFirstChildOfClass("TextLabel")
 		if d.TextXAlignment.Name == "Center" and d.TextYAlignment.Name == "Center" and d.Parent.ClassName == "Frame"
 			and (lab == nil or (lab.Size.X.Scale == 0.5 and d.Position.X.Scale == 0.5 and lab.Text:sub(1, 1) ~= " ")) then good = good + 1 end
 	end
 end
-ok(left == 0, "面板里没有靠左的文字 (靠左 " .. left .. " 个)")
-ok(boxes > 0 and good == boxes, "输入框: 左半标签 + 右半输入框, 文字水平垂直都居中, 标签前面不垫空格 (" .. good .. "/" .. boxes .. ")")
+ok(left == 0, `面板里没有靠左的文字 (靠左 {left} 个)`)
+ok(boxes > 0 and good == boxes, `输入框: 左半标签 + 右半输入框, 文字水平垂直都居中, 标签前面不垫空格 ({good}/{boxes})`)
 end
 
 do
@@ -770,31 +770,31 @@ ok(tl2.BackgroundTransparency == 0.9 and bd2.BackgroundTransparency == 0.9, "标
 local opaque, cells = 0, 0
 for _, d in ipairs(bd2:GetDescendants()) do
 	if d:IsA("GuiObject") then
-		cells = cells + 1
+		cells += 1
 		if d.BackgroundTransparency < 0.9 then opaque = opaque + 1 end
 	end
 end
-ok(cells > 0 and opaque == 0, "页面里所有按钮 / 数值格 / 标签底色都 ≥ 0.9 透明 (" .. cells .. " 个控件, 不够透明的 " .. opaque .. " 个)")
+ok(cells > 0 and opaque == 0, `页面里所有按钮 / 数值格 / 标签底色都 ≥ 0.9 透明 ({cells} 个控件, 不够透明的 {opaque} 个)`)
 local esp = findBtn("玩家 ESP")
 click(esp)
-ok(esp.TextColor3.R == 1 and esp.TextColor3.G == 1, "开关关着 → 字是白的 (" .. esp.Text .. ")")
+ok(esp.TextColor3.R == 1 and esp.TextColor3.G == 1, `开关关着 → 字是白的 ({esp.Text})`)
 click(esp)
-ok(esp.TextColor3.G > esp.TextColor3.R, "开关开着 → 字变亮绿 (底色只剩 10%, 开/关靠字色) (" .. esp.Text .. ")")
+ok(esp.TextColor3.G > esp.TextColor3.R, `开关开着 → 字变亮绿 (底色只剩 10%, 开/关靠字色) ({esp.Text})`)
 local lit = 0
 for _, t in ipairs({ "动", "车", "漂", "显", "志", "机", "砖" }) do local b = findBtn(t); if b and b.TextColor3.G > b.TextColor3.R then lit = lit + 1 end end
-ok(lit == 1, "页签里正好一个是亮的 = 当前页 (" .. lit .. " 个)")
+ok(lit == 1, `页签里正好一个是亮的 = 当前页 ({lit} 个)`)
 -- 原生居中就行: 文字不加 UIPadding 补偿, 也不加描边 / 阴影 (0.9 透明底 + 原色字)
 local texts, decorated = 1, 0
 for _, root in ipairs({ tl2, bd2 }) do
 	for _, d in ipairs(root:GetDescendants()) do
 		if d:IsA("TextLabel") or d:IsA("TextButton") or d:IsA("TextBox") then
-			texts = texts + 1
+			texts += 1
 			if d:FindFirstChildOfClass("UIPadding") ~= nil or (d.TextStrokeTransparency or 1) < 1 then decorated = decorated + 1 end
 		end
 	end
 end
 if tl2:FindFirstChildOfClass("UIPadding") ~= nil or (tl2.TextStrokeTransparency or 1) < 1 then decorated = decorated + 1 end
-ok(decorated == 0, "面板里的文字原生居中: 没有 UIPadding 补偿、没有描边 / 阴影 (" .. decorated .. "/" .. texts .. " 段被加了料)")
+ok(decorated == 0, `面板里的文字原生居中: 没有 UIPadding 补偿、没有描边 / 阴影 ({decorated}/{texts} 段被加了料)`)
 local tp = tabs():FindFirstChild("SB_Toast"):FindFirstChildOfClass("UIPadding")
 ok(tp ~= nil and tp.PaddingLeft.Offset == 10 and tp.PaddingRight.Offset == 10 and tp.PaddingBottom == nil, "提示条只留左右各 10 的内边距")
 end
@@ -805,7 +805,7 @@ click(spd)
 humanoid.props.MoveDirection = Vector3.new(0, 0, -1)
 step(1 / 60, 10)
 local vel = hrp.AssemblyLinearVelocity
-ok(math.abs(vel.Z) > 10, "开关开着时 root 水平速度 = " .. string.format("%.1f", math.abs(vel.Z)))
+ok(math.abs(vel.Z) > 10, `开关开着时 root 水平速度 = {string.format("%.1f", math.abs(vel.Z))}`)
 click(findBtn("速度"))
 humanoid.props.MoveDirection = Vector3.zero
 step(1 / 60, 3)
@@ -840,16 +840,16 @@ step(1 / 60, 10)
 ok(seat.MaxSpeed == math.huge, "上车后座位限速抬到无穷")
 local clipOn = 0
 for _, b in ipairs(buttons()) do if starts(b.Text, "穿墙") and ends(b.Text, " 开") then clipOn = clipOn + 1 end end
-ok(seat.CanCollide == false and carBody.CanCollide == false, "穿墙开着: 座位 / 车身都穿 (穿墙开着 " .. clipOn .. " 个 · 座=" .. tostring(seat.CanCollide) .. " 身=" .. tostring(carBody.CanCollide) .. ")")
-ok(CP.sur.CanCollide == true, "穿墙范围只有本车装配体: 同 Model 里另一个装配体的装饰件 Sur 不再被穿掉 (" .. tostring(CP.sur.CanCollide) .. ")")
-ok(CP.wheelL.CanCollide == true and CP.wheelR.CanCollide == true, "穿墙开着: 只有轮胎底(整车最低的)保留碰撞, 车才不会掉下去 (左=" .. tostring(CP.wheelL.CanCollide) .. " 右=" .. tostring(CP.wheelR.CanCollide) .. ")")
+ok(seat.CanCollide == false and carBody.CanCollide == false, `穿墙开着: 座位 / 车身都穿 (穿墙开着 {clipOn} 个 · 座={tostring(seat.CanCollide)} 身={tostring(carBody.CanCollide)})`)
+ok(CP.sur.CanCollide == true, `穿墙范围只有本车装配体: 同 Model 里另一个装配体的装饰件 Sur 不再被穿掉 ({tostring(CP.sur.CanCollide)})`)
+ok(CP.wheelL.CanCollide == true and CP.wheelR.CanCollide == true, `穿墙开着: 只有轮胎底(整车最低的)保留碰撞, 车才不会掉下去 (左={tostring(CP.wheelL.CanCollide)} 右={tostring(CP.wheelR.CanCollide)})`)
 ok(CP.wheelUp.CanCollide == true, "悬挂抬高、不在最低那圈的轮子, 名字带 wheel 仍然保留")
 ok(CP.hubL.CanCollide == false and CP.hubR.CanCollide == false, "认到轮子名以后只留轮胎: 名字里没有 wheel/tire 的低位零件 RL/RR 也穿掉 (兜底只在整车一个轮子名都认不到时才用)")
 ok(CP.pad.CanCollide == true and CP.fence.CanCollide == true, "穿墙不碰同一个 Model 里锚定的停车台 / 栏杆 (地面/平台不是车)")
 seat.props.AssemblyLinearVelocity = Vector3.new(0, -5, 0)
 _G.__rayHit = { Instance = CP.fence, Distance = 1.2 } -- 老逻辑: 离地只剩 0.7 → 把竖直速度顶到 +3 (上浮); 新逻辑根本不探地
 step(1 / 60, 3)
-ok(seat.props.AssemblyLinearVelocity.Y == -5, "穿墙不再探地推起, 开启后不上浮 (竖直速度 " .. tostring(seat.props.AssemblyLinearVelocity.Y) .. ")")
+ok(seat.props.AssemblyLinearVelocity.Y == -5, `穿墙不再探地推起, 开启后不上浮 (竖直速度 {tostring(seat.props.AssemblyLinearVelocity.Y)})`)
 _G.__rayHit = nil
 seat.props.AssemblyLinearVelocity = Vector3.zero
 ok(seat:FindFirstChild("SB_SIBS") ~= nil, "车约束挂在座位装配体上")
@@ -880,7 +880,7 @@ do local function noWheelCar() -- 包进函数: 主函数的局部变量已经�
 	ok(nwSeat:FindFirstChild("SB_SIBS") ~= nil, "换到一辆零件全都不叫 wheel/tire 的车上")
 	ok(nwLowL.CanCollide == true and nwLowR.CanCollide == true, "一个轮子名都认不到 → 按整车最低兜底保留碰撞, 车不会掉出世界")
 	ok(nwBody.CanCollide == false and nwRoof.CanCollide == false, "兜底也只留最低那圈: 车身 / 车顶照样穿")
-	ok(status() ~= nil and status():find("没认到轮子", 1, true) ~= nil, "状态行如实说明在用兜底 (" .. tostring(status()) .. ")")
+	ok(status() ~= nil and status():find("没认到轮子", 1, true) ~= nil, `状态行如实说明在用兜底 ({tostring(status())})`)
 	local nwWheel = nwPart("Wheel_Late", Vector3.new(1, 3, 3), Vector3.new(197, 1.5, -3)) -- 轮子晚一批才出现
 	step(1 / 60, 40)
 	ok(nwWheel.CanCollide == true, "晚出现的轮子按名字保留碰撞")
@@ -898,13 +898,13 @@ step(1 / 60, 3)
 local lamps, onBody, onSeat = 0, 0, 0
 for _, d in ipairs(car:GetDescendants()) do
 	if d:IsA("Light") then
-		lamps = lamps + 1
+		lamps += 1
 		if d:IsDescendantOf(carBody) then onBody = onBody + 1 end
 		if d:IsDescendantOf(seat) then onSeat = onSeat + 1 end
 	end
 end
-ok(lamps >= 2, "车上没灯时自己装了 " .. lamps .. " 个 SpotLight")
-ok(onSeat == 0 and onBody >= 2, "灯装车身部件上, 不装座位 (身 " .. onBody .. " / 座 " .. onSeat .. ")")
+ok(lamps >= 2, `车上没灯时自己装了 {lamps} 个 SpotLight`)
+ok(onSeat == 0 and onBody >= 2, `灯装车身部件上, 不装座位 (身 {onBody} / 座 {onSeat})`)
 click(findBtn("常亮"))
 step(1 / 60, 3)
 local native = inst("SpotLight", { Name = "Headlamp", Enabled = false })
@@ -948,8 +948,8 @@ ok(handle.Visible == true, "面板折起来 → 滑条可拖")
 kd.DragContinue:Fire(Vector2.new(999, 0))
 step(1 / 60, 12)
 local turned = (seat.props.CFrame.LookVector - look0).Magnitude
-ok(turned > 0.05, "拖到最右 → 车真的转了 " .. string.format("%.2f", turned))
-ok(knob.Position.X.Offset > 10, "圆点跟着手指跑 (偏 " .. knob.Position.X.Offset .. "px)")
+ok(turned > 0.05, `拖到最右 → 车真的转了 {string.format("%.2f", turned)}`)
+ok(knob.Position.X.Offset > 10, `圆点跟着手指跑 (偏 {knob.Position.X.Offset}px)`)
 seat.props.AssemblyLinearVelocity = Vector3.zero -- 停着也要能打方向
 local look1 = seat.props.CFrame.LookVector
 kd.DragContinue:Fire(Vector2.new(999, 0))
@@ -980,7 +980,7 @@ _G.__radius = nil
 rival:Destroy()
 local stTxt
 for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" and d.Text:find("锚定", 1, true) then stTxt = d.Text end end
-ok(stTxt ~= nil, "状态行直接标出锚定 (" .. tostring(stTxt) .. ")")
+ok(stTxt ~= nil, `状态行直接标出锚定 ({tostring(stTxt)})`)
 tapTitle() -- 折起来才能拖滑条
 local lookA = seat.props.CFrame.LookVector
 kd.DragContinue:Fire(Vector2.new(999, 0))
@@ -997,10 +997,10 @@ humanoid.props.MoveDirection = Vector3.new(0, 0, -1) -- 摄像机朝 -Z: 前推 
 seat.props.Throttle = 0
 step(1 / 60, 3)
 local lvc = seat:FindFirstChild("SB_SIBS"):FindFirstChildOfClass("LinearVelocity")
-ok(lvc and lvc.VectorVelocity.Z < -10, "摇杆前推 → 车头方向 " .. tostring(lvc and lvc.VectorVelocity))
+ok(lvc and lvc.VectorVelocity.Z < -10, `摇杆前推 → 车头方向 {tostring(lvc and lvc.VectorVelocity)}`)
 humanoid.props.MoveDirection = Vector3.new(1, 0, 0) -- 右推 = 世界 +X
 step(1 / 60, 3)
-ok(lvc and lvc.VectorVelocity.X > 10, "摇杆右推 → 车右方向 " .. tostring(lvc and lvc.VectorVelocity))
+ok(lvc and lvc.VectorVelocity.X > 10, `摇杆右推 → 车右方向 {tostring(lvc and lvc.VectorVelocity)}`)
 camera.CFrame = CFrame.new(Vector3.zero, Vector3.new(1, 0, 0)) -- 摄像机转到朝 +X: 前推 = 世界 +X, 但车还是该往车头(-Z)飞, 不能跟着相机跑
 humanoid.props.MoveDirection = Vector3.new(1, 0, 0)
 step(1 / 60, 3)
@@ -1012,7 +1012,7 @@ local okHum, humTxt = pcall(function()
 		return "LocalPlayer=" .. tostring(plr) .. " Character=" .. tostring(ch) .. " 人形=" .. tostring(h) .. " SeatPart=" .. tostring(h and h.SeatPart)
 	]], "smoke_probe"))()
 end)
-if not okHum then humTxt = "人形探针炸了: " .. tostring(humTxt) end
+if not okHum then humTxt = `人形探针炸了: {tostring(humTxt)}`end
 local okProbe, probeTxt = pcall(function()
 	return assert(load_chunk([[
 		local rv = workspace.CurrentCamera.CFrame.RightVector
@@ -1024,7 +1024,7 @@ local okProbe, probeTxt = pcall(function()
 		return "相机右=" .. tostring(rv) .. " 拍平后模长=" .. tostring(f.Magnitude) .. " r=" .. tostring(r) .. " yAxis=" .. tostring(Vector3.yAxis) .. " y叉r=" .. tostring(cr) .. " md点r=" .. tostring(md:Dot(r)) .. " 摇杆=" .. tostring(mv)
 	]], "smoke_probe"))()
 end)
-if not okProbe then probeTxt = "探针自己炸了: " .. tostring(probeTxt) end
+if not okProbe then probeTxt = `探针自己炸了: {tostring(probeTxt)}`end
 local fw = seat.props.CFrame.LookVector -- 前面方向盘测试已经把假车转过了, 车头不再是 -Z, 所以跟车头的实际朝向比
 fw = Vector3.new(fw.X, 0, fw.Z).Unit
 ok(lvc and lvc.VectorVelocity.Magnitude > 10 and lvc.VectorVelocity.Unit:Dot(fw) > 0.99,
@@ -1039,7 +1039,7 @@ print("\n[6c] 急刹")
 click(findBtn("急刹")) -- 开
 seat.props.Throttle, seat.props.AssemblyLinearVelocity = 0, Vector3.new(30, 5, 0) -- 松开游戏油门, 免得急刹被"踩油门自动解除"顶掉
 step(1 / 60, 2)
-ok(seat.AssemblyLinearVelocity.Z == 0 and seat.AssemblyLinearVelocity.X == 0, "急刹把水平速度清了, 保留竖直 " .. tostring(seat.AssemblyLinearVelocity.Y))
+ok(seat.AssemblyLinearVelocity.Z == 0 and seat.AssemblyLinearVelocity.X == 0, `急刹把水平速度清了, 保留竖直 {tostring(seat.AssemblyLinearVelocity.Y)}`)
 click(findBtn("急刹")) -- 关
 
 print("\n[7] 全部控件点一遍 (开), 30 帧, 再点一遍 (关)")
@@ -1049,10 +1049,10 @@ for _, b in ipairs(buttons()) do b.InputBegan:Fire(input("Touch")); held = held 
 step(1 / 60, 30)
 for _, b in ipairs(buttons()) do b.InputEnded:Fire(input("Touch")) end
 step(1 / 60, 10)
-ok(flipped >= 15, "开了 " .. flipped .. " 个开关")
+ok(flipped >= 15, `开了 {flipped} 个开关`)
 for _, b in ipairs(buttons()) do if ends(b.Text, " 开") then click(b); flipped = flipped - 1 end end
 step(1 / 60, 10)
-ok(true, "按住/松开 " .. held .. " 个按钮 + 全开全关走完没炸")
+ok(true, `按住/松开 {held} 个按钮 + 全开全关走完没炸`)
 ok(_G.__SVC.VirtualInputManager.props.keys ~= nil, "喇叭真的发了按键事件")
 ok(seat.CanCollide and carBody.CanCollide and CP.sur.CanCollide and CP.wheelL.CanCollide and CP.wheelUp.CanCollide and CP.hubL.CanCollide and CP.pad.CanCollide and CP.fence.CanCollide and not CP.shadow.CanCollide, "穿墙关掉后车部件原样还原 (本来不碰撞的影子仍是不碰撞)")
 
@@ -1091,7 +1091,7 @@ if _G.SB_DUMP then _G.SB_DUMP() end
 local dumpCar = VFS["selfblox_dump.txt"]
 ok(dumpCar and dumpCar:find("Model: Street", 1, true) == nil, "载具范围不是整个街区 Street")
 ok(dumpCar and dumpCar:find("Truck", 1, true) ~= nil, "锁到的是 Truck 那层")
-ok(toastNoSeat:find("没座位", 1, true) ~= nil, "提示如实说明「没座位」(当时提示: " .. toastNoSeat .. ")")
+ok(toastNoSeat:find("没座位", 1, true) ~= nil, `提示如实说明「没座位」(当时提示: {toastNoSeat})`)
 ok(dumpCar and dumpCar:find("座位: -", 1, true) ~= nil, "快照里座位一栏是空的")
 ok(dumpCar and dumpCar:find("准星射线", 1, true) ~= nil and dumpCar:find("祖先: ", 1, true) ~= nil, "快照里有准星射线 + 祖先链")
 ok(dumpCar and dumpCar:find("周围的座位", 1, true) ~= nil, "快照里有周围座位(半径扫描)")
@@ -1101,8 +1101,8 @@ do local function mapGuard() -- 打中街道路面(横跨 3000 格的装配体):
 	click(findBtn("换车"))
 	step(1 / 60, 5)
 	ok(CP.road:FindFirstChild("SB_SIBS") == nil, "打中街道路面 → 不绑 (装配体外径 ~6000 格, 远超 carmaxstuds)")
-	ok(toastText():find("地图", 1, true) ~= nil, "提示说清是地图/大容器, 不是笼统的「没座位」(" .. toastText() .. ")")
-	ok(toastText():match("外径 %d+ 格") ~= nil and toastText():match("质量 %d+") ~= nil, "提示里带实测外径和质量: 下次误拒/漏拒, 报告自己就能说明为什么 (" .. toastText() .. ")")
+	ok(toastText():find("地图", 1, true) ~= nil, `提示说清是地图/大容器, 不是笼统的「没座位」({toastText()})`)
+	ok(toastText():match("外径 %d+ 格") ~= nil and toastText():match("质量 %d+") ~= nil, `提示里带实测外径和质量: 下次误拒/漏拒, 报告自己就能说明为什么 ({toastText()})`)
 	local slab = inst("Part", { Name = "Slab", CanCollide = true, Anchored = false, Size = Vector3.new(2000, 1, 2000), Position = Vector3.new(0, 0, 1500), CFrame = CFrame.new(Vector3.new(0, 0, 1500)), AssemblyLinearVelocity = Vector3.zero, AssemblyMass = 5000 })
 	slab.props.AssemblyRootPart = slab
 	slab.Parent = street
@@ -1117,14 +1117,14 @@ do local function looseInBigModel() -- 真车直接挂在超大容器 Model 里:
 	click(findBtn("换车"))
 	step(1 / 60, 5)
 	ok(CP.looseCar:FindFirstChild("SB_SIBS") ~= nil, "超大容器 Model 里的小装配体(没座位)照样绑得上: 量的是装配体, 不是容器")
-	ok(toastText():find("没座位", 1, true) ~= nil, "绑上后照样提示没座位只能推 (" .. toastText() .. ")")
+	ok(toastText():find("没座位", 1, true) ~= nil, `绑上后照样提示没座位只能推 ({toastText()})`)
 end looseInBigModel() end
 _G.__rayHit = { Instance = seat } -- 换回真车: 带座位的那种
 click(findBtn("换车"))
 step(1 / 60, 5)
 local toastSeat = toastText()
 if _G.SB_DUMP then _G.SB_DUMP() end
-ok(toastSeat:find("座位 Seat", 1, true) ~= nil, "有座位时提示带座位名 (当时提示: " .. toastSeat .. ")")
+ok(toastSeat:find("座位 Seat", 1, true) ~= nil, `有座位时提示带座位名 (当时提示: {toastSeat})`)
 _G.__rayHit = nil
 
 print("\n[6g] 锁定自愈: 车被换掉 / 锁到锚定件")
@@ -1174,12 +1174,12 @@ for _, hit in ipairs({ CP.sur, CP.wheelL, carBody, seat }) do
 	_G.__rayHit = { Instance = hit }
 	click(findBtn("换车"))
 	step(1 / 60, 20)
-	ok(seat:FindFirstChild("SB_SIBS") ~= nil and CP.sur:FindFirstChild("SB_SIBS") == nil and CP.wheelL:FindFirstChild("SB_SIBS") == nil, "瞄 " .. hit.Name .. " → 绑的是座位 Seat 所在的装配体, 不是瞄到的零件")
-	ok(toastText():find("座位 Seat", 1, true) ~= nil, "提示说明是按座位锁的 (" .. toastText() .. ")")
+	ok(seat:FindFirstChild("SB_SIBS") ~= nil and CP.sur:FindFirstChild("SB_SIBS") == nil and CP.wheelL:FindFirstChild("SB_SIBS") == nil, `瞄 {hit.Name} → 绑的是座位 Seat 所在的装配体, 不是瞄到的零件`)
+	ok(toastText():find("座位 Seat", 1, true) ~= nil, `提示说明是按座位锁的 ({toastText()})`)
 end
 local st
 for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" and starts(d.Text, "Car · ") then st = d.Text end end
-ok(st ~= nil, "状态行显示整辆车的名字 Car, 不是某个零件/子模型 (" .. tostring(st) .. ")")
+ok(st ~= nil, `状态行显示整辆车的名字 Car, 不是某个零件/子模型 ({tostring(st)})`)
 ok(st ~= nil and not st:find("sps", 1, true), "状态行速度后面不带 sps 单位")
 _G.__rayHit = nil
 end
@@ -1195,7 +1195,7 @@ step(1 / 60, 3)
 local dm = VFS["selfblox_dump.txt"]
 ok(dm ~= nil, "写了 selfblox_dump.txt")
 ok(dm and dm:find("执行器 isfile=", 1, true) ~= nil, "快照里有执行器能力")
-ok(dm and dm:find("脚本=" .. tostring(VER), 1, true) ~= nil, "诊断快照的版本 = VERSION (" .. tostring(VER) .. ")")
+ok(dm and dm:find(`脚本={tostring(VER)}`, 1, true) ~= nil, `诊断快照的版本 = VERSION ({tostring(VER)})`)
 ok(dm and dm:find("MobilePedals", 1, true) ~= nil, "快照里有踏板树")
 ok(dm and dm:find("sibs ", 1, true) ~= nil, "快照里有各模块状态")
 ok(dm and dm:find("PlayerGui 树", 1, true) == nil, "快照里不再带整个 PlayerGui 树 (原来是给「选按钮」准备的)")
@@ -1243,7 +1243,7 @@ ok(hl ~= nil and hl.Enabled == true, "别的玩家有 ESP 高亮")
 ok(hl and hl.FillColor.R == 1 and hl.FillColor.G == 0, "高亮用队伍颜色 (红队)")
 local bb = espBB()
 local nameTxt = bb and bb:FindFirstChildOfClass("TextLabel").Text
-ok(nameTxt == "Bobby 30", "名牌 = 显示名 + 距离 (" .. tostring(nameTxt) .. ")")
+ok(nameTxt == "Bobby 30", `名牌 = 显示名 + 距离 ({tostring(nameTxt)})`)
 bob.props.Team = nil
 step(1 / 60, 20)
 ok(espHL(bobChar).FillColor.R == 0.5, "没队伍 → 按 UserId 取色")
@@ -1270,7 +1270,7 @@ local function mkPlane(name, o)
 	local st = T(inst("VehicleSeat", { Name = "Pilot", Size = Vector3.new(2, 1, 2), CFrame = CFrame.new(Vector3.new(200, 50, 0)), Position = Vector3.new(200, 50, 0), Occupant = o.occ }))
 	if not o.noseat then st.Parent = m end -- 没座位的飞机(机库/菜单/被服务器接管的残留机): 上一版只从座位出发扫描, 这种整个漏掉
 	for _, wn in ipairs(o.wings or {}) do mkPart(wn, Vector3.new(6, 0.5, 2), Vector3.new(200, 50, 0)).Parent = m end
-	for i = 1, (o.fill or 0) do mkPart("Body" .. i, Vector3.new(1, 1, 1), Vector3.new(200, 50, 0)).Parent = m end
+	for i = 1, (o.fill or 0) do mkPart(`Body{i}`, Vector3.new(1, 1, 1), Vector3.new(200, 50, 0)).Parent = m end
 	if o.paint then mkPart("Hull", Vector3.new(20, 4, 4), Vector3.new(200, 50, 0), { Color = o.paint }).Parent = m end
 	if o.remote then T(inst("RemoteEvent", { Name = o.remote })).Parent = m end
 	if o.attr then m:SetAttribute(o.attr[1], o.attr[2]) end
@@ -1295,7 +1295,7 @@ ok(VFS["plane_debug.txt"] ~= nil and VFS["plane_debug.txt"]:find("-- 飞机 5", 
 VFS["plane_debug.txt"] = nil
 click(findBtn("重扫"))
 local st1 = labelHas("飞机 ")
-ok(st1 and st1:find("飞机 5", 1, true) and st1:find("Remote 2", 1, true), "重扫: 5 架飞机 (车不算) + 2 个相关 Remote (" .. tostring(st1) .. ")")
+ok(st1 and st1:find("飞机 5", 1, true) and st1:find("Remote 2", 1, true), `重扫: 5 架飞机 (车不算) + 2 个相关 Remote ({tostring(st1)})`)
 click(findBtn("写报告"))
 local rep = VFS["plane_debug.txt"]
 ok(rep ~= nil and CLIP == rep, "写报告 → plane_debug.txt + 剪贴板")
@@ -1343,7 +1343,7 @@ if FROZEN_G then
 else
 	okArgs = rep:find('Workspace.Plane_RAF.FireGun:FireServer "bullet", (1,2,3), {a=1}', 1, true)
 end
-ok(rep:find("-- 发 1", 1, true) and okArgs, "命中关键字的 FireServer 被记下来了, 参数格式化对 (发小节原文: " .. faSec .. ")")
+ok(rep:find("-- 发 1", 1, true) and okArgs, `命中关键字的 FireServer 被记下来了, 参数格式化对 (发小节原文: {faSec})`)
 click(findBtn("全录"))
 _G.__ncm = "InvokeServer"
 hookF(chatFn, "hi")
@@ -1367,7 +1367,7 @@ do -- 记录折叠 / 没座位的飞机 / 疑似名单 / ★我(OldOwner): 四�
 	rep = VFS["plane_debug.txt"]
 	ok(rep:find("×3", 1, true) ~= nil, "连续同 Remote 同目标折叠成一组 ×3 (原来 200 条不折叠只装 10 秒, RequestPlane 必被刷掉)")
 	ok(rep:find('FireGun:FireServer "one"', 1, true) ~= nil and rep:find('末 Workspace.Plane_RAF.FireGun:FireServer "three"', 1, true) ~= nil, "折叠后首末两条 payload 都留着 (EngineSync 从 0.64 衰减到 0 这种趋势还看得见)")
-	ok(rep:find("-- 发 3 条 / 1 组", 1, true) ~= nil, "报告头写清 原始条数/组数 (" .. tostring(rep:match("-- 发 [^\n]*")) .. ")")
+	ok(rep:find("-- 发 3 条 / 1 组", 1, true) ~= nil, `报告头写清 原始条数/组数 ({tostring(rep:match("-- 发 [^\n]*"))})`)
 	local m21 = mkPlane("M21", { noseat = true, wings = { "LeftWing", "RightWing" }, fill = 12 })
 	local fw = mkPlane("FW190", { noseat = true, wings = { "LeftWing", "RightWing" }, fill = 12, attr = { "OldOwner", "Me" } })
 	click(findBtn("重扫"))
@@ -1375,7 +1375,7 @@ do -- 记录折叠 / 没座位的飞机 / 疑似名单 / ★我(OldOwner): 四�
 	rep = VFS["plane_debug.txt"]
 	ok(rep:find("[34] Workspace.M21 | 座:无", 1, true) ~= nil, "没座位的飞机也进报告 (机型名 M21 不在 HINT 里 → 只有 34 分, 靠「2 翼 + 12 件」这条进来)")
 	ok(rep:find("FW190 ★我(OldOwner)", 1, true) ~= nil, "被服务器接管的自家飞机(座位空的, 只剩 OldOwner 属性)也标 ★我")
-	ok(rep:find("-- 疑似 2", 1, true) ~= nil and rep:find("Shed | 靠座", 1, true) ~= nil and rep:find("Workspace.Car | 靠座", 1, true) ~= nil, "没过门槛的进「疑似」名单(2 个: Shed + 那辆车), 写清是靠座还是靠翼认到的 (" .. tostring(rep:match("-- 疑似 [^\n]*")) .. ")")
+	ok(rep:find("-- 疑似 2", 1, true) ~= nil and rep:find("Shed | 靠座", 1, true) ~= nil and rep:find("Workspace.Car | 靠座", 1, true) ~= nil, `没过门槛的进「疑似」名单(2 个: Shed + 那辆车), 写清是靠座还是靠翼认到的 ({tostring(rep:match("-- 疑似 [^\n]*"))})`)
 	ok(rep:find("· 重扫于 ", 1, true) ~= nil, "报告头带重扫时间 (只点「写报告」会得到 0 架 0 Remote 的假象)")
 	m21:Destroy()
 	fw:Destroy()
@@ -1393,7 +1393,7 @@ click(findBtn("自动 5s"))
 local brickBtn = btnExact("刷砖 关")
 click(brickBtn)
 step(1 / 60, 2)
-ok(toastText():find("没找到", 1, true) ~= nil and brickBtn.Text == "刷砖 关", "没有 Collector / leaderstats → 提示并自己关回去 (" .. toastText() .. ")")
+ok(toastText():find("没找到", 1, true) ~= nil and brickBtn.Text == "刷砖 关", `没有 Collector / leaderstats → 提示并自己关回去 ({toastText()})`)
 local ls = T(inst("Folder", { Name = "leaderstats" })); ls.Parent = player
 local bits = T(inst("IntValue", { Name = "Bits", Value = 100 })); bits.Parent = ls
 local mult = T(inst("IntValue", { Name = "Multiplier", Value = 2 })); mult.Parent = ls
@@ -1408,20 +1408,20 @@ bits.Value = bits.Value + 50 -- 游戏给的分
 local b5 = mkBrick(1)
 workspace.props.ChildAdded:Fire(b5) -- 新掉出来的砖: ChildAdded → defer → 吸走
 step(1 / 60, 90)
-ok(fires >= 4, "每个周期按批次发 SpawnBit (发了 " .. fires .. " 次)")
+ok(fires >= 4, `每个周期按批次发 SpawnBit (发了 {fires} 次)`)
 ok(mult.Value == 99999 and player:GetAttribute("MultiplierUpgradeLevel") == 9999, "倍率和等级被顶上去")
 local function nearCollector(b) local pz = b.CFrame.Position; return math.abs(pz.X - 80) <= 3 and math.abs(pz.Y - 4.5) < 0.01 and math.abs(pz.Z) <= 3 end
 ok(nearCollector(b1) and nearCollector(b2) and b1.AssemblyLinearVelocity.Y == -35, "自己的砖被吸到 Collector 上方并往下砸")
 ok(nearCollector(b5), "新掉出来的砖也被吸走 (ChildAdded)")
 ok(b3.CFrame.Position.Y == 20 and b4.CFrame.Position.Y == 20, "别人的砖 / 自己锚定的砖不碰")
 local brickTxt = labelHas("周期 ")
-ok(brickTxt ~= nil and brickTxt:find("+50", 1, true), "状态行有周期和累计收益 (" .. tostring(brickTxt) .. ")")
+ok(brickTxt ~= nil and brickTxt:find("+50", 1, true), `状态行有周期和累计收益 ({tostring(brickTxt)})`)
 -- 关了立刻又开: 不能同时跑两条循环
 click(btnExact("刷砖 开"))
 click(btnExact("刷砖 关"))
 local f0 = fires
 step(1 / 60, 192)
-ok(fires - f0 <= 16, "关了立刻又开: 只有一条循环在跑 (3.2 秒发了 " .. (fires - f0) .. " 次, 两条循环会翻倍)")
+ok(fires - f0 <= 16, `关了立刻又开: 只有一条循环在跑 (3.2 秒发了 {(fires - f0)} 次, 两条循环会翻倍)`)
 click(btnExact("刷砖 开"))
 step(1 / 60, 150)
 ok(mult.Value == 2 and player:GetAttribute("MultiplierUpgradeLevel") == nil, "关掉 → 倍率和等级还原 (原来的 2 / 没有)")
@@ -1444,7 +1444,7 @@ for _, d in ipairs(all()) do if d:IsA("TextBox") and d.Text == "512" then limitB
 limitBox.Text = "0.001"; limitBox.FocusLost:Fire()
 step(1 / 60, 250)
 local _, entries = (VFS["Selfblox_log.txt"] or ""):gsub("%] #%d+", "")
-ok(entries == 1, "超过上限 → 直接重写, 文件里只剩最新一条 (" .. entries .. " 条)")
+ok(entries == 1, `超过上限 → 直接重写, 文件里只剩最新一条 ({entries} 条)`)
 ok((VFS["Selfblox_log.txt"] or ""):sub(1, 13) == "---- Selfblox", "重写时补上表头")
 limitBox.Text = "512"; limitBox.FocusLost:Fire()
 -- 循环里任何一步抛错, 记录循环都不能永久死掉
@@ -1492,7 +1492,7 @@ if spdBtn.Text:find("开", 1, true) then click(spdBtn) end
 click(spdBtn)
 humanoid.props.MoveDirection = Vector3.new(0, 0, -1)
 step(1 / 60, 4)
-ok(hrp.props.AssemblyLinearVelocity.Z == -16 and hrp.props.AssemblyLinearVelocity.X == 0, "速度·root: 直接写水平速度 (" .. tostring(hrp.props.AssemblyLinearVelocity) .. ")")
+ok(hrp.props.AssemblyLinearVelocity.Z == -16 and hrp.props.AssemblyLinearVelocity.X == 0, `速度·root: 直接写水平速度 ({tostring(hrp.props.AssemblyLinearVelocity)})`)
 humanoid.props.MoveDirection = Vector3.zero
 step(1 / 60, 4)
 ok(hrp.props.AssemblyLinearVelocity.Z == 0, "松摇杆 → 水平速度归零")
@@ -1540,7 +1540,7 @@ ok(VFS["Selfblox.json"] ~= nil, "改过的值写进了 Selfblox.json")
 local barLbl
 for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" and d.RichText == true and d.Text:find("<font", 1, true) then barLbl = d end end
 ok(barLbl and barLbl.Text:find("02:37", 1, true) ~= nil, "数据条是 12 小时制 (现在该显示 02:37)")
-ok(barLbl and not (barLbl.Text:find("ms", 1, true) or barLbl.Text:find("fps", 1, true) or barLbl.Text:find("MB", 1, true)), "数据条数字后面不带 ms / fps / MB 单位 (" .. tostring(barLbl and barLbl.Text) .. ")")
+ok(barLbl and not (barLbl.Text:find("ms", 1, true) or barLbl.Text:find("fps", 1, true) or barLbl.Text:find("MB", 1, true)), `数据条数字后面不带 ms / fps / MB 单位 ({tostring(barLbl and barLbl.Text)})`)
 local LOGTXT = VFS["Selfblox_log.txt"]
 ok(LOGTXT == nil or not LOGTXT:find("fps"), "日志里没有 fps/ms 那种备注")
 ok(CLIP == nil or true, "剪贴板接口在")
@@ -1554,8 +1554,8 @@ step(1 / 60, 10)
 local leaked = 0
 for _, i in ipairs(before) do if not i.destroyed then leaked = leaked + 1 end end
 ok(tabs() == nil, "面板整个没了")
-ok(leaked == 0, "没漏实例 (漏了 " .. leaked .. " 个)")
-ok(LIVE == 0, "没漏连接 (还剩 " .. LIVE .. " 个)")
+ok(leaked == 0, `没漏实例 (漏了 {leaked} 个)`)
+ok(LIVE == 0, `没漏连接 (还剩 {LIVE} 个)`)
 ok(_G.SB_UNLOAD == nil, "SB_UNLOAD 自己清了")
 ok(_G.__hook ~= _G.__planeHook, "卸载时 __namecall 钩子还原成原来的")
 
@@ -1564,9 +1564,9 @@ print("\n[10] _G.SB 覆盖 + only 过滤")
 SNAP = #INSTANCES
 _G.SB = { only = { "moc", "hud" }, spd = 99, clock = "24", stats = true }
 local fn2, lerr2 = load_chunk(SRC, "selfblox2")
-ok(fn2 ~= nil, "第二轮语法 OK " .. tostring(lerr2 or ""))
+ok(fn2 ~= nil, `第二轮语法 OK {tostring(lerr2 or "")}`)
 local ok2, err2 = pcall(fn2)
-ok(ok2, "再跑一次没报错 " .. tostring(err2 or ""))
+ok(ok2, `再跑一次没报错 {tostring(err2 or "")}`)
 step(1 / 60, 20) -- 先把帧喂够: 数据条 0.2s 才刷一次, 页签/数值框是立刻有的
 local n = 0
 for _, d in ipairs(all()) do if d:IsA("TextButton") and d.Text == "动" then n = n + 1 end end
@@ -1590,9 +1590,9 @@ _G.SB = nil -- 干净跑: 默认配置 + 被写坏的 JSON
 VFS["Selfblox.json"] = "{这不是 JSON"
 SNAP = #INSTANCES
 local fn3, lerr3 = load_chunk(SRC, "selfblox3")
-ok(fn3 ~= nil, "语法 OK " .. tostring(lerr3 or ""))
+ok(fn3 ~= nil, `语法 OK {tostring(lerr3 or "")}`)
 local ok3, err3 = pcall(fn3)
-ok(ok3, "配置坏了照样起面板 " .. tostring(err3 or ""))
+ok(ok3, `配置坏了照样起面板 {tostring(err3 or "")}`)
 ok(tabs() ~= nil, "面板确实建出来了")
 _G.SB_UNLOAD()
 step(1 / 60, 3)
@@ -1624,7 +1624,7 @@ local function freshSibs(o)
 	VFS["Selfblox.json"] = nil -- 前面点开关会把 carauto 存进配置
 	o = o or {}; o.only = { "sibs" }; _G.SB = o
 	local okf, ef = pcall(assert(load_chunk(SRC, "selfblox12")))
-	ok(okf, "sibs 单模块能起 " .. tostring(ef or ""))
+	ok(okf, `sibs 单模块能起 {tostring(ef or "")}`)
 end
 local function bound(p) return p:FindFirstChild("SB_SIBS") ~= nil end
 
@@ -1632,7 +1632,7 @@ _G.__radius = { bench, farSeat, seat }
 freshSibs()
 step(1 / 60, 90)
 ok(bound(seat) and not bound(bench) and not bound(farSeat), "自动绑到最近的车座位 (长椅被跳过, 远的不选)")
-ok(toastText():find("自动绑定", 1, true) ~= nil, "提示说明自动绑了 (" .. toastText() .. ")")
+ok(toastText():find("自动绑定", 1, true) ~= nil, `提示说明自动绑了 ({toastText()})`)
 
 _G.__radius = { bench }
 freshSibs()
@@ -1718,7 +1718,7 @@ local charSaved = player.props.Character
 player.props.Character = nil
 local late = carPart("Late", Vector3.new(1, 1, 1), Vector3.new(10, 8, 0)) -- 重生期间车上新冒出来一个零件: noclip 要判它是不是人物的 (只有新零件才会走到这一步)
 local okR, eR = pcall(step, 1 / 60, 60)
-ok(okR, "重生那几秒(Character=nil) 车还绑着、穿墙开着, 车上还冒出新零件: 不抛错 " .. tostring(not okR and eR or ""))
+ok(okR, `重生那几秒(Character=nil) 车还绑着、穿墙开着, 车上还冒出新零件: 不抛错 {tostring(not okR and eR or "")}`)
 ok(late.CanCollide == false, "重生期间新冒出来的零件也照常穿墙")
 late:Destroy()
 player.props.Character = charSaved
@@ -1728,7 +1728,7 @@ _G.SB_UNLOAD()
 step(1 / 60, 3)
 local leaked12 = 0
 for i = SNAP12 + 1, #INSTANCES do if not INSTANCES[i].destroyed then leaked12 = leaked12 + 1 end end
-ok(leaked12 == 0 and LIVE == 0, "自动绑车这一轮卸载同样干净 (漏 " .. leaked12 .. " 个实例 / " .. LIVE .. " 个连接)")
+ok(leaked12 == 0 and LIVE == 0, `自动绑车这一轮卸载同样干净 (漏 {leaked12} 个实例 / {LIVE} 个连接)`)
 _G.__radius = nil
 seat.props.Occupant = driver
 end
@@ -1757,7 +1757,7 @@ local at = SRC:find("-- ───────── 启动: 按清单建页", 1,
 ok(at ~= nil, "找得到清单的建页入口")
 local SNAP13 = #INSTANCES
 local okLoad, errLoad = pcall(assert(load_chunk(SRC:sub(1, at - 1) .. EXTRA .. SRC:sub(at), "selfblox14")))
-ok(okLoad, "多一个功能 (含一个坏行) 后脚本照样起得来 " .. tostring(errLoad or ""))
+ok(okLoad, `多一个功能 (含一个坏行) 后脚本照样起得来 {tostring(errLoad or "")}`)
 local toy = findBtn("测试开关 ")
 ok(toy ~= nil and toy.Text == "测试开关 关", "清单一行 → 面板上多了开关")
 ok(findBtn("档 a") ~= nil and findBtn("测试按钮") ~= nil, "cycle / btn 行也按清单建出来")
@@ -1795,10 +1795,10 @@ step(1 / 60, 3)
 ok(_G.__ping.offs == 2, "卸载时开着的功能也被 off")
 local leaked13 = 0
 for i = SNAP13 + 1, #INSTANCES do if not INSTANCES[i].destroyed then leaked13 = leaked13 + 1 end end
-ok(leaked13 == 0 and LIVE == 0, "加了功能的这一轮卸载同样干净 (漏 " .. leaked13 .. " 个实例 / " .. LIVE .. " 个连接)")
+ok(leaked13 == 0 and LIVE == 0, `加了功能的这一轮卸载同样干净 (漏 {leaked13} 个实例 / {LIVE} 个连接)`)
 _G.__ping, _G.__pingbtn = nil, nil
 end
 
-print("\n" .. (FAILS == 0 and "全部通过 ✓" or ("有 " .. FAILS .. " 条没过 ✗")))
-if FAILS > 0 then error(FAILS .. " 条断言没过", 0) end -- 不靠 os.exit: Luau 的 os 库只有 clock/date/difftime/time, 没有 exit; 只有 error 能让进程退出码非 0
-if FAILS ~= 0 and error then error(FAILS .. " 条没过", 0) end
+print(`\n{((if FAILS == 0 then "全部通过 ✓" else ("有 " .. FAILS .. " 条没过 ✗")))}`)
+if FAILS > 0 then error(`{FAILS} 条断言没过`, 0) end -- 不靠 os.exit: Luau 的 os 库只有 clock/date/difftime/time, 没有 exit; 只有 error 能让进程退出码非 0
+if FAILS ~= 0 and error then error(`{FAILS} 条没过`, 0) end

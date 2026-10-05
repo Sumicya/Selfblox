@@ -12,10 +12,10 @@
 --   原生优先 —— 刹车 / 灯 / 秒互动 / ESP 走引擎原生属性, 拖拽走 UIDragDetector, 不自己造轮子
 --   面向 Delta 最新版 —— hookmetamethod / newcclosure / UIDragDetector 当它一定有;
 --            gethui / isfile / writefile 缺失时退回 CoreGui 并跳过存盘, 面板照样起得来
---   语法基线就是 Luau(运行环境就是它): 26.10.5.28 起本文件用了字符串插值(`{}`)与复合赋值(+= 等)等 Luau 专属写法,
+--   语法基线就是 Luau(运行环境就是它): 26.10.5.28 起用了字符串插值(`{}`)、复合赋值(+= 等)与 if 表达式(if c then a else b),
 --            Lua 5.4 / fengari 都解析不了; 自检的权威跑法是 CI 里的官方 Luau 0.741 (本地怎么编同版本见 AGENTS.md)
 
-local VERSION = "26.10.5.30.30" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
+local VERSION = "26.10.5.31.31" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
@@ -38,7 +38,7 @@ if isfile and isfile(FILE) then local okf, d = pcall(Http.JSONDecode, Http, read
 local function opt(k, d) local v = O[k]; if v == nil then v = saved[k] end; if v == nil then v = d end; return v end
 local function save(k, v) saved[k] = v; if writefile then writefile(FILE, Http:JSONEncode(saved)) end end
 local CLOCK12 = opt("clock", "12") ~= "24" -- 12 小时制默认; _G.SB = { clock = "24" } 切 24
-local function clock(sec) return os.date((CLOCK12 and "%I" or "%H") .. (sec and ":%M:%S" or ":%M")) end
+local function clock(sec) return os.date(((if CLOCK12 then "%I" else "%H")) .. ((if sec then ":%M:%S" else ":%M"))) end
 
 -- ───────── 公共 ─────────
 local alive, conns, DUMP = true, {}, {}
@@ -85,7 +85,7 @@ local function btn(parent, s, fn, w)
 end
 local function toggle(parent, s, init, fn, w) -- 返回 set(v): 代码里也能翻状态
 	local b, st = ui("TextButton", parent, w), nil
-	local function set(v, quiet) st = v; b.Text = s .. (v and " 开" or " 关"); lit(b, v); if not quiet then fn(v) end end
+	local function set(v, quiet) st = v; b.Text = s .. ((if v then " 开" else " 关")); lit(b, v); if not quiet then fn(v) end end
 	set(init, true)
 	on(b.Activated, function() set(not st) end)
 	return set
@@ -98,7 +98,7 @@ end
 local function num(parent, s, S, k, w, savek) -- 直接绑 S[k], 改完自动存盘; savek 缺省 = k
 	local f = mk("Frame", { Size = w and UDim2.new(w, 0, 1, 0) or UDim2.new(1, 0, 0, ROW), LayoutOrder = ord(), BackgroundColor3 = OFF, BackgroundTransparency = CLEAR, BorderSizePixel = 0 }, parent) -- 一行分两半: 左半标签, 右半输入框, 文字各在自己那半格里居中 (原来标签靠左 + 前面垫个空格, 和居中的按钮/输入框对不齐)
 	if s then ui("TextLabel", f, nil, { Text = s, BackgroundTransparency = 1, Size = UDim2.fromScale(0.5, 1) }) end
-	local tb = mk("TextBox", { Size = UDim2.fromScale(s and 0.5 or 1, 1), Position = UDim2.fromScale(s and 0.5 or 0, 0), BackgroundTransparency = 1, Font = FONT, TextSize = 12, TextColor3 = Color3.fromRGB(255, 225, 140), Text = tostring(S[k]), TextXAlignment = Enum.TextXAlignment.Center, TextYAlignment = Enum.TextYAlignment.Center, ClearTextOnFocus = false }, f)
+	local tb = mk("TextBox", { Size = UDim2.fromScale((if s then 0.5 else 1), 1), Position = UDim2.fromScale((if s then 0.5 else 0), 0), BackgroundTransparency = 1, Font = FONT, TextSize = 12, TextColor3 = Color3.fromRGB(255, 225, 140), Text = tostring(S[k]), TextXAlignment = Enum.TextXAlignment.Center, TextYAlignment = Enum.TextYAlignment.Center, ClearTextOnFocus = false }, f)
 	on(tb.FocusLost, function() local v = tonumber(tb.Text); if v then S[k] = v; save(savek or k, v) end; tb.Text = tostring(S[k]) end)
 end
 
@@ -110,7 +110,7 @@ mk("UIListLayout", { Padding = UDim.new(0, 0) }, body)
 on(title:GetPropertyChangedSignal("Position"), function() body.Position = title.Position + UDim2.fromOffset(0, ROW) end)
 local fold = mk("TextButton", { Size = UDim2.fromOffset(ROW, ROW), Position = UDim2.new(1, -ROW, 0, 0), BackgroundTransparency = 1, Font = FONT, TextSize = 16, TextColor3 = WHITE, Text = "–" }, title)
 local foldHooks = {} -- 想知道"面板是折着还是开着"的模块挂这里
-local function setFold(v) body.Visible = v; fold.Text = v and "–" or "+"; for _, f in ipairs(foldHooks) do f(v) end end
+local function setFold(v) body.Visible = v; fold.Text = (if v then "–" else "+"); for _, f in ipairs(foldHooks) do f(v) end end
 local drag = mk("UIDragDetector", { BoundingUI = gui }, title)
 local flipT, down = -math.huge, nil
 local function flip() -- 一次点按可能同时走下面三条路(拖拽器 / +按钮 / 标签自己的输入), 0.2 秒内只认第一条, 不然翻两次等于没翻. ponytail: 0.2 秒内连点两下会被当成一下
@@ -218,7 +218,7 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 		local cam, md = workspace.CurrentCamera.CFrame, h.MoveDirection
 		local look = flat(cam.LookVector) or Vector3.zAxis
 		-- 水平跟摇杆, 前后分量带上相机俯仰, 上升/下降按钮叠加
-		flyLV.VectorVelocity = md * S.flyspd + Vector3.yAxis * (S.flyspd * (cam.LookVector.Y * md:Dot(look) + (F.up and 1 or 0) - (F.down and 1 or 0)))
+		flyLV.VectorVelocity = md * S.flyspd + Vector3.yAxis * (S.flyspd * (cam.LookVector.Y * md:Dot(look) + ((if F.up then 1 else 0)) - ((if F.down then 1 else 0))))
 		flyAO.CFrame = CFrame.lookAt(Vector3.zero, look)
 	end
 	local function doSpeed(r, h, dt)
@@ -482,8 +482,8 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 	local function setLive(v)
 		live = v
 		handle.Visible = v
-		track.ZIndex, knob.ZIndex = v and 10 or 1, v and 11 or 2
-		track.BackgroundTransparency, knob.BackgroundTransparency = v and 0.4 or 0.75, v and 0 or 0.55
+		track.ZIndex, knob.ZIndex = (if v then 10 else 1), (if v then 11 else 2)
+		track.BackgroundTransparency, knob.BackgroundTransparency = (if v then 0.4 else 0.75), (if v then 0 else 0.55)
 		if not v then dragX = nil; knob.Position = UDim2.fromScale(0.5, 0.5) end
 	end
 	local function steer() -- 轨道宽 200 / 圆点半径 18 → 圆心能走 ±82
@@ -550,14 +550,14 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 		local gst, thr, st = 0, 0, steer()
 		if sp and sp:IsA("VehicleSeat") then gst, thr, st = sp.Steer, sp.Throttle, math.clamp(st + sp.Steer, -1, 1) end -- 游戏自带的手机油门/方向盘也吃
 		local acc, dec = F.accel or thr > 0, F.decel or thr < 0
-		if os.clock() - statT > 0.2 then statT = os.clock(); say("car_status", `{(m and m.Name or p.Name)} · {(math.floor(spd + 0.5))}{(s and "" or " · 准星锁定")}{(anch and " · 锚定(等游戏解锁)" or "")}{(F.carclip and #clipList > 0 and not clipWheels and " · 穿墙没认到轮子(按最低块兜底)" or "")}`) end
+		if os.clock() - statT > 0.2 then statT = os.clock(); say("car_status", `{(m and m.Name or p.Name)} · {(math.floor(spd + 0.5))}{((if s then "" else " · 准星锁定"))}{((if anch then " · 锚定(等游戏解锁)" else ""))}{(F.carclip and #clipList > 0 and not clipWheels and " · 穿墙没认到轮子(按最低块兜底)" or "")}`) end
 		if F.carclip then noclip(p) elseif clipCar then reclip() end
 		if F.cfly then -- 飞车: 摇杆(前后左右) + 面板按钮都吃; 松手悬停
 			if not lv then lv = mk("LinearVelocity", { Attachment0 = att, MaxForce = math.huge, VectorVelocity = Vector3.zero, RelativeTo = Enum.ActuatorRelativeTo.World }, att) end
 			local mv = moveVec() -- 摇杆: 前推 Z=-1, 右推 X=1
-			local dir = fwd * math.clamp(-mv.Z + (acc and 1 or 0) - (dec and 1 or 0), -1, 1) + (flat(p.CFrame.RightVector) or Vector3.xAxis) * math.clamp(mv.X, -1, 1)
+			local dir = fwd * math.clamp(-mv.Z + ((if acc then 1 else 0)) - ((if dec then 1 else 0)), -1, 1) + (flat(p.CFrame.RightVector) or Vector3.xAxis) * math.clamp(mv.X, -1, 1)
 			if dir.Magnitude > 1 then dir = dir.Unit end
-			lv.VectorVelocity = anch and Vector3.zero or (dir * S.carfly + Vector3.yAxis * (S.carfly * ((F.cup and 1 or 0) - (F.cdown and 1 or 0))))
+			lv.VectorVelocity = anch and Vector3.zero or (dir * S.carfly + Vector3.yAxis * (S.carfly * (((if F.cup then 1 else 0)) - ((if F.cdown then 1 else 0)))))
 			vf.Force = Vector3.zero
 			return
 		elseif lv then lv:Destroy(); lv = nil end
@@ -575,7 +575,7 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 			if acc then W.brake(false) else brakeNow(p, v) end
 		elseif acc and dec then brakeNow(p, v)
 		elseif acc then push = fwd * f
-		elseif dec then push = -fwd * (f * (hv:Dot(fwd) > 3 and 2 or 1)) -- 前进中双倍刹, 停了就倒车
+		elseif dec then push = -fwd * (f * ((if hv:Dot(fwd) > 3 then 2 else 1))) -- 前进中双倍刹, 停了就倒车
 		elseif F.cruise then push = fwd * math.clamp((target - hv:Dot(fwd)) * mass * 2, -f, f) end
 		if not F.cruise then target = hv:Dot(fwd) end -- 定速一开就锁当前车速
 		if anch then vf.Force = Vector3.zero else vf.Force = push end -- 锚定: 力无效, 清零等着
@@ -589,7 +589,7 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 			return { `最近一辆: {tostring(lastCar.path)}`, "  已经不在 workspace 里了(被游戏销毁/回收) → 结构拿不到, 只能在车还在的时候点诊断打包" }
 		end
 		local m = cached and lastCar.m or model()
-		local L = { "==== CAR " .. os.date("%Y-%m-%d ") .. clock(true) .. " place=" .. game.PlaceId .. (cached and " (缓存的最近一辆)" or "") .. " ====",
+		local L = { "==== CAR " .. os.date("%Y-%m-%d ") .. clock(true) .. " place=" .. game.PlaceId .. ((if cached then " (缓存的最近一辆)" else "")) .. " ====",
 			`座位: {(s and s:GetFullName() or "-")}   根部件: {p:GetFullName()}   Model: {(m and m:GetFullName() or "-")}`,
 			string.format("根部件 质量=%.0f 锚定=%s 速度=%.1f 尺寸=(%.0f,%.0f,%.0f)", p.AssemblyMass, tostring(p.Anchored), p.AssemblyLinearVelocity.Magnitude, p.Size.X, p.Size.Y, p.Size.Z) }
 		if s and s:IsA("VehicleSeat") then
@@ -648,13 +648,13 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 		elseif s:IsA("VehicleSeat") then return string.format(" 座=%s 油门=%.2f 方向=%.2f", s.Name, nn(s.Throttle), nn(s.Steer))
 		else return " 座=" .. s.Name .. "(普通座, 无油门/方向)" end
 	end
-	local function holdInfo() return (F.accel and " 按加速" or "") .. (F.decel and " 按减速" or "") .. (F.cup and " 按升" or "") .. (F.cdown and " 按降" or "") end
+	local function holdInfo() return ((if F.accel then " 按加速" else "")) .. ((if F.decel then " 按减速" else "")) .. ((if F.cup then " 按升" else "")) .. ((if F.cdown then " 按降" else "")) end
 	local function carInfo()
 		local p, s = part()
 		if p and vf then
 			return string.format("抓地=%s/转向=%s/过弯上限=%s 部件=%s%s 推力=%.0f(%.1f/kg) 质量=%.0f 速度=%.0f%s 定速=%s@%.0f 飞车=%s 穿墙=%s 急刹=%s%s",
 				S.grip, S.turn, S.turncap, p:GetFullName(), seatInfo(s), vf.Force.Magnitude, vf.Force.Magnitude / math.max(p.AssemblyMass, 1), p.AssemblyMass,
-				p.AssemblyLinearVelocity.Magnitude, p.Anchored and " 锚定(引擎不让推)" or "", tostring(F.cruise), target, tostring(F.cfly), tostring(F.carclip), tostring(F.brake), holdInfo())
+				p.AssemblyLinearVelocity.Magnitude, (if p.Anchored then " 锚定(引擎不让推)" else ""), tostring(F.cruise), target, tostring(F.cfly), tostring(F.carclip), tostring(F.brake), holdInfo())
 		end
 		return "抓地=" .. S.grip .. "/转向=" .. S.turn .. "/过弯上限=" .. S.turncap .. " 部件=-" .. seatInfo(nil) .. " 定速=" .. tostring(F.cruise) .. "@" .. math.floor(target) .. " 飞车=" .. tostring(F.cfly) .. " 穿墙=" .. tostring(F.carclip) .. " 急刹=" .. tostring(F.brake) .. holdInfo()
 	end
@@ -825,7 +825,7 @@ do -- ═════════ 显: 数据条 / 速度箭头 / 玩家 ESP (�
 		if F.stats then
 			local pos = r and string.format("%.0f %.0f %.0f", r.Position.X, r.Position.Y, r.Position.Z) or "-"
 			bar.Text = string.format("<font color='#89dceb'>%.0f</font>  <font color='%s'>%.0f</font>  <font color='#c8b4eb'>%.0f</font>  <font color='#ebc896'>%s</font>  <font color='#eb96aa'>%d/%d</font>  <font color='#d2d4de'>%s</font>",
-				me:GetNetworkPing() * 1000, fps >= 50 and "#aae696" or "#eb7878", fps, Stats:GetTotalMemoryUsageMb(), clock(), #Players:GetPlayers(), Players.MaxPlayers, pos) -- 数字后面不带单位, 靠颜色认: 青=延迟 绿/红=帧率 紫=内存 黄=时间 粉=人数 灰=坐标
+				me:GetNetworkPing() * 1000, (if fps >= 50 then "#aae696" else "#eb7878"), fps, Stats:GetTotalMemoryUsageMb(), clock(), #Players:GetPlayers(), Players.MaxPlayers, pos) -- 数字后面不带单位, 靠颜色认: 青=延迟 绿/红=帧率 紫=内存 黄=时间 粉=人数 灰=坐标
 		end
 		for pl, e in pairs(esp) do
 			local c = pl.Character
@@ -943,7 +943,7 @@ do -- ═════════ 机: 飞机侦察 (找飞机 / 判队伍 / 列
 				if vol > p.vol then p.big, p.vol = d, vol end
 			elseif d:IsA("ValueBase") and hint(d.Name, TEAMK) then p.teamVal = p.teamVal or (`{d.Name}={fmt(d.Value)}`) end
 		end
-		p.score = (p.hint and 40 or 0) + (p.seat and 35 or 0) + math.min(p.wings, 2) * 12 + (p.parts >= 8 and 10 or 0) + (p.occ and 5 or 0)
+		p.score = ((if p.hint then 40 else 0)) + ((if p.seat then 35 else 0)) + math.min(p.wings, 2) * 12 + ((if p.parts >= 8 then 10 else 0)) + ((if p.occ then 5 else 0))
 		p.team, p.src, p.teamObj = team(p)
 		p.mine = p.occ == me
 		if not p.mine then -- 被服务器接管的自家飞机: 座位空着, 只剩 OldOwner 这类属性还写着你 → 只看乘员会把它算成别人的残留机
@@ -1021,13 +1021,13 @@ do -- ═════════ 机: 飞机侦察 (找飞机 / 判队伍 / 列
 		if #planes == 0 and #remotes == 0 then scan() end -- 只点「写报告」会得到"飞机 0 Remote 0"的假象: 两个表都只有 scan() 会填 (实测过: 人在飞, 报告却是 0 架 0 个 Remote)
 		local L = { `==== PLANE {os.date("%Y-%m-%d ")}{clock(true)} place={game.PlaceId} me={me.Name} team={(me.Team and me.Team.Name or "-")} ====`, `-- 飞机 {#planes} · 重扫于 {(scanAt or "从未")}` }
 		for _, p in ipairs(planes) do
-			L[#L + 1] = `[{p.score}] {p.path}{(p.mine and " ★我" .. (p.ownBy and "(" .. p.ownBy .. ")" or "") or "")} | 座:{(p.seat and "有" or "无")} 翼:{p.wings} 件:{p.parts} | 队:{p.team}({p.src}){(p.occ and " 乘员:" .. p.occ.Name or "")}`
+			L[#L + 1] = `[{p.score}] {p.path}{(p.mine and " ★我" .. (p.ownBy and "(" .. p.ownBy .. ")" or "") or "")} | 座:{((if p.seat then "有" else "无"))} 翼:{p.wings} 件:{p.parts} | 队:{p.team}({p.src}){(p.occ and " 乘员:" .. p.occ.Name or "")}`
 			for k, v in pairs(p.model:GetAttributes()) do L[#L + 1] = `    attr {k}={fmt(v)}`end
 			for _, r in ipairs(p.remotes) do L[#L + 1] = `    {r.ClassName} {r:GetFullName()}`end
 		end
 		if #rejects > 0 then
 			L[#L + 1] = `-- 疑似 {#rejects} (扫到但没过门槛; 靠「座」=有座位, 靠「翼」=只认到机翼名)`
-			for _, p in ipairs(rejects) do L[#L + 1] = `[{p.score}] {p.path} | 靠{p.why} 座:{(p.seat and "有" or "无")} 翼:{p.wings} 件:{p.parts}`end
+			for _, p in ipairs(rejects) do L[#L + 1] = `[{p.score}] {p.path} | 靠{p.why} 座:{((if p.seat then "有" else "无"))} 翼:{p.wings} 件:{p.parts}`end
 		end
 		L[#L + 1] = `-- Remote {#remotes}`
 		for _, r in ipairs(remotes) do L[#L + 1] = `  {r.ClassName} {r:GetFullName()}`end
@@ -1123,7 +1123,7 @@ do
 				tabBtns[e.id] = btn(tabs, e.tab, function() show(e.id) end, 1 / #ACTIVE)
 			end
 		elseif page then
-			local parent, w = page, e.w or (k == "text" and 1 or 0.5)
+			local parent, w = page, e.w or ((if k == "text" then 1 else 0.5))
 			if NOUI[k] then w = 1
 			elseif w < 1 then -- 半行控件两两并一行; 行高变了或装不下就另起一行
 				local h = e.h or ROW
