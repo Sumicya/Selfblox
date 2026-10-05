@@ -120,6 +120,7 @@ local ENUM_OK = { -- 枚举字面量 (KeyCode 是按配置字符串动态取的,
 	UserInputType = words("MouseButton1 Touch"),
 }
 local MDLOG = {} -- MoveDirection 的读取记录(只留最近 4 条)
+local CFLOG = {} -- CFrame.RightVector 的读取记录(只留最近 3 条)
 local function guardMember(t, k) -- 读/写实例成员时调用
 	local cls = rawget(t, "ClassName")
 	local allow = VERIFIED[cls]
@@ -318,7 +319,11 @@ local cfmt = {
 	__index = function(t, k)
 		if k == "Position" then return t.p end
 		if k == "LookVector" then return -t.z end
-		if k == "RightVector" then return t.x end
+		if k == "RightVector" then -- 诊断: 记下每次读到的右向量与当时的基向量, 看脚本读到的是不是同一份
+			CFLOG[#CFLOG + 1] = tostring(t.x) .. "/z=" .. tostring(t.z)
+			if #CFLOG > 3 then table.remove(CFLOG, 1) end
+			return t.x
+		end
 		if k == "UpVector" then return t.y end
 		if k == "Rotation" then return CFrame.fromBasis(t.x, t.y, t.z, Vector3.zero) end
 	end,
@@ -994,12 +999,13 @@ humanoid.props.MoveDirection = Vector3.new(1, 0, 0) -- 右推 = 世界 +X
 step(1 / 60, 3)
 ok(lvc and lvc.VectorVelocity.X > 10, "摇杆右推 → 车右方向 " .. tostring(lvc and lvc.VectorVelocity))
 for i = #MDLOG, 1, -1 do MDLOG[i] = nil end
+for i = #CFLOG, 1, -1 do CFLOG[i] = nil end
 camera.CFrame = CFrame.new(Vector3.zero, Vector3.new(1, 0, 0)) -- 摄像机转到朝 +X: 前推 = 世界 +X, 但车还是该往车头(-Z)飞, 不能跟着相机跑
 humanoid.props.MoveDirection = Vector3.new(1, 0, 0)
 step(1 / 60, 3)
 local fw = seat.props.CFrame.LookVector -- 前面方向盘测试已经把假车转过了, 车头不再是 -Z, 所以跟车头的实际朝向比
 fw = Vector3.new(fw.X, 0, fw.Z).Unit
-ok(lvc and lvc.VectorVelocity.Magnitude > 10 and lvc.VectorVelocity.Unit:Dot(fw) > 0.99, "相机转 90° 后, 前推仍是车头方向, 不跟着相机跑 (与车头夹角余弦 " .. string.format("%.3f", lvc and lvc.VectorVelocity.Unit:Dot(fw) or 0) .. ", 速度 " .. tostring(lvc and lvc.VectorVelocity) .. ", 车头 " .. tostring(fw) .. ", 相机 " .. tostring(camera.CFrame.LookVector) .. ", 相机右 " .. tostring(camera.CFrame.RightVector) .. ", MoveDir " .. tostring(humanoid.props.MoveDirection) .. ", 脚本看到的 workspace 是同一个吗 " .. tostring(rawequal(assert(load_chunk("return workspace", "smoke_probe"))(), workspace)) .. ", 本人形 " .. tostring(humanoid) .. ", MoveDirection 读取 " .. table.concat(MDLOG, " | ") .. ")")
+ok(lvc and lvc.VectorVelocity.Magnitude > 10 and lvc.VectorVelocity.Unit:Dot(fw) > 0.99, "相机转 90° 后, 前推仍是车头方向, 不跟着相机跑 (与车头夹角余弦 " .. string.format("%.3f", lvc and lvc.VectorVelocity.Unit:Dot(fw) or 0) .. ", 速度 " .. tostring(lvc and lvc.VectorVelocity) .. ", 车头 " .. tostring(fw) .. ", 相机 " .. tostring(camera.CFrame.LookVector) .. ", 相机右 " .. tostring(camera.CFrame.RightVector) .. ", MoveDir " .. tostring(humanoid.props.MoveDirection) .. ", 脚本看到的 workspace 是同一个吗 " .. tostring(rawequal(assert(load_chunk("return workspace", "smoke_probe"))(), workspace)) .. ", 本人形 " .. tostring(humanoid) .. ", MoveDirection 读取 " .. table.concat(MDLOG, " | ") .. ", RightVector 读取(x/z) " .. table.concat(CFLOG, " | ") .. ")")
 camera.CFrame = CFrame.new(Vector3.zero)
 humanoid.props.MoveDirection = Vector3.zero
 step(1 / 60, 3)
