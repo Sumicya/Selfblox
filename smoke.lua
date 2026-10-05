@@ -22,6 +22,15 @@ if isFrozen(os) then os = thaw(os) end
 local FROZEN_G = isFrozen(_G)
 if FROZEN_G then local realG = _G; _G = setmetatable({}, { __index = realG }) end -- 写进代理, 读不到就回落原来那张表
 
+-- Luau CLI: _G 是上面换掉的可写代理, 可 selfblox.lua 和下面的 inst() 读的是裸全局;
+-- 这些名字在本文件里是 local, 直接写会写到 local 上, 所以借一个没有同名 local 的 chunk 把它们写成真全局。
+-- 每批 _G.X = ... 之后都要再调一次: 假引擎自己也会按全局名读它们 (Color3.fromRGB 就是)。
+local function exposeGlobals()
+	if not FROZEN_G then return end
+	local expose = assert(load_chunk("Instance, RaycastParams, OverlapParams, Vector3, Vector2, Color3, CFrame, UDim, UDim2, Enum, workspace, CoreGui, warn = ...", "smoke_expose"))
+	expose(_G.Instance, _G.RaycastParams, _G.OverlapParams, _G.Vector3, _G.Vector2, _G.Color3, _G.CFrame, _G.UDim, _G.UDim2, _G.Enum, _G.workspace, _G.CoreGui, _G.warn)
+end
+
 local unpack = table.unpack or unpack
 math.clamp = math.clamp or function(x, a, b) if x < a then return a elseif x > b then return b end return x end
 math.sign = math.sign or function(x) if x > 0 then return 1 elseif x < 0 then return -1 end return 0 end
@@ -361,6 +370,7 @@ _G.RaycastParams = { new = function() return { FilterType = nil } end }
 _G.OverlapParams = { new = function() return { FilterType = nil, FilterDescendantsInstances = {} } end }
 _G.Vector3, _G.Vector2, _G.Color3, _G.CFrame, _G.UDim, _G.UDim2, _G.Enum = Vector3, Vector2, Color3, CFrame, UDim, UDim2, Enum
 if not warn then _G.warn = function(...) print("warn:", ...) end end
+exposeGlobals()
 
 -- 假引擎: 场景
 local function sig(props) props = props or {}; for _, n in ipairs({ "ChildAdded", "ChildRemoved", "DescendantAdded", "DescendantRemoving" }) do props[n] = Signal.new() end; return props end
@@ -372,6 +382,7 @@ local workspace = svc("Workspace", inst("Workspace", sig()))
 local camera = inst("Camera", { CFrame = CFrame.new(Vector3.zero), ViewportSize = Vector2.new(1080, 2400) })
 workspace.props.CurrentCamera = camera
 _G.workspace = workspace
+exposeGlobals()
 
 local humanoid = inst("Humanoid", { WalkSpeed = 16, JumpPower = 50, JumpHeight = 7, Health = 100, UseJumpPower = true, MoveDirection = Vector3.zero })
 local hrp = inst("Part", { Name = "HumanoidRootPart", CanCollide = true, Anchored = false, Size = Vector3.new(2, 2, 1), CFrame = CFrame.new(Vector3.new(0, 5, 0)), Position = Vector3.new(0, 5, 0), AssemblyLinearVelocity = Vector3.zero, AssemblyAngularVelocity = Vector3.zero, AssemblyMass = 10, AssemblyRootPart = nil })
@@ -396,12 +407,7 @@ svc("CoreGui", inst("CoreGui", sig()))
 player.props.GetNetworkPing = function() return 0.05 end
 _G.CoreGui = _G.__SVC.CoreGui
 
-if FROZEN_G then
-	-- Luau CLI: _G 是上面换掉的可写代理, 可 selfblox.lua 读的是裸全局; 而这些名字在本文件里是 local,
-	-- 直接写会写到 local 上, 所以借一个没有同名 local 的 chunk 把它们写成真全局
-	local expose = assert(load_chunk("Instance, RaycastParams, OverlapParams, Vector3, Vector2, Color3, CFrame, UDim, UDim2, Enum, workspace, CoreGui, warn = ...", "smoke_expose"))
-	expose(_G.Instance, _G.RaycastParams, _G.OverlapParams, _G.Vector3, _G.Vector2, _G.Color3, _G.CFrame, _G.UDim, _G.UDim2, _G.Enum, _G.workspace, _G.CoreGui, _G.warn)
-end
+exposeGlobals()
 
 -- 漂移游戏的踏板 UI: 故意嵌两层 + ImageButton, 老代码只认 MobilePedals.Frame 的直接子节点
 local pedals = inst("ScreenGui", { Name = "MobilePedals" })
