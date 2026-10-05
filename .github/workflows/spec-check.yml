@@ -95,15 +95,26 @@ jobs:
           ls -l /usr/local/bin/luau
       - name: Run offline self-check
         run: |
-          # Luau 的标准库没有 io, 读不到文件: 用长括号把源码塞进 _G.SB_SRC, 再拼上 smoke.lua 一起跑
-          { printf '_G.SB_SRC = [====[\n'; cat selfblox.lua; printf '\n]====]\n'; cat smoke.lua; } > /tmp/sb_smoke.lua
+          # 先把这个 VM 的能力打成注解: 日志正文存在 blob.core.windows.net, 沙箱读不到, 注解能从 API 读
+          cat > /tmp/probe.lua <<'LUA'
+          local function w(k, v) print(k .. " = " .. tostring(v)) end
+          w("_G 可写", (pcall(function() _G.__probe = 1 end)))
+          w("裸全局可写", (pcall(function() __probe2 = 1 end)))
+          w("os.exit", os and os.exit)
+          w("io.open", io and io.open)
+          w("debug.getinfo", debug and debug.getinfo)
+          w("debug.info", debug and debug.info)
+          w("loadstring", loadstring)
+          LUA
+          luau /tmp/probe.lua 2>&1 | sed -e 's/%/%25/g' -e 's/^/::notice::/'
+          # Luau 的标准库没有 io, 读不到文件: 把源码拼成本 chunk 顶部的 local, 再接上 smoke.lua 一起跑
+          { printf 'local SB_SRC_INJECTED = [====[\n'; cat selfblox.lua; printf '\n]====]\n\n'; cat smoke.lua; } > /tmp/sb_smoke.lua
           set +e
           out=$(luau /tmp/sb_smoke.lua 2>&1)
           rc=$?
           set -e
           printf '%s\n' "$out" | tail -40
           if [ "$rc" -ne 0 ]; then
-            # 日志正文存在 blob.core.windows.net, 沙箱读不到; 把失败尾部写成注解, 从 check-runs/annotations 就能读到
             printf '%s\n' "$out" | tail -12 | sed -e 's/%/%25/g' -e 's/\r/%0D/g' -e 's/^/::error::/'
             exit "$rc"
           fi

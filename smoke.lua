@@ -1,9 +1,9 @@
 -- Selfblox 离线自检: 一个假 Roblox 引擎, 加载 selfblox.lua → 建面板 → 点一遍 → 卸载 → 断言干净
 -- 跑法: lua5.4 smoke.lua     (luajit / lua5.1 / luau 也行; 不跑也不影响脚本本体)
 -- 它只验"结构不炸 + 状态真的改了 + 卸载不留垃圾", 不验游戏里的手感。
-local SRC = rawget(_G, "SB_SRC") -- 从外面塞源码也行 (沙箱里没有真文件系统时用)
+local SRC = SB_SRC_INJECTED or rawget(_G, "SB_SRC") -- 源码从外面塞进来: CI 把 selfblox.lua 拼成本 chunk 顶部的 local SB_SRC_INJECTED(不碰全局, 见工作流), 手工跑时用 _G.SB_SRC 或 io 读文件
 if not SRC then
-	if not io or not io.open then error("这个 VM 没有 io 库(Luau 就是): 把源码塞进 _G.SB_SRC 再跑, 做法见 .github/workflows/spec-check.yml", 0) end
+	if not io or not io.open then error("这个 VM 没有 io 库(Luau 就是): 用 .github/workflows/spec-check.yml 的做法把源码拼成 SB_SRC_INJECTED 再跑", 0) end
 	local dir = arg and arg[0] and arg[0]:match("^(.*[/\\])") or ""
 	local fp = io.open(dir .. "selfblox.lua", "rb") or io.open("selfblox.lua", "rb")
 	SRC = assert(fp, "找不到 selfblox.lua; 在仓库根目录跑: lua5.4 smoke.lua"):read("*a")
