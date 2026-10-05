@@ -27,8 +27,9 @@ if FROZEN_G then local realG = _G; _G = setmetatable({}, { __index = realG }) en
 -- 每批 _G.X = ... 之后都要再调一次: 假引擎自己也会按全局名读它们 (Color3.fromRGB 就是)。
 local function exposeGlobals()
 	if not FROZEN_G then return end
-	local expose = assert(load_chunk("Instance, RaycastParams, OverlapParams, Vector3, Vector2, Color3, CFrame, UDim, UDim2, Enum, workspace, CoreGui, warn = ...", "smoke_expose"))
-	expose(_G.Instance, _G.RaycastParams, _G.OverlapParams, _G.Vector3, _G.Vector2, _G.Color3, _G.CFrame, _G.UDim, _G.UDim2, _G.Enum, _G.workspace, _G.CoreGui, _G.warn)
+	local expose = assert(load_chunk("Instance, RaycastParams, OverlapParams, Vector3, Vector2, Color3, CFrame, UDim, UDim2, Enum, workspace, CoreGui, warn, typeof = ...", "smoke_expose"))
+	expose(_G.Instance, _G.RaycastParams, _G.OverlapParams, _G.Vector3, _G.Vector2, _G.Color3, _G.CFrame, _G.UDim, _G.UDim2, _G.Enum, _G.workspace, _G.CoreGui, _G.warn, _G.typeof) -- typeof 也要装: Luau 自带原生 typeof, 对假 Vector3 只回 "table",
+	-- 脚本第 883 行的 `t == "Vector3"` 分支走不到, 参数会被渲染成 {Y=2,X=1,Z=3} 而不是 (1,2,3)
 end
 
 local unpack = table.unpack or unpack
