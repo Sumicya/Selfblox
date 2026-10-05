@@ -115,6 +115,7 @@ jobs:
           set -e
           printf '%s\n' "$out" | tail -40
           if [ "$rc" -ne 0 ]; then
-            printf '%s\n' "$out" | tail -12 | sed -e 's/%/%25/g' -e 's/\r/%0D/g' -e 's/^/::error::/'
+            # 失败时把没过的断言(✗ 行)和末尾几行写成注解, 只截尾部会被一片 ✓ 挤掉
+            { printf '%s\n' "$out" | grep -n '✗' | head -10; printf '%s\n' "$out" | tail -4; } | sed -e 's/%/%25/g' -e 's/\r/%0D/g' -e 's/^/::error::/'
             exit "$rc"
           fi
