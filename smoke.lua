@@ -299,6 +299,17 @@ local mt = {
 			rawset(t, "parent", v)
 			if v then v.children[#v.children + 1] = t end
 		else
+			if k == "CFrame" then -- Luau 把 workspace.CurrentCamera.CFrame 这种全常量键链编译成 GETIMPORT,
+				-- 首次求值后把结果缓存进常量池, 之后直接返回缓存值、不再走 __index (luau-lang/luau VM/src/lvmexecute.cpp 的 LOP_GETIMPORT fast-path:
+				-- if (!ttisnil(kv) && cl->env->safeenv) { setobj2s(L, ra, kv); }); safeenv 只能由 C 侧 lua_setsafeenv 打开(lapi.cpp:937), Lua 关不掉。
+				-- 真引擎里属性不是 Lua 表链, 不受这条影响; 这里把旧对象就地改成新值, 让被缓存住的引用也跟着变。props 里另存一份, 不和调用方手里的对象串味。
+				local wasC = rawget(t, "props")[k]
+				if type(wasC) == "table" and rawget(wasC, "x") and type(v) == "table" and rawget(v, "x") then
+					wasC.x, wasC.y, wasC.z, wasC.p = v.x, v.y, v.z, v.p
+					_G.__DBG.n = _G.__DBG.n + 1 -- 复制件也要有 id, 否则读 t.__id 会反过来触发 cfmt.__index 递归
+					v = setmetatable({ x = v.x, y = v.y, z = v.z, p = v.p, __id = _G.__DBG.n }, getmetatable(v))
+				end
+			end
 			if k == "VectorVelocity" then -- 诊断: 脚本到底把速度写给了哪个约束、写了什么
 				LVLOG[#LVLOG + 1] = "@" .. tostring(t) .. "←" .. tostring(v) .. "(父=" .. tostring(rawget(t, "parent")) .. ")"
 				if #LVLOG > 6 then table.remove(LVLOG, 1) end
@@ -368,7 +379,7 @@ Color3 = {
 local cfmt = {
 	__index = function(t, k)
 		local L = _G.__DBG.cfr -- 诊断: 谁摸了哪个 CFrame 的哪个成员
-		L[#L + 1] = "cf" .. tostring(t.__id) .. "." .. tostring(k)
+		L[#L + 1] = "cf" .. tostring(rawget(t, "__id")) .. "." .. tostring(k)
 		if #L > 10 then table.remove(L, 1) end
 		if k == "Position" then return t.p end
 		if k == "LookVector" then return -t.z end
