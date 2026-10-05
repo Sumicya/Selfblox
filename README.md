@@ -25,14 +25,14 @@ _G.SB = { spd = 60, flyspd = 120, hornkey = "H", only = { "moc", "sibs" } }
 ```bash
 cd /sdcard/Download
 curl -fLO https://raw.githubusercontent.com/Sumicya/Selfblox/HEAD/selfblox.lua
-mv selfblox.lua Selfblox-26.10.5.4.4.lua
-ls -l Selfblox-26.10.5.4.4.lua   # 有字节数才是真的下来了
+mv selfblox.lua Selfblox-26.10.5.5.5.lua
+ls -l Selfblox-26.10.5.5.5.lua   # 有字节数才是真的下来了
 ```
 
-`readfile` 只读 Delta 的工作目录，所以离线加载前要把副本放进去（Termux 需要存储权限，先跑 `termux-setup-storage`），再在执行器里用 `loadstring(readfile("Selfblox-26.10.5.4.4.lua"))()` 加载：
+`readfile` 只读 Delta 的工作目录，所以离线加载前要把副本放进去（Termux 需要存储权限，先跑 `termux-setup-storage`），再在执行器里用 `loadstring(readfile("Selfblox-26.10.5.5.5.lua"))()` 加载：
 
 ```bash
-cp /sdcard/Download/Selfblox-26.10.5.4.4.lua /storage/emulated/0/Delta/workspace/
+cp /sdcard/Download/Selfblox-26.10.5.5.5.lua /storage/emulated/0/Delta/workspace/
 ```
 
 不用了按名字前缀清掉本次下载和工作目录里的副本，不删别的东西：
@@ -118,7 +118,7 @@ gh api repos/Sumicya/Selfblox/tags --jq '.[0].name'
 没有发行需求时不打标签、不建 Release。获准发版后再打 `v` 加版本号的标签（下例仅为格式示例，不代表已经发行）：
 
 ```bash
-git tag v26.10.5.4.4
+git tag v26.10.5.5.5
 ```
 
 ## 许可

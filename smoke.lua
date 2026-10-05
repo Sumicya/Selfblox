@@ -119,6 +119,7 @@ local ENUM_OK = { -- 枚举字面量 (KeyCode 是按配置字符串动态取的,
 	UIDragDetectorDragStyle = words("TranslateLine"),
 	UserInputType = words("MouseButton1 Touch"),
 }
+local MDLOG = {} -- MoveDirection 的读取记录(只留最近 4 条)
 local function guardMember(t, k) -- 读/写实例成员时调用
 	local cls = rawget(t, "ClassName")
 	local allow = VERIFIED[cls]
@@ -226,6 +227,11 @@ function methods.GetPartBoundsInRadius() return _G.__radius or {} end
 local mt = {
 	__index = function(t, k)
 		guardMember(t, k)
+		if k == "MoveDirection" then -- 诊断: Luau 与 Lua 5.3 在这条上结果不同, 记下"谁读到了哪个实例的什么值"
+			local pp0 = rawget(t, "props")
+			MDLOG[#MDLOG + 1] = tostring(t) .. "=" .. tostring(pp0 and pp0.MoveDirection)
+			if #MDLOG > 4 then table.remove(MDLOG, 1) end
+		end
 		if k == "Parent" then return rawget(t, "parent") end
 		local m = methods[k]
 		if m then return m end
@@ -987,12 +993,13 @@ ok(lvc and lvc.VectorVelocity.Z < -10, "摇杆前推 → 车头方向 " .. tostr
 humanoid.props.MoveDirection = Vector3.new(1, 0, 0) -- 右推 = 世界 +X
 step(1 / 60, 3)
 ok(lvc and lvc.VectorVelocity.X > 10, "摇杆右推 → 车右方向 " .. tostring(lvc and lvc.VectorVelocity))
+for i = #MDLOG, 1, -1 do MDLOG[i] = nil end
 camera.CFrame = CFrame.new(Vector3.zero, Vector3.new(1, 0, 0)) -- 摄像机转到朝 +X: 前推 = 世界 +X, 但车还是该往车头(-Z)飞, 不能跟着相机跑
 humanoid.props.MoveDirection = Vector3.new(1, 0, 0)
 step(1 / 60, 3)
 local fw = seat.props.CFrame.LookVector -- 前面方向盘测试已经把假车转过了, 车头不再是 -Z, 所以跟车头的实际朝向比
 fw = Vector3.new(fw.X, 0, fw.Z).Unit
-ok(lvc and lvc.VectorVelocity.Magnitude > 10 and lvc.VectorVelocity.Unit:Dot(fw) > 0.99, "相机转 90° 后, 前推仍是车头方向, 不跟着相机跑 (与车头夹角余弦 " .. string.format("%.3f", lvc and lvc.VectorVelocity.Unit:Dot(fw) or 0) .. ", 速度 " .. tostring(lvc and lvc.VectorVelocity) .. ", 车头 " .. tostring(fw) .. ", 相机 " .. tostring(camera.CFrame.LookVector) .. ", 相机右 " .. tostring(camera.CFrame.RightVector) .. ", MoveDir " .. tostring(humanoid.props.MoveDirection) .. ", 脚本看到的 workspace 是同一个吗 " .. tostring(rawequal(assert(load_chunk("return workspace", "smoke_probe"))(), workspace)) .. ")")
+ok(lvc and lvc.VectorVelocity.Magnitude > 10 and lvc.VectorVelocity.Unit:Dot(fw) > 0.99, "相机转 90° 后, 前推仍是车头方向, 不跟着相机跑 (与车头夹角余弦 " .. string.format("%.3f", lvc and lvc.VectorVelocity.Unit:Dot(fw) or 0) .. ", 速度 " .. tostring(lvc and lvc.VectorVelocity) .. ", 车头 " .. tostring(fw) .. ", 相机 " .. tostring(camera.CFrame.LookVector) .. ", 相机右 " .. tostring(camera.CFrame.RightVector) .. ", MoveDir " .. tostring(humanoid.props.MoveDirection) .. ", 脚本看到的 workspace 是同一个吗 " .. tostring(rawequal(assert(load_chunk("return workspace", "smoke_probe"))(), workspace)) .. ", 本人形 " .. tostring(humanoid) .. ", MoveDirection 读取 " .. table.concat(MDLOG, " | ") .. ")")
 camera.CFrame = CFrame.new(Vector3.zero)
 humanoid.props.MoveDirection = Vector3.zero
 step(1 / 60, 3)
@@ -1293,7 +1300,9 @@ _G.__ncm = nil
 ok(pcall(hookF, {}, "x"), "记录失败(self 不是实例)不能拦住游戏自己的调用")
 click(findBtn("写报告"))
 rep = VFS["plane_debug.txt"]
-ok(rep:find("-- 发 1", 1, true) and rep:find('Workspace.Plane_RAF.FireGun:FireServer "bullet", (1,2,3), {a=1}', 1, true), "命中关键字的 FireServer 被记下来了, 参数格式化对 (报告里 FireGun 那行: " .. tostring(rep and (rep:match("[^\n]*FireGun[^\n]*") or "没有这行")) .. " | 发计数行: " .. tostring(rep and (rep:match("[^\n]*%-%- 发[^\n]*") or "没有这行")) .. ")")
+local atFa = rep and rep:find("%-%-%s*发")
+local faSec = atFa and rep:sub(atFa, atFa + 200) or "报告里没有发小节" -- 不用 %%n 匹配, 直接截子串
+ok(rep:find("-- 发 1", 1, true) and rep:find('Workspace.Plane_RAF.FireGun:FireServer "bullet", (1,2,3), {a=1}', 1, true), "命中关键字的 FireServer 被记下来了, 参数格式化对 (发小节原文: " .. faSec .. ")")
 click(findBtn("全录"))
 _G.__ncm = "InvokeServer"
 hookF(chatFn, "hi")
