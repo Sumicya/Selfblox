@@ -15,7 +15,7 @@
 --   语法基线就是 Luau(运行环境就是它): 26.10.5.28 起用了字符串插值(`{}`)、复合赋值(+= 等)与 if 表达式(if c then a else b),
 --            Lua 5.4 / fengari 都解析不了; 自检的权威跑法是 CI 里的官方 Luau 0.741 (本地怎么编同版本见 AGENTS.md)
 
-local VERSION = "26.10.5.34.34" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
+local VERSION = "26.10.5.35.35" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
@@ -296,7 +296,10 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 	local lamps, lampSaved, col = {}, setmetatable({}, { __mode = "k" }), setmetatable({}, { __mode = "k" })
 	local rp = RaycastParams.new()
 	rp.FilterType = Enum.RaycastFilterType.Exclude
-	local track, knob, handle, kd, dragX -- 方向盘控件 (init 里建)
+	local track, knob, handle, kd, kdk, dragX -- 方向盘控件 (init 里建)
+	local TRACK_W, KNOB_R = 200, 18 -- 轨道宽 / 圆点直径: 圆心行程 = TRACK_W/2 - KNOB_R = ±82, 建控件和算转向共用这一处
+	local HOME = UDim2.new(0, 0, 0, 0) -- 手柄的家: 全宽 + 锚点(0,0). 原来照抄圆点的 fromScale(0.5,0.5), 一松手整条手柄被推到右下半格
+	local CENTER = UDim2.new(0.5, 0, 0.5, 0) -- 圆点的家: 正中
 	local live = false
 	local function seat() local h = hum(); return h and h.SeatPart end
 	local function seatIn(m) return m:FindFirstChildWhichIsA("VehicleSeat", true) or m:FindFirstChildWhichIsA("Seat", true) end -- 官方继承链: VehicleSeat 和 Seat 互不相干 (都挂在 BasePart 下), 只查 "Seat" 会把带 VehicleSeat 的车当成"没座位"
@@ -493,17 +496,20 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 
 	local function setLive(v)
 		live = v
-		handle.Visible = v
+		local folded = not body.Visible -- 面板折叠才把整条背景交出去拖; 展开时面板压在滑条上, 整条吞触摸会挡住面板, 只留圆点能拖
+		handle.Visible = v and folded
+		knob.Active = v and not folded
 		track.ZIndex, knob.ZIndex = (if v then 10 else 1), (if v then 11 else 2)
 		track.BackgroundTransparency, knob.BackgroundTransparency = (if v then 0.4 else 0.75), (if v then 0 else 0.55)
-		if not v then dragX = nil; knob.Position = UDim2.fromScale(0.5, 0.5) end
+		if not v then dragX = nil; knob.Position = CENTER; handle.Position = HOME end -- 正拖着时被关掉: 手柄也得归位, 不然下次露出来是偏的
 	end
-	local function steer() -- 轨道宽 200 / 圆点半径 18 → 圆心能走 ±82
+	local REACH = TRACK_W / 2 - KNOB_R -- 圆心能走的单侧行程 (82)
+	local function steer()
 		if not live then return 0 end
-		local cx = track.AbsolutePosition.X + 100
-		local s = math.clamp((dragX or cx) - cx, -82, 82)
+		local cx = track.AbsolutePosition.X + TRACK_W / 2
+		local s = math.clamp((dragX or cx) - cx, -REACH, REACH)
 		knob.Position = UDim2.new(0.5, s, 0.5, 0) -- 圆点是纯显示, 只跟手指
-		return s / 82
+		return s / REACH
 	end
 	local function moveVec() -- 摇杆原始输入 (前推 Z=-1, 右推 X=1). 官方 UserInputService 没有 GetMoveVector (那是 PlayerModule.ControlModule 的方法), 真引擎里一调就抛错; 这里把 Humanoid.MoveDirection (相机相对的世界方向) 换回相机坐标
 		local h, md = hum(), nil
@@ -513,15 +519,19 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 		return Vector3.new(md:Dot(r), 0, -md:Dot(Vector3.yAxis:Cross(r)))
 	end
 	local function wheelInit() -- 建好页之后: 钉在屏幕底部的方向盘 (有副作用, 不能放块级)
-		track = mk("Frame", { Name = "SB_Steer", AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -10), Size = UDim2.fromOffset(200, 36), BackgroundColor3 = BG, BackgroundTransparency = 0.4, BorderSizePixel = 0, Visible = false, ZIndex = 10 }, gui)
+		track = mk("Frame", { Name = "SB_Steer", AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -10), Size = UDim2.fromOffset(TRACK_W, 36), BackgroundColor3 = BG, BackgroundTransparency = 0.4, BorderSizePixel = 0, Visible = false, ZIndex = 10 }, gui)
 		mk("UICorner", { CornerRadius = UDim.new(1, 0) }, track)
-		knob = mk("Frame", { Name = "SB_Knob", AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(36, 36), BackgroundColor3 = Color3.fromRGB(95, 65, 135), BorderSizePixel = 0, ZIndex = 11 }, track)
+		knob = mk("Frame", { Name = "SB_Knob", AnchorPoint = Vector2.new(0.5, 0.5), Position = CENTER, Size = UDim2.fromOffset(KNOB_R * 2, KNOB_R * 2), BackgroundColor3 = Color3.fromRGB(95, 65, 135), BorderSizePixel = 0, ZIndex = 11 }, track)
 		mk("UICorner", { CornerRadius = UDim.new(1, 0) }, knob)
-		local HOME = UDim2.new(0, 0, 0, 0) -- 手柄的家: 全宽 + 锚点(0,0). 松手要回到这里; 原来照抄圆点的 fromScale(0.5,0.5), 一松手整条手柄被推到右下半格, 左半条就按不到了
+		-- HOME / CENTER 提到上面声明处了条就按不到了
 		handle = mk("Frame", { Name = "SB_Handle", Position = HOME, Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Active = true, ZIndex = 12 }, track) -- 看不见的手柄盖在最上面, 整条都能按
 		kd = mk("UIDragDetector", { DragStyle = Enum.UIDragDetectorDragStyle.TranslateLine, DragAxis = Vector2.new(1, 0), BoundingUI = track }, handle)
+		local function release() dragX = nil; knob.Position = CENTER; handle.Position = HOME end -- 松手即刻回正: 原来只归位手柄, 圆点要等下一帧 steer() 才被拉回中心, 手快了看着就是"粘住"
 		on(kd.DragContinue, function(p) dragX = p.X end) -- 官方文档: DragContinue 给的是 inputPosition: Vector2 (屏幕坐标), 不是 InputObject; 原来按 i.Position 读, 在 Vector2 上会直接抛错
-		on(kd.DragEnd, function() dragX = nil; handle.Position = HOME end)
+		on(kd.DragEnd, release)
+		kdk = mk("UIDragDetector", { DragStyle = Enum.UIDragDetectorDragStyle.TranslateLine, DragAxis = Vector2.new(1, 0), BoundingUI = track }, knob) -- 面板展开时只有圆点可拖
+		on(kdk.DragContinue, function(p) dragX = p.X end)
+		on(kdk.DragEnd, release)
 		foldHooks[#foldHooks + 1] = function(open) setLive(F.steeropen or not open) end -- 钩子收到的是"面板开着吗", 滑条要的是"能不能拖"
 		setLive(not body.Visible)
 	end
@@ -682,13 +692,13 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 	feature{ key = "cruise", label = "定速" }
 	feature{ key = "cfly", label = "飞车" }
 	feature{ kind = "btn", label = "翻转 180°", fn = flipCar }
-	feature{ key = "brake", label = "急刹" }
 	feature{ key = "lamp", label = "常亮", set = function(v) if v then setLamps(true) else dropLamps() end end }
 	feature{ kind = "btn", label = "闪 ×3", fn = function() task.spawn(function() for _ = 1, 3 do setLamps(true); task.wait(0.12); setLamps(false); task.wait(0.12) end; if F.lamp then setLamps(true) else dropLamps() end end) end }
 	feature{ key = "steeropen", save = "steeropen", label = "滑条常可拖", w = 1, set = function(v) setLive(v or not body.Visible) end } -- true = 面板开着也能拖滑条 (默认: 折起来才能拖)
 	feature{ key = "carauto", save = "carauto", def = true, label = "自动绑车", w = 1 }
 	feature{ key = "hornon", label = `常声({S.hornkey})`, set = horn }
 	feature{ kind = "hold", label = "声", set = horn }
+	feature{ key = "brake", label = "急刹" } -- 挨着加减速放: 要停的时候手就在那两个键旁边
 	feature{ kind = "hold", key = "accel", label = "▲ 加速", h = 36 }
 	feature{ kind = "hold", key = "decel", label = "▼ 减速", h = 36 }
 	feature{ kind = "hold", key = "cup", label = "飞 ↑", h = 36 }
