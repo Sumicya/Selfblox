@@ -86,9 +86,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Lua 5.4
-        run: sudo apt-get update -y && sudo apt-get install -y --no-install-recommends lua5.4
+      - name: Install Luau
+        run: |
+          # 版本钉死: 换版本要连 smoke.lua 一起复跑, 不要顺手升
+          curl -fsSL -o /tmp/luau.zip https://github.com/luau-lang/luau/releases/download/0.741/luau-ubuntu.zip
+          unzip -o -q /tmp/luau.zip -d /tmp/luau-bin
+          sudo install -m 0755 "$(find /tmp/luau-bin -type f -name luau | head -1)" /usr/local/bin/luau
+          ls -l /usr/local/bin/luau
       - name: Run offline self-check
         run: |
-          lua5.4 -v
-          lua5.4 smoke.lua
+          # Luau 的标准库没有 io, 读不到文件: 用长括号把源码塞进 _G.SB_SRC, 再拼上 smoke.lua 一起跑
+          { printf '_G.SB_SRC = [====[\n'; cat selfblox.lua; printf '\n]====]\n'; cat smoke.lua; } > /tmp/sb_smoke.lua
+          luau /tmp/sb_smoke.lua

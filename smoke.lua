@@ -3,6 +3,7 @@
 -- 它只验"结构不炸 + 状态真的改了 + 卸载不留垃圾", 不验游戏里的手感。
 local SRC = rawget(_G, "SB_SRC") -- 从外面塞源码也行 (沙箱里没有真文件系统时用)
 if not SRC then
+	if not io or not io.open then error("这个 VM 没有 io 库(Luau 就是): 把源码塞进 _G.SB_SRC 再跑, 做法见 .github/workflows/spec-check.yml", 0) end
 	local dir = arg and arg[0] and arg[0]:match("^(.*[/\\])") or ""
 	local fp = io.open(dir .. "selfblox.lua", "rb") or io.open("selfblox.lua", "rb")
 	SRC = assert(fp, "找不到 selfblox.lua; 在仓库根目录跑: lua5.4 smoke.lua"):read("*a")
@@ -30,9 +31,11 @@ local STRICT = { UIDragDetector = { DragStart = true, DragContinue = true, DragE
 -- 假引擎原来什么名字都认, DragBegin / GetMoveVector 这种官方根本没有的成员就这样溜过了测试. 现在没核对过的一碰就抛错.
 -- 新增成员时: 先去 create.roblox.com/docs/reference/engine/classes/<类> 确认它存在 (官方没文档的内部服务, 如 VirtualInputManager, 看 robloxapi.github.io/ref/class/<类>.html), 再加进来. 没列出的类不检查.
 local function words(s) local t = {}; for w in s:gmatch("%S+") do t[w] = true end; return t end
+local di = debug.getinfo or function(level, _) return { short_src = debug.info(level + 1, "s") } end -- Luau 的 debug 库只有 info / traceback, 没有 getinfo; info 直接回 short_src 字符串, 垫一层就要多算一层栈
 local function fromScript(level) -- 谁在访问: selfblox.lua 的代码 (chunk 名 selfblox*) 还是测试自己
-	local ii = debug.getinfo(level or 4, "S")
-	return ii ~= nil and (ii.short_src or ""):find('^%[string "selfblox') ~= nil
+	local ii = di(level or 4, "S")
+	local src = ii and (ii.short_src or ii.source) or ""
+	return src:find('^%[string "selfblox') ~= nil or src:find("^=?selfblox") ~= nil
 end
 local INSTANCE_OK = words("ChildAdded DescendantAdded Destroy FindFirstAncestorOfClass FindFirstChild FindFirstChildOfClass FindFirstChildWhichIsA GetAttribute GetAttributes GetChildren GetDescendants GetFullName GetPropertyChangedSignal IsA IsDescendantOf Name Parent SetAttribute WaitForChild") -- Instance / Object 上的公共成员
 local VERIFIED = {
@@ -555,6 +558,24 @@ local function newInstancesFrom(n) local o = {}; for i = n + 1, #INSTANCES do o[
 
 print("── 假引擎就绪: " .. #INSTANCES .. " 个场景实例")
 local SNAP = #INSTANCES
+
+-- ───────── 假引擎自己的严格性自检 ─────────
+-- 白名单只拦 chunk 名 selfblox* 的调用方, 判断靠 fromScript; 换 VM (Lua 5.4 → Luau) 时 fromScript 可能静默失效,
+-- 失效了后面几百条断言就全变成"什么成员都认"的宽松模式, 所以这里先主动验一次它真的在拦。
+print("\n[0] 假引擎白名单还生效吗")
+local probe = Instance.new("Part")
+-- 栈层要和真代码一致: 访问发生在 selfblox* 的函数里, 上面还得有两层 selfblox* 的调用者 (fromScript 默认查第 4 层)
+local wrapper = assert(load_chunk([[
+local inst = ...
+local function touch(i) return i.ThisMemberIsInNoDoc end
+local function mid() return touch(inst) end
+return mid()
+]], "selfblox_strict"))
+local okBad, errBad = pcall(wrapper, probe)
+ok(not okBad and tostring(errBad):find("没对照官方文档核对过", 1, true) ~= nil, "selfblox* 的代码碰没核对过的成员会抛错 (" .. tostring(errBad) .. ")")
+local okMine = pcall(function() return probe.ThisMemberIsInNoDoc end)
+ok(okMine, "白名单不管自检自己的代码, 只拦 selfblox* 的 chunk")
+probe:Destroy() -- 探针也是实例, 不销毁就会算成卸载后漏掉的实例
 
 -- ───────── 第一轮: 全量加载 ─────────
 print("\n[1] 加载 selfblox.lua")
@@ -1705,5 +1726,5 @@ _G.__ping, _G.__pingbtn = nil, nil
 end
 
 print("\n" .. (FAILS == 0 and "全部通过 ✓" or ("有 " .. FAILS .. " 条没过 ✗")))
-if os.exit then os.exit(FAILS == 0 and 0 or 1) end
+if FAILS > 0 then error(FAILS .. " 条断言没过", 0) end -- 不靠 os.exit: Luau 的 os 库只有 clock/date/difftime/time, 没有 exit; 只有 error 能让进程退出码非 0
 if FAILS ~= 0 and error then error(FAILS .. " 条没过", 0) end
