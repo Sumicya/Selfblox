@@ -51,7 +51,11 @@ local STRICT = { UIDragDetector = { DragStart = true, DragContinue = true, DragE
 -- 假引擎原来什么名字都认, DragBegin / GetMoveVector 这种官方根本没有的成员就这样溜过了测试. 现在没核对过的一碰就抛错.
 -- 新增成员时: 先去 create.roblox.com/docs/reference/engine/classes/<类> 确认它存在 (官方没文档的内部服务, 如 VirtualInputManager, 看 robloxapi.github.io/ref/class/<类>.html), 再加进来. 没列出的类不检查.
 local function words(s) local t = {}; for w in s:gmatch("%S+") do t[w] = true end; return t end
-local di = debug.getinfo or function(level, _) return { short_src = debug.info(level + 1, "s") } end -- Luau 的 debug 库只有 info / traceback, 没有 getinfo; info 直接回 short_src 字符串, 垫一层就要多算一层栈
+local di = debug.getinfo or function(level, _) return { short_src = debug.info(level + 1, "s") } end
+local function callerLine(n) -- 诊断: 调用方在脚本里的行号 (两个 VM 都得能拿到)
+	if debug.getinfo then local i = debug.getinfo(n + 1, "l"); return i and i.currentline end
+	if debug.info then return debug.info(n + 1, "l") end
+end -- Luau 的 debug 库只有 info / traceback, 没有 getinfo; info 直接回 short_src 字符串, 垫一层就要多算一层栈
 local function fromScript(level) -- 谁在访问: selfblox.lua 的代码 (chunk 名 selfblox*) 还是测试自己
 	local ii = di(level or 4, "S")
 	local src = ii and (ii.short_src or ii.source) or ""
@@ -121,7 +125,7 @@ local ENUM_OK = { -- 枚举字面量 (KeyCode 是按配置字符串动态取的,
 }
 local MDLOG = {} -- MoveDirection 的读取记录(只留最近 4 条)
 local CFLOG, RID = {}, 0 -- CFrame.RightVector 的读取记录(带全局读序号, 只留最近 8 条)
-local CAMREF, CAMW, STEPLOG, CCLOG = nil, {}, {}, {} -- 相机本体 / 相机 CFrame 的写入 / 每帧开始时相机的 CFrame
+local CAMREF, CAMW, STEPLOG, CCLOG, LVLOG = nil, {}, {}, {}, {} -- 相机本体 / 相机 CFrame 的写入 / 每帧开始时相机的 CFrame
 local function guardMember(t, k) -- 读/写实例成员时调用
 	local cls = rawget(t, "ClassName")
 	local allow = VERIFIED[cls]
@@ -231,7 +235,8 @@ local mt = {
 		guardMember(t, k)
 		if k == "MoveDirection" then -- 诊断: Luau 与 Lua 5.3 在这条上结果不同, 记下"谁读到了哪个实例的什么值"
 			local pp0 = rawget(t, "props")
-			MDLOG[#MDLOG + 1] = tostring(t) .. "=" .. tostring(pp0 and pp0.MoveDirection)
+			local mdv = pp0 and pp0.MoveDirection
+			MDLOG[#MDLOG + 1] = tostring(t) .. "=" .. tostring(mdv) .. " 模长=" .. tostring(mdv and mdv.Magnitude) .. " 脚本第" .. tostring(callerLine(2)) .. "行读的"
 			if #MDLOG > 4 then table.remove(MDLOG, 1) end
 		end
 		if k == "CurrentCamera" then -- 诊断: 谁在读 CurrentCamera, 读到的是哪台
@@ -272,6 +277,10 @@ local mt = {
 			rawset(t, "parent", v)
 			if v then v.children[#v.children + 1] = t end
 		else
+			if k == "VectorVelocity" then -- 诊断: 脚本到底把速度写给了哪个约束、写了什么
+				LVLOG[#LVLOG + 1] = "@" .. tostring(t) .. "←" .. tostring(v) .. "(父=" .. tostring(rawget(t, "parent")) .. ")"
+				if #LVLOG > 6 then table.remove(LVLOG, 1) end
+			end
 			if k == "CurrentCamera" then -- 诊断: 谁改了 CurrentCamera
 				CCLOG[#CCLOG + 1] = "写CurrentCamera←" .. tostring(v)
 				if #CCLOG > 6 then table.remove(CCLOG, 1) end
@@ -1027,6 +1036,7 @@ for i = #MDLOG, 1, -1 do MDLOG[i] = nil end
 for i = #CFLOG, 1, -1 do CFLOG[i] = nil end
 for i = #CAMW, 1, -1 do CAMW[i] = nil end
 for i = #CCLOG, 1, -1 do CCLOG[i] = nil end
+for i = #LVLOG, 1, -1 do LVLOG[i] = nil end
 for i = #STEPLOG, 1, -1 do STEPLOG[i] = nil end
 camera.CFrame = CFrame.new(Vector3.zero, Vector3.new(1, 0, 0)) -- 摄像机转到朝 +X: 前推 = 世界 +X, 但车还是该往车头(-Z)飞, 不能跟着相机跑
 humanoid.props.MoveDirection = Vector3.new(1, 0, 0)
@@ -1058,6 +1068,7 @@ ok(lvc and lvc.VectorVelocity.Magnitude > 10 and lvc.VectorVelocity.Unit:Dot(fw)
  .. ", 座位的AssemblyRootPart " .. tostring(seat.props.AssemblyRootPart) .. ", 座位的父 " .. tostring(seat.Parent)
  .. ", 座位Anchored " .. tostring(seat.props.Anchored) .. ", 假引擎侧人形 " .. tostring(char:FindFirstChildOfClass("Humanoid"))
  .. ", SeatPart " .. tostring(humanoid.props.SeatPart) .. ", 脚本侧: " .. tostring(humTxt)
+ .. ", VectorVelocity 写入 " .. table.concat(LVLOG, " | ") .. ", 本人体 lvc=" .. tostring(lvc)
  .. ", CurrentCamera/CFrame 读写 " .. table.concat(CCLOG, " | ")
  .. ", 相机CFrame写入 " .. table.concat(CAMW, " | ") .. ", 每帧开始时相机 " .. table.concat(STEPLOG, " | ") .. " || 脚本环境复算: " .. tostring(probeTxt) .. ")")
 camera.CFrame = CFrame.new(Vector3.zero)
