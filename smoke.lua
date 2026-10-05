@@ -121,7 +121,7 @@ local ENUM_OK = { -- 枚举字面量 (KeyCode 是按配置字符串动态取的,
 }
 local MDLOG = {} -- MoveDirection 的读取记录(只留最近 4 条)
 local CFLOG, RID = {}, 0 -- CFrame.RightVector 的读取记录(带全局读序号, 只留最近 8 条)
-local CAMREF, CAMW, STEPLOG = nil, {}, {} -- 相机本体 / 相机 CFrame 的写入 / 每帧开始时相机的 CFrame
+local CAMREF, CAMW, STEPLOG, CCLOG = nil, {}, {}, {} -- 相机本体 / 相机 CFrame 的写入 / 每帧开始时相机的 CFrame
 local function guardMember(t, k) -- 读/写实例成员时调用
 	local cls = rawget(t, "ClassName")
 	local allow = VERIFIED[cls]
@@ -234,6 +234,16 @@ local mt = {
 			MDLOG[#MDLOG + 1] = tostring(t) .. "=" .. tostring(pp0 and pp0.MoveDirection)
 			if #MDLOG > 4 then table.remove(MDLOG, 1) end
 		end
+		if k == "CurrentCamera" then -- 诊断: 谁在读 CurrentCamera, 读到的是哪台
+			local pp1 = rawget(t, "props")
+			CCLOG[#CCLOG + 1] = "读CurrentCamera→" .. tostring(pp1 and pp1.CurrentCamera) .. (pp1 and pp1.CurrentCamera == CAMREF and "(就是那台)" or "(不是那台!)")
+			if #CCLOG > 6 then table.remove(CCLOG, 1) end
+		end
+		if k == "CFrame" and CAMREF ~= nil then -- 诊断: 读 .CFrame 的是不是那台相机, 读到了什么
+			local pp2 = rawget(t, "props")
+			CCLOG[#CCLOG + 1] = "读CFrame@" .. tostring(t) .. (t == CAMREF and "(是相机)" or "(不是相机)") .. "→" .. tostring(pp2 and pp2.CFrame and pp2.CFrame.x)
+			if #CCLOG > 6 then table.remove(CCLOG, 1) end
+		end
 		if k == "Parent" then return rawget(t, "parent") end
 		local m = methods[k]
 		if m then return m end
@@ -262,6 +272,10 @@ local mt = {
 			rawset(t, "parent", v)
 			if v then v.children[#v.children + 1] = t end
 		else
+			if k == "CurrentCamera" then -- 诊断: 谁改了 CurrentCamera
+				CCLOG[#CCLOG + 1] = "写CurrentCamera←" .. tostring(v)
+				if #CCLOG > 6 then table.remove(CCLOG, 1) end
+			end
 			if k == "CFrame" and CAMREF ~= nil and t == CAMREF then -- 诊断: 谁改了相机的 CFrame
 				CAMW[#CAMW + 1] = tostring(v and v.x) .. "/z=" .. tostring(v and v.z)
 				if #CAMW > 4 then table.remove(CAMW, 1) end
@@ -1012,6 +1026,7 @@ ok(lvc and lvc.VectorVelocity.X > 10, "摇杆右推 → 车右方向 " .. tostri
 for i = #MDLOG, 1, -1 do MDLOG[i] = nil end
 for i = #CFLOG, 1, -1 do CFLOG[i] = nil end
 for i = #CAMW, 1, -1 do CAMW[i] = nil end
+for i = #CCLOG, 1, -1 do CCLOG[i] = nil end
 for i = #STEPLOG, 1, -1 do STEPLOG[i] = nil end
 camera.CFrame = CFrame.new(Vector3.zero, Vector3.new(1, 0, 0)) -- 摄像机转到朝 +X: 前推 = 世界 +X, 但车还是该往车头(-Z)飞, 不能跟着相机跑
 humanoid.props.MoveDirection = Vector3.new(1, 0, 0)
@@ -1043,6 +1058,7 @@ ok(lvc and lvc.VectorVelocity.Magnitude > 10 and lvc.VectorVelocity.Unit:Dot(fw)
  .. ", 座位的AssemblyRootPart " .. tostring(seat.props.AssemblyRootPart) .. ", 座位的父 " .. tostring(seat.Parent)
  .. ", 座位Anchored " .. tostring(seat.props.Anchored) .. ", 假引擎侧人形 " .. tostring(char:FindFirstChildOfClass("Humanoid"))
  .. ", SeatPart " .. tostring(humanoid.props.SeatPart) .. ", 脚本侧: " .. tostring(humTxt)
+ .. ", CurrentCamera/CFrame 读写 " .. table.concat(CCLOG, " | ")
  .. ", 相机CFrame写入 " .. table.concat(CAMW, " | ") .. ", 每帧开始时相机 " .. table.concat(STEPLOG, " | ") .. " || 脚本环境复算: " .. tostring(probeTxt) .. ")")
 camera.CFrame = CFrame.new(Vector3.zero)
 humanoid.props.MoveDirection = Vector3.zero
