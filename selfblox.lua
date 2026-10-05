@@ -12,10 +12,10 @@
 --   原生优先 —— 刹车 / 灯 / 秒互动 / ESP 走引擎原生属性, 拖拽走 UIDragDetector, 不自己造轮子
 --   面向 Delta 最新版 —— hookmetamethod / newcclosure / UIDragDetector 当它一定有;
 --            gethui / isfile / writefile 缺失时退回 CoreGui 并跳过存盘, 面板照样起得来
---   语法基线是 Luau(运行环境就是它): 自检的权威跑法是 CI 里的官方 Luau 0.741; 本文件目前仍写成 Lua 5.4 也能解析的子集,
---            所以本地 lua5.4 smoke.lua 照样能跑, 两个 VM 结果不一致时以 Luau 为准
+--   语法基线就是 Luau(运行环境就是它): 26.10.5.28 起本文件用了字符串插值(`{}`)与复合赋值(+= 等)等 Luau 专属写法,
+--            Lua 5.4 / fengari 都解析不了; 自检的权威跑法是 CI 里的官方 Luau 0.741 (本地怎么编同版本见 AGENTS.md)
 
-local VERSION = "26.10.5.28.28" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
+local VERSION = "26.10.5.29.29" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
@@ -104,7 +104,7 @@ end
 
 local vp = workspace.CurrentCamera.ViewportSize
 local pos = opt("pos", { vp.X / 2 - W / 2, vp.Y * 0.3 })
-local title = mk("TextLabel", { Name = "SB_Title", Size = UDim2.fromOffset(W, ROW), Position = UDim2.fromOffset(math.clamp(pos[1], 0, math.max(vp.X - W, 0)), math.clamp(pos[2], 0, math.max(vp.Y - ROW, 0))), BackgroundColor3 = BG, BackgroundTransparency = CLEAR, BorderSizePixel = 0, Font = FONT, TextSize = 13, TextColor3 = WHITE, Text = "Selfblox " .. VERSION }, gui)
+local title = mk("TextLabel", { Name = "SB_Title", Size = UDim2.fromOffset(W, ROW), Position = UDim2.fromOffset(math.clamp(pos[1], 0, math.max(vp.X - W, 0)), math.clamp(pos[2], 0, math.max(vp.Y - ROW, 0))), BackgroundColor3 = BG, BackgroundTransparency = CLEAR, BorderSizePixel = 0, Font = FONT, TextSize = 13, TextColor3 = WHITE, Text = `Selfblox {VERSION}` }, gui)
 local body = mk("Frame", { Name = "SB_Body", Size = UDim2.new(0, W, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Position = title.Position + UDim2.fromOffset(0, ROW), BackgroundColor3 = BG, BackgroundTransparency = CLEAR, BorderSizePixel = 0 }, gui)
 mk("UIListLayout", { Padding = UDim.new(0, 0) }, body)
 on(title:GetPropertyChangedSignal("Position"), function() body.Position = title.Position + UDim2.fromOffset(0, ROW) end)
@@ -334,7 +334,7 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 		if s then return s.AssemblyRootPart, s end
 		if picked and not picked.Parent and pickPath then -- 车被换掉了: 按路径找回
 			local node = findByPath(pickPath)
-			if node and node:IsA("BasePart") then picked = node; toast("车被换掉, 自动更到 " .. node.Name) end
+			if node and node:IsA("BasePart") then picked = node; toast(`车被换掉, 自动更到 {node.Name}`) end
 		end
 		if picked and picked:IsDescendantOf(workspace) then return picked, pickSeat end
 	end
@@ -450,8 +450,8 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 		if r.Anchored then toast("这个还锁着(锚定), 等游戏解锁"); return end
 		picked, pickSeat, pickPath, autoPick = r, s, r:GetFullName(), false
 		dropLamps()
-		if s then toast("锁定 " .. seatM.Name .. " · 座位 " .. s.Name)
-		else toast("锁定 " .. inst.Name .. " · 没座位(只能推/飞/翻转, 没油门)") end
+		if s then toast(`锁定 {seatM.Name} · 座位 {s.Name}`)
+		else toast(`锁定 {inst.Name} · 没座位(只能推/飞/翻转, 没油门)`) end
 	end
 	local function autoBind() -- 没坐没锁: 找最近的"空载具座位"绑上. ponytail: 每秒一次 150 格球查询; 极稠密的地图可改成 DescendantAdded 注册表
 		local r = root()
@@ -468,7 +468,7 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 		if not best then return end
 		picked, pickSeat, pickPath, autoPick = best.AssemblyRootPart, best, best.AssemblyRootPart:GetFullName(), true
 		dropLamps()
-		toast("自动绑定 " .. (best:FindFirstAncestorOfClass("Model") or best).Name .. " · 座位 " .. best.Name)
+		toast(`自动绑定 {(best:FindFirstAncestorOfClass("Model") or best).Name} · 座位 {best.Name}`)
 	end
 	local function flipCar()
 		local p, m = part(), model()
@@ -530,7 +530,7 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 			local cand = heavyNear(p)
 			if cand and cand ~= p then
 				picked, pickSeat, pickPath = cand, nil, cand:GetFullName()
-				toast("锚定件改用 " .. cand.Name)
+				toast(`锚定件改用 {(cand.Name)}`)
 				p, sp = cand, nil
 			end
 		end
@@ -550,7 +550,7 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 		local gst, thr, st = 0, 0, steer()
 		if sp and sp:IsA("VehicleSeat") then gst, thr, st = sp.Steer, sp.Throttle, math.clamp(st + sp.Steer, -1, 1) end -- 游戏自带的手机油门/方向盘也吃
 		local acc, dec = F.accel or thr > 0, F.decel or thr < 0
-		if os.clock() - statT > 0.2 then statT = os.clock(); say("car_status", (m and m.Name or p.Name) .. " · " .. math.floor(spd + 0.5) .. (s and "" or " · 准星锁定") .. (anch and " · 锚定(等游戏解锁)" or "") .. (F.carclip and #clipList > 0 and not clipWheels and " · 穿墙没认到轮子(按最低块兜底)" or "")) end
+		if os.clock() - statT > 0.2 then statT = os.clock(); say("car_status", `{(m and m.Name or p.Name)} · {(math.floor(spd + 0.5))}{(s and "" or " · 准星锁定")}{(anch and " · 锚定(等游戏解锁)" or "")}{(F.carclip and #clipList > 0 and not clipWheels and " · 穿墙没认到轮子(按最低块兜底)" or "")}`) end
 		if F.carclip then noclip(p) elseif clipCar then reclip() end
 		if F.cfly then -- 飞车: 摇杆(前后左右) + 面板按钮都吃; 松手悬停
 			if not lv then lv = mk("LinearVelocity", { Attachment0 = att, MaxForce = math.huge, VectorVelocity = Vector3.zero, RelativeTo = Enum.ActuatorRelativeTo.World }, att) end
@@ -586,11 +586,11 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 		if not p and lastCar then p, s, cached = lastCar.p, lastCar.s, true end -- 打包时没车也能带出最近一辆的结构
 		if not p then return { "没有载具 (先用 换车 锁定或坐上去, 再点诊断打包)" } end
 		if cached and not (p:IsDescendantOf(workspace)) then
-			return { "最近一辆: " .. tostring(lastCar.path), "  已经不在 workspace 里了(被游戏销毁/回收) → 结构拿不到, 只能在车还在的时候点诊断打包" }
+			return { `最近一辆: {tostring(lastCar.path)}`, "  已经不在 workspace 里了(被游戏销毁/回收) → 结构拿不到, 只能在车还在的时候点诊断打包" }
 		end
 		local m = cached and lastCar.m or model()
 		local L = { "==== CAR " .. os.date("%Y-%m-%d ") .. clock(true) .. " place=" .. game.PlaceId .. (cached and " (缓存的最近一辆)" or "") .. " ====",
-			"座位: " .. (s and s:GetFullName() or "-") .. "   根部件: " .. p:GetFullName() .. "   Model: " .. (m and m:GetFullName() or "-"),
+			`座位: {(s and s:GetFullName() or "-")}   根部件: {p:GetFullName()}   Model: {(m and m:GetFullName() or "-")}`,
 			string.format("根部件 质量=%.0f 锚定=%s 速度=%.1f 尺寸=(%.0f,%.0f,%.0f)", p.AssemblyMass, tostring(p.Anchored), p.AssemblyLinearVelocity.Magnitude, p.Size.X, p.Size.Y, p.Size.Z) }
 		if s and s:IsA("VehicleSeat") then
 			L[#L + 1] = string.format("座位: MaxSpeed=%s Torque=%.0f Throttle=%.2f Steer=%.2f 乘员=%s", tostring(s.MaxSpeed), nn(s.Torque), nn(s.Throttle), nn(s.Steer), s.Occupant and (s.Occupant.Parent and s.Occupant.Parent.Name or "?") or "无")
@@ -605,8 +605,8 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 			if not mine(d) then
 				L[#L + 1] = string.format("  %-26s %-14s 锚=%-5s 质量=%.0f 尺寸=(%.0f,%.0f,%.0f)", d.Name, d.ClassName, tostring(d.Anchored), d.AssemblyMass, d.Size.X, d.Size.Y, d.Size.Z)
 				for _, c in ipairs(d:GetChildren()) do
-					if c:IsA("Light") then L[#L + 1] = "        灯 " .. c.ClassName .. " " .. c.Name .. " Enabled=" .. tostring(c.Enabled)
-					elseif c:IsA("Constraint") or c:IsA("BodyMover") or c:IsA("Attachment") then L[#L + 1] = "        " .. c.ClassName .. " " .. c.Name end
+					if c:IsA("Light") then L[#L + 1] = `        灯 {c.ClassName} {c.Name} Enabled={tostring(c.Enabled)}`
+					elseif c:IsA("Constraint") or c:IsA("BodyMover") or c:IsA("Attachment") then L[#L + 1] = `        {c.ClassName} {c.Name}`end
 				end
 			end
 		end
@@ -614,11 +614,11 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 		local cam = workspace.CurrentCamera
 		rp.FilterDescendantsInstances = { me.Character }
 		local hit = workspace:Raycast(cam.CFrame.Position, cam.CFrame.LookVector * 5000, rp)
-		L[#L + 1] = "-- 准星射线: " .. (hit and (hit.Instance.ClassName .. " " .. hit.Instance:GetFullName()) or "没打到东西")
+		L[#L + 1] = `-- 准星射线: {(hit and (hit.Instance.ClassName .. " " .. hit.Instance:GetFullName()) or "没打到东西")}`
 		if hit then
 			local chain, x = {}, hit.Instance
-			while x and x ~= workspace do chain[#chain + 1] = x.Name .. "(" .. x.ClassName .. ")"; x = x.Parent end
-			L[#L + 1] = "    祖先: " .. table.concat(chain, " ← ")
+			while x and x ~= workspace do chain[#chain + 1] = `{x.Name}({x.ClassName})`; x = x.Parent end
+			L[#L + 1] = `    祖先: {table.concat(chain, " ← ")}`
 		end
 		L[#L + 1] = "-- 周围的座位 (以车为圆心 150 格内, 半径扫描, 不看场景多大)"
 		local op = OverlapParams.new()
@@ -637,7 +637,7 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 		local near = 0
 		for _, d in ipairs(workspace:GetPartBoundsInRadius(center, 25, op)) do
 			if d:IsA("BasePart") and near < 24 then
-				near = near + 1
+				near += 1
 				L[#L + 1] = string.format("    %-30s %-14s 距离=%.0f 质量=%.0f 尺寸=(%.0f,%.0f,%.0f)", d.Name, d.ClassName, (d.Position - center).Magnitude, nn(d.AssemblyMass), d.Size.X, d.Size.Y, d.Size.Z)
 			end
 		end
@@ -674,7 +674,7 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 	feature{ kind = "btn", label = "闪 ×3", fn = function() task.spawn(function() for _ = 1, 3 do setLamps(true); task.wait(0.12); setLamps(false); task.wait(0.12) end; if F.lamp then setLamps(true) else dropLamps() end end) end }
 	feature{ key = "steeropen", save = "steeropen", label = "滑条常可拖", w = 1, set = function(v) setLive(v or not body.Visible) end } -- true = 面板开着也能拖滑条 (默认: 折起来才能拖)
 	feature{ key = "carauto", save = "carauto", def = true, label = "自动绑车", w = 1 }
-	feature{ key = "hornon", label = "常声(" .. S.hornkey .. ")", set = horn }
+	feature{ key = "hornon", label = `常声({S.hornkey})`, set = horn }
 	feature{ kind = "hold", label = "声", set = horn }
 	feature{ kind = "hold", key = "accel", label = "▲ 加速", h = 36 }
 	feature{ kind = "hold", key = "decel", label = "▼ 减速", h = 36 }
@@ -695,9 +695,9 @@ do -- ═════════ 漂: 人物推进 (自动找踏板; 找不到�
 		if not f then
 			local tops = {}
 			if pg then for _, c in ipairs(pg:GetChildren()) do tops[#tops + 1] = c.Name .. "(" .. c.ClassName .. ")" end end
-			return { "无 MobilePedals; PlayerGui 顶层: " .. (#tops > 0 and table.concat(tops, ", ") or "(空)") }
+			return { `无 MobilePedals; PlayerGui 顶层: {(#tops > 0 and table.concat(tops, ", ") or "(空)")}` }
 		end
-		local L = { "MobilePedals: " .. f:GetFullName() }
+		local L = { `MobilePedals: {f:GetFullName()}` }
 		for _, d in ipairs(f:GetDescendants()) do
 			local ap, sz = d.AbsolutePosition or Vector2.zero, d.AbsoluteSize or Vector2.zero
 			L[#L + 1] = string.format("  %-28s %-12s 可见=%-5s 可点=%-5s 位置=(%.0f,%.0f) 尺寸=(%.0f,%.0f)", d.Name, d.ClassName, tostring(d.Visible), tostring(d.Active), nn(ap.X), nn(ap.Y), nn(sz.X), nn(sz.Y))
@@ -731,7 +731,7 @@ do -- ═════════ 漂: 人物推进 (自动找踏板; 找不到�
 		local b = {}
 		for _, c in ipairs(f:GetDescendants()) do if c:IsA("GuiButton") then b[#b + 1] = c end end -- 框名/嵌套深度每个游戏不一样, 整个子树找按钮
 		table.sort(b, function(x, y) return (x.AbsolutePosition or Vector2.zero).X < (y.AbsolutePosition or Vector2.zero).X end)
-		if #b < 2 then if force then say("drift_status", "MobilePedals 里只找到 " .. #b .. " 个按钮 → 用下面的 ▲ 油门 / ▼ 刹车") end; return end
+		if #b < 2 then if force then say("drift_status", `MobilePedals 里只找到 {#b} 个按钮 → 用下面的 ▲ 油门 / ▼ 刹车`) end; return end
 		bindSlot(1, b[1])
 		bindSlot(2, b[2])
 		pedalRoot = f
@@ -799,7 +799,7 @@ do -- ═════════ 显: 数据条 / 速度箭头 / 玩家 ESP (�
 		on(Players.PlayerRemoving, espDrop)
 	end
 	local function hudRender()
-		frames = frames + 1
+		frames += 1
 		local cam, r, now = workspace.CurrentCamera, root(), os.clock()
 		local shown = false
 		if F.arrow and cam then
@@ -849,23 +849,23 @@ end
 
 do -- ═════════ 志: 周期记录 / 诊断打包 ═════════
 	local LOGFILE, count, written = "Selfblox_log.txt", 0, 0
-	local function head() local h = "---- Selfblox " .. os.date("%Y-%m-%d ") .. clock(true) .. " ----\n"; writefile(LOGFILE, h); written = #h end
+	local function head() local h = `---- Selfblox {os.date("%Y-%m-%d ")}{clock(true)} ----\n`; writefile(LOGFILE, h); written = #h end
 	local function logTick() -- 每 S.logint 秒一轮 (清单的 loop 每轮 pcall: 某个页的状态函数 / 序列化 / 写盘抛错, 记录也不会永久停)
-		local L = { "[" .. clock(true) .. "] #" .. count, "配置 " .. Http:JSONEncode(saved) } -- 数值不用各模块自己拼, 这里全有
+		local L = { `[{clock(true)}] #{count}`, `配置 {Http:JSONEncode(saved)}` } -- 数值不用各模块自己拼, 这里全有
 		for _, line in ipairs(pageInfos()) do L[#L + 1] = line end
-		local txt = table.concat(L, "\n") .. "\n"
+		local txt = `{table.concat(L, "\n")}\n`
 		if written == 0 or written + #txt > S.logmax * 1024 then head() end -- ponytail: 超限直接重写, 不归档; 要历史自己复制文件
 		appendfile(LOGFILE, txt)
 		count, written = count + 1, written + #txt
-		say("log_status", "#" .. count .. " · " .. math.floor(written / 1024) .. "KB / " .. S.logmax .. "KB")
+		say("log_status", `#{count} · {(math.floor(written / 1024))}KB / {S.logmax}KB`)
 	end
 	feature{ kind = "page", id = "log", tab = "志" }
-	feature{ kind = "text", key = "log_status", label = "开 录制 后写 " .. LOGFILE }
+	feature{ kind = "text", key = "log_status", label = `开 录制 后写 {LOGFILE}` }
 	feature{ kind = "btn", label = "诊断打包 (整机快照 → 剪贴板)", w = 1, fn = function() if dumpNow then dumpNow() end end }
 	feature{ kind = "num", key = "logint", def = 2, label = "间隔s" }
 	feature{ kind = "num", key = "logmax", def = 512, label = "上限KB" }
 	feature{ key = "rec", label = "录制", w = 1, loop = logTick, every = function() return S.logint end,
-		onerr = function(err) say("log_status", "记录出错 (下一轮再试): " .. tostring(err)) end }
+		onerr = function(err) say("log_status", `记录出错 (下一轮再试): {tostring(err)}`) end }
 end
 
 do -- ═════════ 机: 飞机侦察 (找飞机 / 判队伍 / 列 Remote / 收发侦听 / 写报告) ═════════
@@ -886,7 +886,7 @@ do -- ═════════ 机: 飞机侦察 (找飞机 / 判队伍 / 列
 		elseif t == "table" then
 			if (depth or 0) >= 2 then return "{…}" end
 			local o = {}
-			for k, x in pairs(v) do o[#o + 1] = tostring(k) .. "=" .. fmt(x, (depth or 0) + 1); if #o >= 8 then break end end
+			for k, x in pairs(v) do o[#o + 1] = `{tostring(k)}={fmt(x, (depth or 0) + 1)}`; if #o >= 8 then break end end
 			return "{" .. table.concat(o, ",") .. "}"
 		end
 		return tostring(v)
@@ -905,8 +905,8 @@ do -- ═════════ 机: 飞机侦察 (找飞机 / 判队伍 / 列
 	local function dump(log) -- 报告行: 一组一行 (时间跨度 + ×N + 首条), 首末不同再补一行「末」→ EngineSync 从 0.64 衰减到 0 这种趋势还看得见
 		local o = {}
 		for _, e in ipairs(log) do
-			o[#o + 1] = "  " .. (e.n > 1 and e.t0 .. "→" .. e.t1 .. " ×" .. e.n .. " " or e.t0 .. " ") .. e.s0
-			if e.n > 1 and e.s1 ~= e.s0 then o[#o + 1] = "      末 " .. e.s1 end
+			o[#o + 1] = `  {(e.n > 1 and e.t0 .. "→" .. e.t1 .. " ×" .. e.n .. " " or e.t0 .. " ")}{e.s0}`
+			if e.n > 1 and e.s1 ~= e.s0 then o[#o + 1] = `      末 {e.s1}`end
 		end
 		return o
 	end
@@ -937,11 +937,11 @@ do -- ═════════ 机: 飞机侦察 (找飞机 / 判队伍 / 列
 				p.occ = p.occ or (o and Players:GetPlayerFromCharacter(o.Parent))
 			elseif isRemote(d) then p.remotes[#p.remotes + 1] = d
 			elseif d:IsA("BasePart") then
-				p.parts = p.parts + 1
+				p.parts += 1
 				if hint(d.Name, WING) then p.wings = p.wings + 1 end
 				local vol = d.Size.X * d.Size.Y * d.Size.Z
 				if vol > p.vol then p.big, p.vol = d, vol end
-			elseif d:IsA("ValueBase") and hint(d.Name, TEAMK) then p.teamVal = p.teamVal or (d.Name .. "=" .. fmt(d.Value)) end
+			elseif d:IsA("ValueBase") and hint(d.Name, TEAMK) then p.teamVal = p.teamVal or (`{d.Name}={fmt(d.Value)}`) end
 		end
 		p.score = (p.hint and 40 or 0) + (p.seat and 35 or 0) + math.min(p.wings, 2) * 12 + (p.parts >= 8 and 10 or 0) + (p.occ and 5 or 0)
 		p.team, p.src, p.teamObj = team(p)
@@ -969,7 +969,7 @@ do -- ═════════ 机: 飞机侦察 (找飞机 / 判队伍 / 列
 		if #remotes == 0 then say("plane_status", "收侦听开着但一个都没挂上: 先点 重扫 (收 是拿扫出来的 Remote 列表挂 OnClientEvent 的)"); return end -- 没扫描过 → remotes 是空的 → 收 永远 0, 看着像"服务器没发"
 		for _, r in ipairs(remotes) do
 			if r:IsA("RemoteEvent") or r:IsA("UnreliableRemoteEvent") then
-				watch[#watch + 1] = r.OnClientEvent:Connect(function(...) local a = table.pack(...); push(got, r:GetFullName() .. " <- " .. keyOf(a), r:GetFullName() .. " <- " .. args(a)) end)
+				watch[#watch + 1] = r.OnClientEvent:Connect(function(...) local a = table.pack(...); push(got, `{r:GetFullName()} <- {keyOf(a)}`, `{r:GetFullName()} <- {args(a)}`) end)
 			end
 		end
 	end
@@ -979,7 +979,7 @@ do -- ═════════ 机: 飞机侦察 (找飞机 / 判队伍 / 列
 				local m = getnamecallmethod()
 				if F.spy and (m == "FireServer" or m == "InvokeServer") then
 					local a = table.pack(...)
-					pcall(function() local path = self:GetFullName(); if F.pall or hint(path, RHINT) then push(sent, path .. ":" .. m .. " " .. keyOf(a), path .. ":" .. m .. " " .. args(a)) end end) -- 记录失败不能拦住游戏自己的调用
+					pcall(function() local path = self:GetFullName(); if F.pall or hint(path, RHINT) then push(sent, `{path}:{m} {keyOf(a)}`, `{path}:{m} {args(a)}`) end end) -- 记录失败不能拦住游戏自己的调用
 				end
 				return oldNC(self, ...)
 			end))
@@ -1015,30 +1015,30 @@ do -- ═════════ 机: 飞机侦察 (找飞机 / 判队伍 / 列
 		scanAt = clock(true)
 		if F.watch then setWatch(true) end
 		highlight()
-		say("plane_status", "飞机 " .. #planes .. " · Remote " .. #remotes .. " · 发 " .. tot(sent) .. "/" .. #sent .. "组 收 " .. tot(got) .. "/" .. #got .. "组")
+		say("plane_status", `飞机 {#planes} · Remote {#remotes} · 发 {tot(sent)}/{#sent}组 收 {tot(got)}/{#got}组`)
 	end
 	local function report()
 		if #planes == 0 and #remotes == 0 then scan() end -- 只点「写报告」会得到"飞机 0 Remote 0"的假象: 两个表都只有 scan() 会填 (实测过: 人在飞, 报告却是 0 架 0 个 Remote)
-		local L = { "==== PLANE " .. os.date("%Y-%m-%d ") .. clock(true) .. " place=" .. game.PlaceId .. " me=" .. me.Name .. " team=" .. (me.Team and me.Team.Name or "-") .. " ====", "-- 飞机 " .. #planes .. " · 重扫于 " .. (scanAt or "从未") }
+		local L = { `==== PLANE {os.date("%Y-%m-%d ")}{clock(true)} place={game.PlaceId} me={me.Name} team={(me.Team and me.Team.Name or "-")} ====`, `-- 飞机 {#planes} · 重扫于 {(scanAt or "从未")}` }
 		for _, p in ipairs(planes) do
-			L[#L + 1] = "[" .. p.score .. "] " .. p.path .. (p.mine and " ★我" .. (p.ownBy and "(" .. p.ownBy .. ")" or "") or "") .. " | 座:" .. (p.seat and "有" or "无") .. " 翼:" .. p.wings .. " 件:" .. p.parts .. " | 队:" .. p.team .. "(" .. p.src .. ")" .. (p.occ and " 乘员:" .. p.occ.Name or "")
-			for k, v in pairs(p.model:GetAttributes()) do L[#L + 1] = "    attr " .. k .. "=" .. fmt(v) end
-			for _, r in ipairs(p.remotes) do L[#L + 1] = "    " .. r.ClassName .. " " .. r:GetFullName() end
+			L[#L + 1] = `[{p.score}] {p.path}{(p.mine and " ★我" .. (p.ownBy and "(" .. p.ownBy .. ")" or "") or "")} | 座:{(p.seat and "有" or "无")} 翼:{p.wings} 件:{p.parts} | 队:{p.team}({p.src}){(p.occ and " 乘员:" .. p.occ.Name or "")}`
+			for k, v in pairs(p.model:GetAttributes()) do L[#L + 1] = `    attr {k}={fmt(v)}`end
+			for _, r in ipairs(p.remotes) do L[#L + 1] = `    {r.ClassName} {r:GetFullName()}`end
 		end
 		if #rejects > 0 then
-			L[#L + 1] = "-- 疑似 " .. #rejects .. " (扫到但没过门槛; 靠「座」=有座位, 靠「翼」=只认到机翼名)"
-			for _, p in ipairs(rejects) do L[#L + 1] = "[" .. p.score .. "] " .. p.path .. " | 靠" .. p.why .. " 座:" .. (p.seat and "有" or "无") .. " 翼:" .. p.wings .. " 件:" .. p.parts end
+			L[#L + 1] = `-- 疑似 {#rejects} (扫到但没过门槛; 靠「座」=有座位, 靠「翼」=只认到机翼名)`
+			for _, p in ipairs(rejects) do L[#L + 1] = `[{p.score}] {p.path} | 靠{p.why} 座:{(p.seat and "有" or "无")} 翼:{p.wings} 件:{p.parts}`end
 		end
-		L[#L + 1] = "-- Remote " .. #remotes
-		for _, r in ipairs(remotes) do L[#L + 1] = "  " .. r.ClassName .. " " .. r:GetFullName() end
-		L[#L + 1] = "-- 发 " .. tot(sent) .. " 条 / " .. #sent .. " 组 (上限 " .. CAP .. " 组; 连续同 Remote 同目标折叠成一组, 首末 payload 都留着)"
+		L[#L + 1] = `-- Remote {#remotes}`
+		for _, r in ipairs(remotes) do L[#L + 1] = `  {r.ClassName} {r:GetFullName()}`end
+		L[#L + 1] = `-- 发 {tot(sent)} 条 / {#sent} 组 (上限 {CAP} 组; 连续同 Remote 同目标折叠成一组, 首末 payload 都留着)`
 		for _, s in ipairs(dump(sent)) do L[#L + 1] = s end
-		L[#L + 1] = "-- 收 " .. tot(got) .. " 条 / " .. #got .. " 组" .. (F.watch and #watch == 0 and " ← 收侦听开着却一个都没挂上 (要先点 重扫)" or "")
+		L[#L + 1] = `-- 收 {tot(got)} 条 / {#got} 组{(F.watch and #watch == 0 and " ← 收侦听开着却一个都没挂上 (要先点 重扫)" or "")}`
 		for _, s in ipairs(dump(got)) do L[#L + 1] = s end
 		local txt = table.concat(L, "\n")
 		writefile("plane_debug.txt", txt)
 		setclipboard(txt)
-		toast("报告 " .. #L .. " 行 → plane_debug.txt / 剪贴板")
+		toast(`报告 {#L} 行 → plane_debug.txt / 剪贴板`)
 	end
 
 	feature{ kind = "page", id = "plane", tab = "机", info = function() return "飞机=" .. #planes .. " Remote=" .. #remotes .. " 发=" .. tot(sent) .. "/" .. #sent .. "组 收=" .. tot(got) .. "/" .. #got .. "组 侦听=" .. tostring(F.spy) .. (F.watch and #watch == 0 and " 收没挂上(先重扫)" or "") end }
@@ -1069,7 +1069,7 @@ do -- ═════════ 砖: BitFarmer 刷砖 (单游戏专用) ══
 		local conn = workspace.ChildAdded:Connect(function(c) task.defer(function() if F.brick and ownBrick(c) then ingest(c, col); st.got = st.got + 1 end end) end)
 		local function drain() for _, c in ipairs(workspace:GetChildren()) do if ownBrick(c) then ingest(c, col) end end end
 		while F.brick and alive do
-			st.cycles = st.cycles + 1
+			st.cycles += 1
 			drain()
 			if spawnBit then for _ = 1, S.bbatch do if not F.brick then break end; spawnBit:FireServer(); st.sent = st.sent + 1; task.wait(S.bint) end end
 			task.wait(S.bdrain)
@@ -1090,7 +1090,7 @@ do -- ═════════ 砖: BitFarmer 刷砖 (单游戏专用) ══
 	local function brickSet(v)
 		if v and not looping then
 			looping = true
-			task.spawn(function() local ok, err = pcall(loop); looping = false; if not ok then W.brick(false); toast("刷砖出错: " .. tostring(err)) end end)
+			task.spawn(function() local ok, err = pcall(loop); looping = false; if not ok then W.brick(false); toast(`刷砖出错: {tostring(err)}`) end end)
 		end
 	end
 	feature{ kind = "page", id = "brick", tab = "砖", info = function() return string.format("刷=%s 周期=%d 已刷=%.0f 速率=%.1f/s", tostring(F.brick), st.cycles, st.earned, st.rate) end }
@@ -1144,15 +1144,15 @@ do
 						task.wait(type(e.every) == "function" and e.every() or e.every or 1)
 						if alive and (not e.key or F[e.key]) then
 							local ok2, err2 = pcall(e.loop)
-							if not ok2 then if e.onerr then e.onerr(err2) else warn("[Selfblox] " .. (e.label or e.key) .. ": " .. tostring(err2)) end end
+							if not ok2 then if e.onerr then e.onerr(err2) else warn(`[Selfblox] {(e.label or e.key)}: {tostring(err2)}`) end end
 						end
 					end
 				end) end
 			else
 				local what = e.label or e.key or k
-				FAILED[#FAILED + 1] = pid .. " " .. what .. ": " .. tostring(err)
-				warn("[Selfblox] " .. FAILED[#FAILED])
-				text(page, "✗ " .. what)
+				FAILED[#FAILED + 1] = `{pid} {what}: {tostring(err)}`
+				warn(`[Selfblox] {FAILED[#FAILED]}`)
+				text(page, `✗ {what}`)
 			end
 		end
 	end
@@ -1167,31 +1167,31 @@ pageInfos = function() -- 各页状态, 一页一行 (给日志 / 诊断快照�
 			for _, e in ipairs(BUILT) do
 				if e._page == p.id then
 					local k = e.kind or "toggle"
-					if k == "toggle" then t[#t + 1] = e.label .. "=" .. tostring(F[e.key])
-					elseif k == "num" then t[#t + 1] = e.key .. "=" .. tostring(S[e.key])
-					elseif k == "cycle" then t[#t + 1] = e.key .. "=" .. tostring(F[e.key]) end
+					if k == "toggle" then t[#t + 1] = `{e.label}={tostring(F[e.key])}`
+					elseif k == "num" then t[#t + 1] = `{e.key}={tostring(S[e.key])}`
+					elseif k == "cycle" then t[#t + 1] = `{e.key}={tostring(F[e.key])}`end
 				end
 			end
 			if p.info then t[#t + 1] = p.info() end
 			return table.concat(t, " ")
 		end)
-		o[#o + 1] = p.id .. " " .. (ok and tostring(v) or ("INFO 报错: " .. tostring(v)))
+		o[#o + 1] = `{p.id} {(ok and tostring(v) or ("INFO 报错: " .. tostring(v)))}`
 	end
 	return o
 end
 
 local function dumpLines()
 	local L = { "==== Selfblox 诊断 " .. os.date("%Y-%m-%d ") .. clock(true) .. " ====",
-		"脚本=" .. VERSION .. " 页签=" .. tostring(saved.tab) .. " place=" .. game.PlaceId .. " 地图=" .. tostring(game.Name),
-		"配置 " .. Http:JSONEncode(saved),
-		"执行器 isfile=" .. tostring(isfile ~= nil) .. " writefile=" .. tostring(writefile ~= nil) .. " appendfile=" .. tostring(appendfile ~= nil) .. " setclipboard=" .. tostring(setclipboard ~= nil) .. " gethui=" .. tostring(gethui ~= nil) .. " hookmetamethod=" .. tostring(hookmetamethod ~= nil) .. " newcclosure=" .. tostring(newcclosure ~= nil) .. " getnamecallmethod=" .. tostring(getnamecallmethod ~= nil),
+		`脚本={VERSION} 页签={tostring(saved.tab)} place={game.PlaceId} 地图={tostring(game.Name)}`,
+		`配置 {Http:JSONEncode(saved)}`,
+		`执行器 isfile={tostring(isfile ~= nil)} writefile={tostring(writefile ~= nil)} appendfile={tostring(appendfile ~= nil)} setclipboard={tostring(setclipboard ~= nil)} gethui={tostring(gethui ~= nil)} hookmetamethod={tostring(hookmetamethod ~= nil)} newcclosure={tostring(newcclosure ~= nil)} getnamecallmethod={tostring(getnamecallmethod ~= nil)}`,
 		"角色 " .. tostring(me.Name) .. " 队=" .. tostring(me.Team and me.Team.Name) .. " 坐=" .. tostring(hum() and hum().SeatPart and (hum().SeatPart:GetFullName())) .. " 根=" .. tostring(root() and root().Anchored) }
 	local r = root()
 	if r then L[#L + 1] = string.format("角色 位置=(%.0f,%.0f,%.0f) 速度=%.0f 血=%s", r.Position.X, r.Position.Y, r.Position.Z, r.AssemblyLinearVelocity.Magnitude, tostring(hum() and hum().Health)) end
 	L[#L + 1] = "-- 模块状态"
-	for _, line in ipairs(pageInfos()) do L[#L + 1] = "  " .. line end
-	for _, f in ipairs(FAILED) do L[#L + 1] = "  ✗ " .. f end
-	for k, f in pairs(DUMP) do local o, lines = pcall(f); L[#L + 1] = "-- " .. k .. " dump"; if o then for _, x in ipairs(lines) do L[#L + 1] = "  " .. tostring(x) end else L[#L + 1] = "  dump 报错: " .. tostring(lines) end end
+	for _, line in ipairs(pageInfos()) do L[#L + 1] = `  {line}`end
+	for _, f in ipairs(FAILED) do L[#L + 1] = `  ✗ {f}`end
+	for k, f in pairs(DUMP) do local o, lines = pcall(f); L[#L + 1] = `-- {k} dump`; if o then for _, x in ipairs(lines) do L[#L + 1] = "  " .. tostring(x) end else L[#L + 1] = "  dump 报错: " .. tostring(lines) end end
 	if isfile("Selfblox_log.txt") then local t = readfile("Selfblox_log.txt") or ""; L[#L + 1] = "-- 日志尾部"; L[#L + 1] = t:sub(-1500) end
 	return L
 end
@@ -1199,7 +1199,7 @@ dumpNow = function()
 	local txt = table.concat(dumpLines(), "\n")
 	writefile("selfblox_dump.txt", txt)
 	setclipboard(txt)
-	toast("诊断 " .. #txt .. " 字节 → selfblox_dump.txt / 剪贴板")
+	toast(`诊断 {#txt} 字节 → selfblox_dump.txt / 剪贴板`)
 end
 _G.SB_DUMP = dumpNow
 
@@ -1211,4 +1211,4 @@ _G.SB_UNLOAD = function()
 	FX:Destroy()
 	_G.SB_UNLOAD = nil
 end
-print("[Selfblox] " .. VERSION .. " · " .. #ACTIVE .. " 模块 · _G.SB_UNLOAD() 卸载")
+print(`[Selfblox] {VERSION} · {#ACTIVE} 模块 · _G.SB_UNLOAD() 卸载`)

@@ -636,7 +636,8 @@ ok(vy ~= nil and tonumber(vm) >= 1 and tonumber(vm) <= 12 and tonumber(vd) >= 1 
 ok(VER ~= nil and VER:sub(1, 1) ~= "v" and select(2, SRC:gsub('"' .. VER:gsub("%.", "%%.") .. '"', "")) == 1, "展示版本不带 v, 版本号只在 VERSION 一行写死")
 local title0 = tabs():FindFirstChild("SB_Title")
 ok(title0 ~= nil and title0.Text == "Selfblox " .. tostring(VER), "面板标题读 VERSION (读到 " .. tostring(title0 and title0.Text) .. ")")
-ok(SRC:find('print("[Selfblox] " .. VERSION', 1, true) ~= nil, "启动打印读 VERSION, 不另写一份")
+-- 启动打印改成了 Luau 插值写法(26.10 起 selfblox.lua 以 Luau 为基线), 断言跟着认新写法
+ok(SRC:find('print(`[Selfblox] {VERSION}', 1, true) ~= nil, "启动打印读 VERSION, 不另写一份")
 
 print("\n[2] 空转 30 帧 (没有任何开关)")
 step(1 / 60, 30)

@@ -25,14 +25,14 @@ _G.SB = { spd = 60, flyspd = 120, hornkey = "H", only = { "moc", "sibs" } }
 ```bash
 cd /sdcard/Download
 curl -fLO https://raw.githubusercontent.com/Sumicya/Selfblox/HEAD/selfblox.lua
-mv selfblox.lua Selfblox-26.10.5.28.28.lua
-ls -l Selfblox-26.10.5.28.28.lua   # 有字节数才是真的下来了
+mv selfblox.lua Selfblox-26.10.5.29.29.lua
+ls -l Selfblox-26.10.5.29.29.lua   # 有字节数才是真的下来了
 ```
 
-`readfile` 只读 Delta 的工作目录，所以离线加载前要把副本放进去（Termux 需要存储权限，先跑 `termux-setup-storage`），再在执行器里用 `loadstring(readfile("Selfblox-26.10.5.28.28.lua"))()` 加载：
+`readfile` 只读 Delta 的工作目录，所以离线加载前要把副本放进去（Termux 需要存储权限，先跑 `termux-setup-storage`），再在执行器里用 `loadstring(readfile("Selfblox-26.10.5.29.29.lua"))()` 加载：
 
 ```bash
-cp /sdcard/Download/Selfblox-26.10.5.28.28.lua /storage/emulated/0/Delta/workspace/
+cp /sdcard/Download/Selfblox-26.10.5.29.29.lua /storage/emulated/0/Delta/workspace/
 ```
 
 不用了按名字前缀清掉本次下载和工作目录里的副本，不删别的东西：
@@ -94,14 +94,14 @@ rm -f /storage/emulated/0/Delta/workspace/Selfblox-*.lua
 改完先离线自检，不必上手机：
 
 ```bash
-lua5.4 smoke.lua   # Termux: pkg install lua54
+luau smoke.lua    # 要官方 Luau(工作流里钉的是 0.741); 本地怎么编同版本见 AGENTS.md
 ```
 
 `smoke.lua` 用一个假 Roblox 引擎加载 `selfblox.lua`：建面板、翻每个开关、坐进假车、跑帧、卸载，然后断言状态确实改变、没有报错、卸载后不留实例和连接，并注入一个玩具功能验证清单的扩展性。假引擎对没有核对过官方文档的成员一律抛错，白名单是 `smoke.lua` 里的 `VERIFIED`，逐个对照 create.roblox.com 的引擎 API 参考核对。脚本本体不依赖 `smoke.lua`。
 
-Termux 是设备本地的终端环境，`pkg install lua54` 只安装解释器，不需要 Root，也不改动游戏或系统分区。
+`selfblox.lua` 用的是 Luau 专属语法（字符串插值、`+=`），Lua 5.4 解析不了这份自检；Termux 上没有现成的 Luau 包，手机上就以 CI 结果为准。
 
-CI 跑的是同一份自检：`.github/workflows/spec-check.yml`（全程 `contents: read`）在 push 与 pull request 上用 Lua 5.4 执行 `smoke.lua`，另一个 job 校验 `AGENTS.md` 的规范指针与版本戳、与 `Sumicya/selfs` 的 `GLOBAL.md` 比对版本，并确认没有工作流声明写权限或自动创建 Release。
+CI 跑的是同一份自检：`.github/workflows/spec-check.yml`（全程 `contents: read`）在 push 与 pull request 上下载官方 Luau 0.741 执行 `smoke.lua`，另一个 job 校验 `AGENTS.md` 与规范的对齐。
 
 ## 版本
 
@@ -118,7 +118,7 @@ gh api repos/Sumicya/Selfblox/tags --jq '.[0].name'
 没有发行需求时不打标签、不建 Release。获准发版后再打 `v` 加版本号的标签（下例仅为格式示例，不代表已经发行）：
 
 ```bash
-git tag v26.10.5.28.28
+git tag v26.10.5.29.29
 ```
 
 ## 许可
