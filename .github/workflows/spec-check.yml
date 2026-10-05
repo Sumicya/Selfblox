@@ -97,4 +97,13 @@ jobs:
         run: |
           # Luau 的标准库没有 io, 读不到文件: 用长括号把源码塞进 _G.SB_SRC, 再拼上 smoke.lua 一起跑
           { printf '_G.SB_SRC = [====[\n'; cat selfblox.lua; printf '\n]====]\n'; cat smoke.lua; } > /tmp/sb_smoke.lua
-          luau /tmp/sb_smoke.lua
+          set +e
+          out=$(luau /tmp/sb_smoke.lua 2>&1)
+          rc=$?
+          set -e
+          printf '%s\n' "$out" | tail -40
+          if [ "$rc" -ne 0 ]; then
+            # 日志正文存在 blob.core.windows.net, 沙箱读不到; 把失败尾部写成注解, 从 check-runs/annotations 就能读到
+            printf '%s\n' "$out" | tail -12 | sed -e 's/%/%25/g' -e 's/\r/%0D/g' -e 's/^/::error::/'
+            exit "$rc"
+          fi
