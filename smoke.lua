@@ -992,7 +992,7 @@ humanoid.props.MoveDirection = Vector3.new(1, 0, 0)
 step(1 / 60, 3)
 local fw = seat.props.CFrame.LookVector -- 前面方向盘测试已经把假车转过了, 车头不再是 -Z, 所以跟车头的实际朝向比
 fw = Vector3.new(fw.X, 0, fw.Z).Unit
-ok(lvc and lvc.VectorVelocity.Magnitude > 10 and lvc.VectorVelocity.Unit:Dot(fw) > 0.99, "相机转 90° 后, 前推仍是车头方向, 不跟着相机跑 (与车头夹角余弦 " .. string.format("%.3f", lvc and lvc.VectorVelocity.Unit:Dot(fw) or 0) .. ", 速度 " .. tostring(lvc and lvc.VectorVelocity) .. ", 车头 " .. tostring(fw) .. ", 相机 " .. tostring(camera.CFrame.LookVector) .. ")")
+ok(lvc and lvc.VectorVelocity.Magnitude > 10 and lvc.VectorVelocity.Unit:Dot(fw) > 0.99, "相机转 90° 后, 前推仍是车头方向, 不跟着相机跑 (与车头夹角余弦 " .. string.format("%.3f", lvc and lvc.VectorVelocity.Unit:Dot(fw) or 0) .. ", 速度 " .. tostring(lvc and lvc.VectorVelocity) .. ", 车头 " .. tostring(fw) .. ", 相机 " .. tostring(camera.CFrame.LookVector) .. ", 相机右 " .. tostring(camera.CFrame.RightVector) .. ", MoveDir " .. tostring(humanoid.props.MoveDirection) .. ", 脚本看到的 workspace 是同一个吗 " .. tostring(rawequal(assert(load_chunk("return workspace", "smoke_probe"))(), workspace)) .. ")")
 camera.CFrame = CFrame.new(Vector3.zero)
 humanoid.props.MoveDirection = Vector3.zero
 step(1 / 60, 3)
