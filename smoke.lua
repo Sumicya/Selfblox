@@ -53,10 +53,6 @@ local STRICT = { UIDragDetector = { DragStart = true, DragContinue = true, DragE
 -- 新增成员时: 先去 create.roblox.com/docs/reference/engine/classes/<类> 确认它存在 (官方没文档的内部服务, 如 VirtualInputManager, 看 robloxapi.github.io/ref/class/<类>.html), 再加进来. 没列出的类不检查.
 local function words(s) local t = {}; for w in s:gmatch("%S+") do t[w] = true end; return t end
 local di = debug.getinfo or function(level, _) return { short_src = debug.info(level + 1, "s") } end
-local function callerLine(n) -- 诊断: 调用方在脚本里的行号 (两个 VM 都得能拿到)
-	if debug.getinfo then local i = debug.getinfo(n + 1, "l"); return i and i.currentline end
-	if debug.info then return debug.info(n + 1, "l") end
-end -- Luau 的 debug 库只有 info / traceback, 没有 getinfo; info 直接回 short_src 字符串, 垫一层就要多算一层栈
 local function fromScript(level) -- 谁在访问: selfblox.lua 的代码 (chunk 名 selfblox*) 还是测试自己
 	local ii = di(level or 4, "S")
 	local src = ii and (ii.short_src or ii.source) or ""
@@ -124,10 +120,6 @@ local ENUM_OK = { -- 枚举字面量 (KeyCode 是按配置字符串动态取的,
 	UIDragDetectorDragStyle = words("TranslateLine"),
 	UserInputType = words("MouseButton1 Touch"),
 }
-local MDLOG = {} -- MoveDirection 的读取记录(只留最近 4 条)
-local CFLOG, RID = {}, 0 -- CFrame.RightVector 的读取记录(带全局读序号, 只留最近 8 条)
-local CAMREF, CAMW, STEPLOG, CCLOG, LVLOG, CREAD, CWRITE = nil, {}, {}, {}, {}, {}, {}
-_G.__DBG = _G.__DBG or { cfr = {}, n = 0 } -- 诊断: 挂全局, 主 chunk 的局部变量已到 Lua 200 上限, 不能再加 -- 相机本体 / 相机 CFrame 的写入 / 每帧开始时相机的 CFrame
 local function guardMember(t, k) -- 读/写实例成员时调用
 	local cls = rawget(t, "ClassName")
 	local allow = VERIFIED[cls]
@@ -232,46 +224,9 @@ end
 function methods.SetNetworkOwner() error("SetNetworkOwner 客户端不让调 (上一版就是这一句把车搞成完全绑不上)") end
 function methods.GetPartBoundsInRadius() return _G.__radius or {} end
 
-local NCC = 0 -- 诊断: "CurrentCamera" 这个键被 __index 处理过几次
-local MDW = {} -- 诊断: 脚本从 MoveDirection 上读了哪些成员、各读到什么
-local function wrapMD(v) -- 包一层: 转发一切, 但把每次成员读取记下来
-	return setmetatable({}, {
-		__index = function(_, kk)
-			local val = v[kk]
-			MDW[#MDW + 1] = "." .. tostring(kk) .. "=" .. tostring(val)
-			if #MDW > 16 then table.remove(MDW, 1) end
-			return val
-		end,
-		__add = function(_, b) return v + b end,
-		__sub = function(_, b) return v - b end,
-		__mul = function(_, b) return v * b end,
-		__unm = function() return -v end,
-		__tostring = function() return tostring(v) end,
-	})
-end
 local mt = {
 	__index = function(t, k)
 		guardMember(t, k)
-		if k == "MoveDirection" then -- 诊断: Luau 与 Lua 5.3 在这条上结果不同, 记下"谁读到了哪个实例的什么值"
-			local pp0 = rawget(t, "props")
-			local mdv = pp0 and pp0.MoveDirection
-			MDLOG[#MDLOG + 1] = tostring(t) .. "=" .. tostring(mdv) .. " 模长=" .. tostring(mdv and mdv.Magnitude) .. " 脚本第" .. tostring(callerLine(2)) .. "行读的"
-			if #MDLOG > 4 then table.remove(MDLOG, 1) end
-		end
-		if k == "CurrentCamera" then -- 诊断: 记 __index 真正会返回什么 (methods 优先于 props)
-			NCC = NCC + 1
-			local pp1 = rawget(t, "props")
-			local mv1 = methods[k]
-			CREAD[#CREAD + 1] = "读→返回" .. tostring(mv1 ~= nil and mv1 or (pp1 and pp1.CurrentCamera))
-				.. " (methods里有=" .. tostring(mv1 ~= nil) .. ", prop=" .. tostring(pp1 and pp1.CurrentCamera)
-				.. (pp1 and pp1.CurrentCamera == CAMREF and " 就是那台" or " 不是那台!") .. ") 第" .. tostring(callerLine(2)) .. "行"
-			if #CREAD > 5 then table.remove(CREAD, 1) end
-		end
-		if k == "CFrame" and CAMREF ~= nil then -- 诊断: 读 .CFrame 的是不是那台相机, 读到了什么
-			local pp2 = rawget(t, "props")
-			CCLOG[#CCLOG + 1] = "读CFrame@" .. tostring(rawget(t, "ClassName")) .. "/" .. tostring(pp2 and pp2.Name) .. (t == CAMREF and "(是相机)" or "(不是相机)") .. "→" .. tostring(pp2 and pp2.CFrame and pp2.CFrame.x) .. " 第" .. tostring(callerLine(2)) .. "行"
-			if #CCLOG > 6 then table.remove(CCLOG, 1) end
-		end
 		if k == "Parent" then return rawget(t, "parent") end
 		local m = methods[k]
 		if m then return m end
@@ -300,28 +255,17 @@ local mt = {
 			rawset(t, "parent", v)
 			if v then v.children[#v.children + 1] = t end
 		else
-			if k == "CFrame" then -- Luau 把 workspace.CurrentCamera.CFrame 这种全常量键链编译成 GETIMPORT,
-				-- 首次求值后把结果缓存进常量池, 之后直接返回缓存值、不再走 __index (luau-lang/luau VM/src/lvmexecute.cpp 的 LOP_GETIMPORT fast-path:
-				-- if (!ttisnil(kv) && cl->env->safeenv) { setobj2s(L, ra, kv); }); safeenv 只能由 C 侧 lua_setsafeenv 打开(lapi.cpp:937), Lua 关不掉。
-				-- 真引擎里属性不是 Lua 表链, 不受这条影响; 这里把旧对象就地改成新值, 让被缓存住的引用也跟着变。props 里另存一份, 不和调用方手里的对象串味。
+			if k == "CFrame" then -- Luau 把 a.b.c 这种全常量键链编译成 GETIMPORT; 实测(本地按 0.741 源码编的 Luau):
+				-- 经 loadstring 装载的 chunk 里, 同一条链首次求值后就被冻住 —— 第二次读 gws.CurrentCamera.CFrame 返回的仍是
+				-- 旧对象、__index 一次都不再触发; 主 chunk 里直接读则每次都新鲜。上游: LOP_GETIMPORT 的常量池快路径
+				-- (VM/src/lvmexecute.cpp:489-508); luaV_getimport 自己不缓存、且最多 3 段(VM/src/lvmload.cpp:91)。
+				-- 真引擎的属性不是 Lua 表链, 没这回事; 假引擎用 __index 模拟属性才中招。这里把旧对象就地改成新值,
+				-- 让被冻住的引用也跟着变; props 里另存一份, 不和调用方手里的对象串味。
 				local wasC = rawget(t, "props")[k]
 				if type(wasC) == "table" and rawget(wasC, "x") and type(v) == "table" and rawget(v, "x") then
 					wasC.x, wasC.y, wasC.z, wasC.p = v.x, v.y, v.z, v.p
-					_G.__DBG.n = _G.__DBG.n + 1 -- 复制件也要有 id, 否则读 t.__id 会反过来触发 cfmt.__index 递归
-					v = setmetatable({ x = v.x, y = v.y, z = v.z, p = v.p, __id = _G.__DBG.n }, getmetatable(v))
+					v = setmetatable({ x = v.x, y = v.y, z = v.z, p = v.p }, getmetatable(v))
 				end
-			end
-			if k == "VectorVelocity" then -- 诊断: 脚本到底把速度写给了哪个约束、写了什么
-				LVLOG[#LVLOG + 1] = "@" .. tostring(t) .. "←" .. tostring(v) .. "(父=" .. tostring(rawget(t, "parent")) .. ")"
-				if #LVLOG > 6 then table.remove(LVLOG, 1) end
-			end
-			if k == "CurrentCamera" then -- 诊断: 谁改了 CurrentCamera (专用日志, 不被噪声冲掉)
-				CWRITE[#CWRITE + 1] = "写←" .. tostring(v) .. "(" .. tostring(rawget(v, "ClassName")) .. "/" .. tostring(v and rawget(v, "props") and rawget(v, "props").Name) .. ") 第" .. tostring(callerLine(2)) .. "行"
-				if #CWRITE > 5 then table.remove(CWRITE, 1) end
-			end
-			if k == "CFrame" and CAMREF ~= nil and t == CAMREF then -- 诊断: 谁改了相机的 CFrame
-				CAMW[#CAMW + 1] = tostring(v and v.x) .. "/z=" .. tostring(v and v.z)
-				if #CAMW > 4 then table.remove(CAMW, 1) end
 			end
 			rawget(t, "props")[k] = v
 		end
@@ -379,17 +323,9 @@ Color3 = {
 }
 local cfmt = {
 	__index = function(t, k)
-		local L = _G.__DBG.cfr -- 诊断: 谁摸了哪个 CFrame 的哪个成员
-		L[#L + 1] = "cf" .. tostring(rawget(t, "__id")) .. "." .. tostring(k)
-		if #L > 10 then table.remove(L, 1) end
 		if k == "Position" then return t.p end
 		if k == "LookVector" then return -t.z end
-		if k == "RightVector" then -- 诊断: 记下每次读到的右向量与当时的基向量, 看脚本读到的是不是同一份
-			RID = RID + 1
-			CFLOG[#CFLOG + 1] = "#" .. RID .. ":" .. tostring(t.x) .. "/z=" .. tostring(t.z) .. "/p=" .. tostring(t.p)
-			if #CFLOG > 8 then table.remove(CFLOG, 1) end
-			return t.x
-		end
+		if k == "RightVector" then return t.x end
 		if k == "UpVector" then return t.y end
 		if k == "Rotation" then return CFrame.fromBasis(t.x, t.y, t.z, Vector3.zero) end
 	end,
@@ -403,7 +339,7 @@ local cfmt = {
 	__tostring = function(a) return "CFrame" .. tostring(a.p) end,
 }
 CFrame = {}
-CFrame.fromBasis = function(x, y, z, p) local d = _G.__DBG; d.n = d.n + 1; return setmetatable({ x = x, y = y, z = z, p = p, __id = d.n }, cfmt) end
+CFrame.fromBasis = function(x, y, z, p) return setmetatable({ x = x, y = y, z = z, p = p }, cfmt) end
 CFrame.new = function(p, look) if look then return CFrame.lookAt(p, look) end; return CFrame.fromBasis(Vector3.xAxis, Vector3.yAxis, Vector3.zAxis, p or Vector3.zero) end
 CFrame.Angles = function() return CFrame.new(Vector3.zero) end
 CFrame.fromAxisAngle = function(axis, ang)
@@ -458,7 +394,6 @@ local function svc(name, o) o = o or inst(name); _G.__SVC[name] = o; return o en
 local workspace = svc("Workspace", inst("Workspace", sig()))
 local camera = inst("Camera", { CFrame = CFrame.new(Vector3.zero), ViewportSize = Vector2.new(1080, 2400) })
 workspace.props.CurrentCamera = camera
-CAMREF = camera -- 诊断用: 认出"读到的到底是不是这台相机"
 _G.workspace = workspace
 exposeGlobals()
 
@@ -632,10 +567,6 @@ local FAILS = 0
 local function ok(cond, msg) if cond then print("  ✓ " .. msg) else FAILS = FAILS + 1; print("  ✗ " .. msg) end end
 local function step(dt, n)
 	for i2 = 1, (n or 1) do
-		if CAMREF ~= nil then -- 诊断: 这一帧开始时相机的 CFrame 是什么
-			STEPLOG[#STEPLOG + 1] = "帧" .. i2 .. "=" .. tostring(rawget(CAMREF, "props").CFrame.x)
-			if #STEPLOG > 4 then table.remove(STEPLOG, 1) end
-		end
 		NOW = NOW + dt
 		local due = {}; local keep = {}
 		for _, w in ipairs(WAITERS) do if w.t <= NOW then due[#due + 1] = w else keep[#keep + 1] = w end end
@@ -1069,18 +1000,6 @@ ok(lvc and lvc.VectorVelocity.Z < -10, "摇杆前推 → 车头方向 " .. tostr
 humanoid.props.MoveDirection = Vector3.new(1, 0, 0) -- 右推 = 世界 +X
 step(1 / 60, 3)
 ok(lvc and lvc.VectorVelocity.X > 10, "摇杆右推 → 车右方向 " .. tostring(lvc and lvc.VectorVelocity))
-for i = #MDLOG, 1, -1 do MDLOG[i] = nil end
-for i = #CFLOG, 1, -1 do CFLOG[i] = nil end
-for i = #CAMW, 1, -1 do CAMW[i] = nil end
-for i = #CCLOG, 1, -1 do CCLOG[i] = nil end
-for i = #LVLOG, 1, -1 do LVLOG[i] = nil end
-for i = #CREAD, 1, -1 do CREAD[i] = nil end
-for i = #_G.__DBG.cfr, 1, -1 do _G.__DBG.cfr[i] = nil end
-for i = #MDW, 1, -1 do MDW[i] = nil end
-NCC = 0 -- 从这行之后重新数
-for i = #CWRITE, 1, -1 do CWRITE[i] = nil end
-for i = #STEPLOG, 1, -1 do STEPLOG[i] = nil end
-_G.__DBG.oldCF = camera.CFrame -- 诊断: 留住赋值前那份 CFrame, 好认"脚本摸的是不是旧的"
 camera.CFrame = CFrame.new(Vector3.zero, Vector3.new(1, 0, 0)) -- 摄像机转到朝 +X: 前推 = 世界 +X, 但车还是该往车头(-Z)飞, 不能跟着相机跑
 humanoid.props.MoveDirection = Vector3.new(1, 0, 0)
 step(1 / 60, 3)
@@ -1107,20 +1026,8 @@ end)
 if not okProbe then probeTxt = "探针自己炸了: " .. tostring(probeTxt) end
 local fw = seat.props.CFrame.LookVector -- 前面方向盘测试已经把假车转过了, 车头不再是 -Z, 所以跟车头的实际朝向比
 fw = Vector3.new(fw.X, 0, fw.Z).Unit
-ok(lvc and lvc.VectorVelocity.Magnitude > 10 and lvc.VectorVelocity.Unit:Dot(fw) > 0.99, "相机转 90° 后, 前推仍是车头方向, 不跟着相机跑 (与车头夹角余弦 " .. string.format("%.3f", lvc and lvc.VectorVelocity.Unit:Dot(fw) or 0) .. ", 速度 " .. tostring(lvc and lvc.VectorVelocity) .. ", 车头 " .. tostring(fw) .. ", 相机 " .. tostring(camera.CFrame.LookVector) .. ", 相机右 " .. tostring(camera.CFrame.RightVector) .. ", MoveDir " .. tostring(humanoid.props.MoveDirection) .. ", 脚本看到的 workspace 是同一个吗 " .. tostring(rawequal(assert(load_chunk("return workspace", "smoke_probe"))(), workspace)) .. ", 本人形 " .. tostring(humanoid) .. ", MoveDirection 读取 " .. table.concat(MDLOG, " | ") .. ", RightVector 读取(x/z) " .. table.concat(CFLOG, " | ") .. ", lv还活着吗 " .. tostring(lvc ~= nil and rawget(lvc, "destroyed") ~= true) .. "(父=" .. tostring(lvc and lvc.Parent) .. ")"
- .. ", 座位的AssemblyRootPart " .. tostring(seat.props.AssemblyRootPart) .. ", 座位的父 " .. tostring(seat.Parent)
- .. ", 座位Anchored " .. tostring(seat.props.Anchored) .. ", 假引擎侧人形 " .. tostring(char:FindFirstChildOfClass("Humanoid"))
- .. ", SeatPart " .. tostring(humanoid.props.SeatPart) .. ", 脚本侧: " .. tostring(humTxt)
- .. ", VectorVelocity 写入 " .. table.concat(LVLOG, " | ") .. ", 本人体 lvc=" .. tostring(lvc)
- .. ", CurrentCamera被__index处理次数 " .. NCC
- .. ", workspace上的原始字段CurrentCamera " .. tostring(rawget(workspace, "CurrentCamera"))
- .. ", props里的CurrentCamera " .. tostring(rawget(workspace, "props").CurrentCamera)
- .. ", 脚本对MoveDirection做了什么 " .. table.concat(MDW, " ")
- .. ", CFrame成员读取 " .. table.concat(_G.__DBG.cfr, " ")
- .. ", 相机现在的CFrame=cf" .. tostring(camera.props.CFrame.__id) .. " 赋值前那份=cf" .. tostring(_G.__DBG.oldCF and _G.__DBG.oldCF.__id)
- .. ", CurrentCamera读 " .. table.concat(CREAD, " | ") .. ", CurrentCamera写 " .. table.concat(CWRITE, " | ")
- .. ", .CFrame读 " .. table.concat(CCLOG, " | ")
- .. ", 相机CFrame写入 " .. table.concat(CAMW, " | ") .. ", 每帧开始时相机 " .. table.concat(STEPLOG, " | ") .. " || 脚本环境复算: " .. tostring(probeTxt) .. ")")
+ok(lvc and lvc.VectorVelocity.Magnitude > 10 and lvc.VectorVelocity.Unit:Dot(fw) > 0.99,
+	"相机转 90° 后, 前推仍是车头方向, 不跟着相机走 (实际写入的速度 = " .. tostring(lvc and lvc.VectorVelocity) .. ")")
 camera.CFrame = CFrame.new(Vector3.zero)
 humanoid.props.MoveDirection = Vector3.zero
 step(1 / 60, 3)
