@@ -1043,7 +1043,6 @@ tapTitle()
 seat.props.Anchored = false
 step(1 / 60, 3)
 
-camera = workspace.CurrentCamera or camera -- 转相机要转"脚本真正读到的那一台": Luau 下 exposeGlobals 用裸全局暴露 workspace, 自检手里的 camera 局部变量未必是同一台; 本地 Lua 5.3 不走 exposeGlobals, 两边才是同一台
 print("\n[6d] 飞车: 摇杆前推 = 车头方向 (摇杆读 Humanoid.MoveDirection; 官方 UserInputService 没有 GetMoveVector)")
 click(findBtn("飞车"))
 humanoid.props.MoveDirection = Vector3.new(0, 0, -1) -- 摄像机朝 -Z: 前推 = 世界 -Z
