@@ -12,9 +12,10 @@
 --   原生优先 —— 刹车 / 灯 / 秒互动 / ESP 走引擎原生属性, 拖拽走 UIDragDetector, 不自己造轮子
 --   面向 Delta 最新版 —— hookmetamethod / newcclosure / UIDragDetector 当它一定有;
 --            gethui / isfile / writefile 缺失时退回 CoreGui 并跳过存盘, 面板照样起得来
---   保持 Lua 5.4 可解析子集(不用 +=/continue/字符串插值), 这样 smoke.lua 能离线跑: 可测试性 > 语法糖
+--   语法基线是 Luau(运行环境就是它): 自检的权威跑法是 CI 里的官方 Luau 0.741; 本文件目前仍写成 Lua 5.4 也能解析的子集,
+--            所以本地 lua5.4 smoke.lua 照样能跑, 两个 VM 结果不一致时以 Luau 为准
 
-local VERSION = "26.10.5.20.20" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
+local VERSION = "26.10.5.21.21" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
