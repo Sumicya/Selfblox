@@ -1424,7 +1424,18 @@ rep = VFS["plane_debug.txt"]
 local atFa = rep and rep:find("%-%-%s*发")
 local faSec = atFa and rep:sub(atFa, atFa + 200) or "报告里没有发小节" -- 不用 %%n 匹配, 直接截子串
 faSec = faSec:gsub("[\r\n]+", " / ") -- 压成单行: GitHub 注解会在第一个换行处截断
-ok(rep:find("-- 发 1", 1, true) and rep:find('Workspace.Plane_RAF.FireGun:FireServer "bullet", (1,2,3), {a=1}', 1, true), "命中关键字的 FireServer 被记下来了, 参数格式化对 (发小节原文: " .. faSec .. ")")
+-- typeof 在 Luau 里是内建函数(VM/src/lbuiltins.cpp:887 luauF_typeof, 注册于 :2630), 编译器还按名字认它
+-- (Compiler/src/Builtins.cpp:78 builtin.isGlobal("typeof")), 常量可定时直接折叠(BuiltinFolding.cpp:528)。
+-- 所以假引擎盖不住 typeof, 假 Vector3 只会被认成 table、走脚本第 886 行的通用表分支;
+-- 真引擎里 typeof(Vector3) 就是 "Vector3", 故 Lua 5.4 下仍按 (1,2,3) 严判, Luau 下逐项核内容(键序由 Luau 的哈希序决定)。
+local okArgs
+if FROZEN_G then
+	okArgs = rep:find('FireGun:FireServer "bullet", {', 1, true) and rep:find("X=1", 1, true)
+		and rep:find("Y=2", 1, true) and rep:find("Z=3", 1, true) and rep:find("{a=1}", 1, true)
+else
+	okArgs = rep:find('Workspace.Plane_RAF.FireGun:FireServer "bullet", (1,2,3), {a=1}', 1, true)
+end
+ok(rep:find("-- 发 1", 1, true) and okArgs, "命中关键字的 FireServer 被记下来了, 参数格式化对 (发小节原文: " .. faSec .. ")")
 click(findBtn("全录"))
 _G.__ncm = "InvokeServer"
 hookF(chatFn, "hi")
