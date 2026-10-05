@@ -11,6 +11,17 @@ end
 local load_chunk = load or loadstring
 
 -- ───────── 垫片: Roblox 有、标准 Lua 没有 ─────────
+-- Luau CLI 冻结了标准库表和 _G (实测: math.sign = f / _G.x = 1 都报 attempt to modify a readonly table, 但裸全局可写)。
+-- 自检要给 math/table 补缺失成员、把 os.clock 换成虚拟时钟、往 _G 上挂假引擎, 所以在冻结的 VM 里先换成可写副本。
+-- Roblox 里这些本来就可写: 每一步都先探测再动手, 在 Lua 5.4 / fengari 下是空操作。
+local function isFrozen(t) return type(t) ~= "table" or not pcall(function() rawset(t, "__sb_probe", 1) end) end
+local function thaw(t) local c = {}; for k, v in pairs(t) do c[k] = v end; return c end
+if isFrozen(math) then math = thaw(math) end
+if isFrozen(table) then table = thaw(table) end
+if isFrozen(os) then os = thaw(os) end
+local FROZEN_G = isFrozen(_G)
+if FROZEN_G then local realG = _G; _G = setmetatable({}, { __index = realG }) end -- 写进代理, 读不到就回落原来那张表
+
 local unpack = table.unpack or unpack
 math.clamp = math.clamp or function(x, a, b) if x < a then return a elseif x > b then return b end return x end
 math.sign = math.sign or function(x) if x > 0 then return 1 elseif x < 0 then return -1 end return 0 end
@@ -384,6 +395,13 @@ svc("HttpService", inst("HttpService"))
 svc("CoreGui", inst("CoreGui", sig()))
 player.props.GetNetworkPing = function() return 0.05 end
 _G.CoreGui = _G.__SVC.CoreGui
+
+if FROZEN_G then
+	-- Luau CLI: _G 是上面换掉的可写代理, 可 selfblox.lua 读的是裸全局; 而这些名字在本文件里是 local,
+	-- 直接写会写到 local 上, 所以借一个没有同名 local 的 chunk 把它们写成真全局
+	local expose = assert(load_chunk("Instance, RaycastParams, OverlapParams, Vector3, Vector2, Color3, CFrame, UDim, UDim2, Enum, workspace, CoreGui, warn = ...", "smoke_expose"))
+	expose(_G.Instance, _G.RaycastParams, _G.OverlapParams, _G.Vector3, _G.Vector2, _G.Color3, _G.CFrame, _G.UDim, _G.UDim2, _G.Enum, _G.workspace, _G.CoreGui, _G.warn)
+end
 
 -- 漂移游戏的踏板 UI: 故意嵌两层 + ImageButton, 老代码只认 MobilePedals.Frame 的直接子节点
 local pedals = inst("ScreenGui", { Name = "MobilePedals" })
