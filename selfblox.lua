@@ -15,7 +15,7 @@
 --   语法基线是 Luau(运行环境就是它): 自检的权威跑法是 CI 里的官方 Luau 0.741; 本文件目前仍写成 Lua 5.4 也能解析的子集,
 --            所以本地 lua5.4 smoke.lua 照样能跑, 两个 VM 结果不一致时以 Luau 为准
 
-local VERSION = "26.10.5.23.23" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
+local VERSION = "26.10.5.24.24" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
