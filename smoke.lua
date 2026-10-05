@@ -125,7 +125,7 @@ local ENUM_OK = { -- 枚举字面量 (KeyCode 是按配置字符串动态取的,
 }
 local MDLOG = {} -- MoveDirection 的读取记录(只留最近 4 条)
 local CFLOG, RID = {}, 0 -- CFrame.RightVector 的读取记录(带全局读序号, 只留最近 8 条)
-local CAMREF, CAMW, STEPLOG, CCLOG, LVLOG = nil, {}, {}, {}, {} -- 相机本体 / 相机 CFrame 的写入 / 每帧开始时相机的 CFrame
+local CAMREF, CAMW, STEPLOG, CCLOG, LVLOG, CREAD, CWRITE = nil, {}, {}, {}, {}, {}, {} -- 相机本体 / 相机 CFrame 的写入 / 每帧开始时相机的 CFrame
 local function guardMember(t, k) -- 读/写实例成员时调用
 	local cls = rawget(t, "ClassName")
 	local allow = VERIFIED[cls]
@@ -239,14 +239,17 @@ local mt = {
 			MDLOG[#MDLOG + 1] = tostring(t) .. "=" .. tostring(mdv) .. " 模长=" .. tostring(mdv and mdv.Magnitude) .. " 脚本第" .. tostring(callerLine(2)) .. "行读的"
 			if #MDLOG > 4 then table.remove(MDLOG, 1) end
 		end
-		if k == "CurrentCamera" then -- 诊断: 谁在读 CurrentCamera, 读到的是哪台
+		if k == "CurrentCamera" then -- 诊断: 记 __index 真正会返回什么 (methods 优先于 props)
 			local pp1 = rawget(t, "props")
-			CCLOG[#CCLOG + 1] = "读CurrentCamera→" .. tostring(pp1 and pp1.CurrentCamera) .. (pp1 and pp1.CurrentCamera == CAMREF and "(就是那台)" or "(不是那台!)")
-			if #CCLOG > 6 then table.remove(CCLOG, 1) end
+			local mv1 = methods[k]
+			CREAD[#CREAD + 1] = "读→返回" .. tostring(mv1 ~= nil and mv1 or (pp1 and pp1.CurrentCamera))
+				.. " (methods里有=" .. tostring(mv1 ~= nil) .. ", prop=" .. tostring(pp1 and pp1.CurrentCamera)
+				.. (pp1 and pp1.CurrentCamera == CAMREF and " 就是那台" or " 不是那台!") .. ") 第" .. tostring(callerLine(2)) .. "行"
+			if #CREAD > 5 then table.remove(CREAD, 1) end
 		end
 		if k == "CFrame" and CAMREF ~= nil then -- 诊断: 读 .CFrame 的是不是那台相机, 读到了什么
 			local pp2 = rawget(t, "props")
-			CCLOG[#CCLOG + 1] = "读CFrame@" .. tostring(t) .. (t == CAMREF and "(是相机)" or "(不是相机)") .. "→" .. tostring(pp2 and pp2.CFrame and pp2.CFrame.x)
+			CCLOG[#CCLOG + 1] = "读CFrame@" .. tostring(rawget(t, "ClassName")) .. "/" .. tostring(pp2 and pp2.Name) .. (t == CAMREF and "(是相机)" or "(不是相机)") .. "→" .. tostring(pp2 and pp2.CFrame and pp2.CFrame.x) .. " 第" .. tostring(callerLine(2)) .. "行"
 			if #CCLOG > 6 then table.remove(CCLOG, 1) end
 		end
 		if k == "Parent" then return rawget(t, "parent") end
@@ -281,9 +284,9 @@ local mt = {
 				LVLOG[#LVLOG + 1] = "@" .. tostring(t) .. "←" .. tostring(v) .. "(父=" .. tostring(rawget(t, "parent")) .. ")"
 				if #LVLOG > 6 then table.remove(LVLOG, 1) end
 			end
-			if k == "CurrentCamera" then -- 诊断: 谁改了 CurrentCamera
-				CCLOG[#CCLOG + 1] = "写CurrentCamera←" .. tostring(v)
-				if #CCLOG > 6 then table.remove(CCLOG, 1) end
+			if k == "CurrentCamera" then -- 诊断: 谁改了 CurrentCamera (专用日志, 不被噪声冲掉)
+				CWRITE[#CWRITE + 1] = "写←" .. tostring(v) .. "(" .. tostring(rawget(v, "ClassName")) .. "/" .. tostring(v and rawget(v, "props") and rawget(v, "props").Name) .. ") 第" .. tostring(callerLine(2)) .. "行"
+				if #CWRITE > 5 then table.remove(CWRITE, 1) end
 			end
 			if k == "CFrame" and CAMREF ~= nil and t == CAMREF then -- 诊断: 谁改了相机的 CFrame
 				CAMW[#CAMW + 1] = tostring(v and v.x) .. "/z=" .. tostring(v and v.z)
@@ -349,7 +352,7 @@ local cfmt = {
 		if k == "LookVector" then return -t.z end
 		if k == "RightVector" then -- 诊断: 记下每次读到的右向量与当时的基向量, 看脚本读到的是不是同一份
 			RID = RID + 1
-			CFLOG[#CFLOG + 1] = "#" .. RID .. ":" .. tostring(t.x) .. "/z=" .. tostring(t.z)
+			CFLOG[#CFLOG + 1] = "#" .. RID .. ":" .. tostring(t.x) .. "/z=" .. tostring(t.z) .. "/p=" .. tostring(t.p)
 			if #CFLOG > 8 then table.remove(CFLOG, 1) end
 			return t.x
 		end
@@ -1037,6 +1040,8 @@ for i = #CFLOG, 1, -1 do CFLOG[i] = nil end
 for i = #CAMW, 1, -1 do CAMW[i] = nil end
 for i = #CCLOG, 1, -1 do CCLOG[i] = nil end
 for i = #LVLOG, 1, -1 do LVLOG[i] = nil end
+for i = #CREAD, 1, -1 do CREAD[i] = nil end
+for i = #CWRITE, 1, -1 do CWRITE[i] = nil end
 for i = #STEPLOG, 1, -1 do STEPLOG[i] = nil end
 camera.CFrame = CFrame.new(Vector3.zero, Vector3.new(1, 0, 0)) -- 摄像机转到朝 +X: 前推 = 世界 +X, 但车还是该往车头(-Z)飞, 不能跟着相机跑
 humanoid.props.MoveDirection = Vector3.new(1, 0, 0)
@@ -1069,7 +1074,8 @@ ok(lvc and lvc.VectorVelocity.Magnitude > 10 and lvc.VectorVelocity.Unit:Dot(fw)
  .. ", 座位Anchored " .. tostring(seat.props.Anchored) .. ", 假引擎侧人形 " .. tostring(char:FindFirstChildOfClass("Humanoid"))
  .. ", SeatPart " .. tostring(humanoid.props.SeatPart) .. ", 脚本侧: " .. tostring(humTxt)
  .. ", VectorVelocity 写入 " .. table.concat(LVLOG, " | ") .. ", 本人体 lvc=" .. tostring(lvc)
- .. ", CurrentCamera/CFrame 读写 " .. table.concat(CCLOG, " | ")
+ .. ", CurrentCamera读 " .. table.concat(CREAD, " | ") .. ", CurrentCamera写 " .. table.concat(CWRITE, " | ")
+ .. ", .CFrame读 " .. table.concat(CCLOG, " | ")
  .. ", 相机CFrame写入 " .. table.concat(CAMW, " | ") .. ", 每帧开始时相机 " .. table.concat(STEPLOG, " | ") .. " || 脚本环境复算: " .. tostring(probeTxt) .. ")")
 camera.CFrame = CFrame.new(Vector3.zero)
 humanoid.props.MoveDirection = Vector3.zero
