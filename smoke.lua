@@ -288,7 +288,6 @@ local mt = {
 			if not strict[k] then error(tostring(k) .. " is not a valid member of " .. t.ClassName, 2) end
 			v = Signal.new(); props[k] = v
 		elseif v == nil and SIGNALS[k] then v = Signal.new(); props[k] = v end -- 信号字段按需生成
-		if k == "MoveDirection" and type(v) == "table" and not MDW.off then return wrapMD(v) end -- 诊断: 让脚本读到的 MoveDirection 会自报家门
 		return v
 	end,
 	__newindex = function(t, k, v)
@@ -1044,6 +1043,7 @@ tapTitle()
 seat.props.Anchored = false
 step(1 / 60, 3)
 
+camera = workspace.CurrentCamera or camera -- 转相机要转"脚本真正读到的那一台": Luau 下 exposeGlobals 用裸全局暴露 workspace, 自检手里的 camera 局部变量未必是同一台; 本地 Lua 5.3 不走 exposeGlobals, 两边才是同一台
 print("\n[6d] 飞车: 摇杆前推 = 车头方向 (摇杆读 Humanoid.MoveDirection; 官方 UserInputService 没有 GetMoveVector)")
 click(findBtn("飞车"))
 humanoid.props.MoveDirection = Vector3.new(0, 0, -1) -- 摄像机朝 -Z: 前推 = 世界 -Z
