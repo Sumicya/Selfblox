@@ -15,7 +15,7 @@
 --   语法基线就是 Luau(运行环境就是它): 26.10.5.28 起用了字符串插值(`{}`)、复合赋值(+= 等)与 if 表达式(if c then a else b),
 --            Lua 5.4 / fengari 都解析不了; 自检的权威跑法是 CI 里的官方 Luau 0.741 (本地怎么编同版本见 AGENTS.md)
 
-local VERSION = "26.10.5.32.32" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
+local VERSION = "26.10.5.33.33" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
@@ -292,7 +292,7 @@ end
 do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配体; 没坐 = 准星"换车"锁定 / 自动绑最近的空座位) ═════════
 	S.turncap, S.hornkey, S.carmaxstuds, S.carswap = opt("turncap", 1), opt("hornkey", "H"), opt("carmaxstuds", 150), opt("carswap", true) -- 只读配置 (没有面板控件) -- maxstuds: 装配体外径超过这个数就不当成车(是地图/大容器). 量装配体不量 Model 容器: 车直接挂在超大容器里也认得出来
 	local picked, pickSeat, pickPath, autoPick, curSeat, curMax, att, vf, lv, clipCar, lastCar, lastAnch
-	local target, statT, autoT = 0, 0, 0
+	local target, statT, autoT, swapT = 0, 0, 0, 0
 	local lamps, lampSaved, col = {}, setmetatable({}, { __mode = "k" }), setmetatable({}, { __mode = "k" })
 	local rp = RaycastParams.new()
 	rp.FilterType = Enum.RaycastFilterType.Exclude
@@ -310,21 +310,29 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 	end
 	local swapParams = OverlapParams.new()
 	swapParams.FilterType = Enum.RaycastFilterType.Exclude
+	local filterChar -- 过滤表只在换人时重设, 不每次查询都新建一个 table
+	local function setFilter() if filterChar ~= me.Character then filterChar = me.Character; swapParams.FilterDescendantsInstances = { filterChar } end end
 	local function asmDims(r) -- 装配体的粗略外径(格) + 质量. 判"这是车还是地图"量装配体, 不量 Model 容器: 容器可能装着整条街而车只是里面一件; 反过来整块路面自己就是一个超大装配体
-		local span = 0
+		local span, rp = 0, r.Position -- r.Position 是属性读, 原来内层每件都读一次
 		for _, d in ipairs(r:GetConnectedParts(true)) do
-			local m = (d.Position - r.Position).Magnitude + 0.5 * d.Size.Magnitude -- 加半件尺寸: 单件的装配体(一整块路面)也能算出来
+			local m = (d.Position - rp).Magnitude + 0.5 * d.Size.Magnitude -- 加半件尺寸: 单件的装配体(一整块路面)也能算出来
 			if m > span then span = m end
 		end
 		return span * 2, nn(r.AssemblyMass)
 	end
 	local function heavyNear(p) -- 附近最重的"没锚定"零件: 锁到装饰件时, 真身往往是它
-		swapParams.FilterDescendantsInstances = { me.Character }
-		local best, bm
-		for _, d in ipairs(workspace:GetPartBoundsInRadius(p.Position, 30, swapParams)) do
-			if d:IsA("BasePart") and not d.Anchored and d.AssemblyRootPart and nn(d.AssemblyMass) > (bm or 0) then
+		setFilter()
+		local best, bm, dims = nil, nil, {}
+		local pp = p.Position
+		for _, d in ipairs(workspace:GetPartBoundsInRadius(pp, 30, swapParams)) do
+			if d:IsA("BasePart") and not d.Anchored then
 				local r = d.AssemblyRootPart
-				if (asmDims(r)) <= S.carmaxstuds then best, bm = r, nn(d.AssemblyMass) end -- 就近改绑也不能改绑到整条街: 30 格里最重的那件往往就是地图
+				local mass = (if r then nn(d.AssemblyMass) else 0) -- 原来同一件要读两遍 AssemblyMass
+				if r and mass > (bm or 0) then
+					local span = dims[r]
+					if span == nil then span = asmDims(r); dims[r] = span end -- 一个装配体的几十个零件只量一次外径, 不逐件重算
+					if span <= S.carmaxstuds then best, bm = r, mass end -- 就近改绑也不能改绑到整条街: 30 格里最重的那件往往就是地图
+				end
 			end
 		end
 		return best
@@ -456,13 +464,17 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 	local function autoBind() -- 没坐没锁: 找最近的"空载具座位"绑上. ponytail: 每秒一次 150 格球查询; 极稠密的地图可改成 DescendantAdded 注册表
 		local r = root()
 		if not r then return end
-		swapParams.FilterDescendantsInstances = { me.Character }
+		setFilter()
 		local best, bd, bv
-		for _, d in ipairs(workspace:GetPartBoundsInRadius(r.Position, 150, swapParams)) do
+		local rp = r.Position
+		for _, d in ipairs(workspace:GetPartBoundsInRadius(rp, 150, swapParams)) do
 			local isV = d:IsA("VehicleSeat")
-			if (isV or d:IsA("Seat")) and not d.Occupant and d.AssemblyRootPart and (isV or not d.AssemblyRootPart.Anchored) then -- 锚定的普通 Seat 是长椅/椅子, 不是车
-				local dist = (d.Position - r.Position).Magnitude
-				if not best or (isV and not bv) or (isV == bv and dist < bd) then best, bd, bv = d, dist, isV end -- VehicleSeat 优先, 同类取最近
+			if (isV or d:IsA("Seat")) and not d.Occupant then
+				local ar = d.AssemblyRootPart -- 原来同一件要读两遍 AssemblyRootPart
+				if ar and (isV or not ar.Anchored) then -- 锚定的普通 Seat 是长椅/椅子, 不是车
+					local dist = (d.Position - rp).Magnitude
+					if not best or (isV and not bv) or (isV == bv and dist < bd) then best, bd, bv = d, dist, isV end -- VehicleSeat 优先, 同类取最近
+				end
 			end
 		end
 		if not best then return end
@@ -526,7 +538,8 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 		if s and autoPick then picked, pickSeat, pickPath, autoPick = nil, nil, nil, false end -- 坐下了: 座位优先, 自动绑的作废; 下车后再找最近的
 		local p, sp = part()
 		if not p and not s and F.carauto and os.clock() - autoT > 1 then autoT = os.clock(); autoBind(); p, sp = part() end -- 一进游戏就绑: 没坐没锁时每秒找一次
-		if p and not sp and p.Anchored and S.carswap then -- 没座位的锚定件(还没解锁/装饰件): 就近改绑到能推的那件. 有座位的车不改绑: 座位所在装配体就是车, 锚着就等游戏解锁
+		if p and not sp and p.Anchored and S.carswap and os.clock() - swapT > 1 then swapT = os.clock() -- 改绑跟 autoBind 一样每秒一次: 原来每帧都做一次 30 格球查询 + 逐件量装配体, 而锚定件一锚就是好几秒, 白烧帧. 代价是改绑最多晚 1 秒
+			-- 没座位的锚定件(还没解锁/装饰件): 就近改绑到能推的那件. 有座位的车不改绑: 座位所在装配体就是车, 锚着就等游戏解锁
 			local cand = heavyNear(p)
 			if cand and cand ~= p then
 				picked, pickSeat, pickPath = cand, nil, cand:GetFullName()

@@ -102,7 +102,7 @@ luau smoke.lua    # 要官方 Luau(工作流里钉的是 0.741); 本地怎么编
 
 `selfblox.lua` 用的是 Luau 专属语法（字符串插值、`+=`），Lua 5.4 解析不了这份自检；Termux 上没有现成的 Luau 包，手机上就以 CI 结果为准。
 
-CI 跑的是同一份自检：`.github/workflows/build.yml` 在 push 与 pull request 上下载官方 Luau 0.741 执行 `smoke.lua`，通过后把 `selfblox.lua` 打包成 artifact `Selfblox-<版本>`（保留 5 天，并自动只留最近 5 个）。构建与检查 job 只读（`contents: read`），只有清理 job 有 `actions: write`。规范自检不在 CI 里，由 agent 每轮自己做。
+CI 跑的是同一份自检：`.github/workflows/build.yml` 在 push 与 pull request 上下载官方 Luau 0.741 执行 `smoke.lua`，通过后即结束——本仓库不出包、不发版（脚本是从 `raw.githubusercontent.com` 现拉现跑的单文件，artifact 只会是一份逐字节重复的副本），整个工作流全程只读（`contents: read`），没有上传、Release、tag 或清理步骤。规范自检不在 CI 里，由 agent 每轮自己做。
 
 ## 版本
 

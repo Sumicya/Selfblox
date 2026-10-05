@@ -222,7 +222,7 @@ function methods.GetConnectedParts(self) -- 假装配体: 同 Model 里 Assembly
 	return o
 end
 function methods.SetNetworkOwner() error("SetNetworkOwner 客户端不让调 (上一版就是这一句把车搞成完全绑不上)") end
-function methods.GetPartBoundsInRadius() return _G.__radius or {} end
+function methods.GetPartBoundsInRadius() _G.__radiusCalls = (_G.__radiusCalls or 0) + 1; return _G.__radius or {} end -- 记次数: 好验绑车的空间查询有没有节流
 
 local mt = {
 	__index = function(t, k)
@@ -1141,6 +1141,12 @@ _G.__rayHit = nil
 step(1 / 60, 5)
 ok(newBed:FindFirstChild("SB_SIBS") ~= nil, "被换件后按路径自动更到新件")
 newBed.props.Anchored = true -- 这件还没解锁(锚定) → 应该自动改绑到旁边更重的自由件
+do -- 绑车的改绑检查要有节流: 锚定件一锚就是好几秒, 原来每帧都做一次 30 格球查询 + 逐件量整个装配体
+	_G.__radius = {} -- 附近没有可改绑的 → 部件保持锚定, 每帧都会走到改绑检查这一支
+	_G.__radiusCalls = 0
+	step(1 / 60, 60)
+	ok((_G.__radiusCalls or 0) <= 2, `改绑的空间查询有节流: 60 帧查了 {tostring(_G.__radiusCalls)} 次 (不节流的话是 60 次)`)
+end
 local heavy = inst("Part", { Name = "Chassis", CanCollide = true, Anchored = false, Size = Vector3.new(6, 2, 14), Position = Vector3.new(61, 5, 0), CFrame = CFrame.new(Vector3.new(61, 5, 0)), AssemblyLinearVelocity = Vector3.zero, AssemblyMass = 2000 })
 heavy.props.AssemblyRootPart = heavy
 heavy.Parent = truck
