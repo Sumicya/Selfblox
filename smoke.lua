@@ -230,6 +230,22 @@ end
 function methods.SetNetworkOwner() error("SetNetworkOwner 客户端不让调 (上一版就是这一句把车搞成完全绑不上)") end
 function methods.GetPartBoundsInRadius() return _G.__radius or {} end
 
+local MDW = {} -- 诊断: 脚本从 MoveDirection 上读了哪些成员、各读到什么
+local function wrapMD(v) -- 包一层: 转发一切, 但把每次成员读取记下来
+	return setmetatable({}, {
+		__index = function(_, kk)
+			local val = v[kk]
+			MDW[#MDW + 1] = "." .. tostring(kk) .. "=" .. tostring(val)
+			if #MDW > 16 then table.remove(MDW, 1) end
+			return val
+		end,
+		__add = function(_, b) return v + b end,
+		__sub = function(_, b) return v - b end,
+		__mul = function(_, b) return v * b end,
+		__unm = function() return -v end,
+		__tostring = function() return tostring(v) end,
+	})
+end
 local mt = {
 	__index = function(t, k)
 		guardMember(t, k)
@@ -270,6 +286,7 @@ local mt = {
 			if not strict[k] then error(tostring(k) .. " is not a valid member of " .. t.ClassName, 2) end
 			v = Signal.new(); props[k] = v
 		elseif v == nil and SIGNALS[k] then v = Signal.new(); props[k] = v end -- 信号字段按需生成
+		if k == "MoveDirection" and type(v) == "table" and not MDW.off then return wrapMD(v) end -- 诊断: 让脚本读到的 MoveDirection 会自报家门
 		return v
 	end,
 	__newindex = function(t, k, v)
@@ -1041,6 +1058,7 @@ for i = #CAMW, 1, -1 do CAMW[i] = nil end
 for i = #CCLOG, 1, -1 do CCLOG[i] = nil end
 for i = #LVLOG, 1, -1 do LVLOG[i] = nil end
 for i = #CREAD, 1, -1 do CREAD[i] = nil end
+for i = #MDW, 1, -1 do MDW[i] = nil end
 for i = #CWRITE, 1, -1 do CWRITE[i] = nil end
 for i = #STEPLOG, 1, -1 do STEPLOG[i] = nil end
 camera.CFrame = CFrame.new(Vector3.zero, Vector3.new(1, 0, 0)) -- 摄像机转到朝 +X: 前推 = 世界 +X, 但车还是该往车头(-Z)飞, 不能跟着相机跑
@@ -1074,6 +1092,7 @@ ok(lvc and lvc.VectorVelocity.Magnitude > 10 and lvc.VectorVelocity.Unit:Dot(fw)
  .. ", 座位Anchored " .. tostring(seat.props.Anchored) .. ", 假引擎侧人形 " .. tostring(char:FindFirstChildOfClass("Humanoid"))
  .. ", SeatPart " .. tostring(humanoid.props.SeatPart) .. ", 脚本侧: " .. tostring(humTxt)
  .. ", VectorVelocity 写入 " .. table.concat(LVLOG, " | ") .. ", 本人体 lvc=" .. tostring(lvc)
+ .. ", 脚本对MoveDirection做了什么 " .. table.concat(MDW, " ")
  .. ", CurrentCamera读 " .. table.concat(CREAD, " | ") .. ", CurrentCamera写 " .. table.concat(CWRITE, " | ")
  .. ", .CFrame读 " .. table.concat(CCLOG, " | ")
  .. ", 相机CFrame写入 " .. table.concat(CAMW, " | ") .. ", 每帧开始时相机 " .. table.concat(STEPLOG, " | ") .. " || 脚本环境复算: " .. tostring(probeTxt) .. ")")
