@@ -100,9 +100,16 @@ luau smoke.lua    # 要官方 Luau(工作流里钉的是 0.741); 本地怎么编
 
 `smoke.lua` 用一个假 Roblox 引擎加载 `selfblox.lua`：建面板、翻每个开关、坐进假车、跑帧、卸载，然后断言状态确实改变、没有报错、卸载后不留实例和连接，并注入一个玩具功能验证清单的扩展性。假引擎对没有核对过官方文档的成员一律抛错，白名单是 `smoke.lua` 里的 `VERIFIED`，逐个对照 create.roblox.com 的引擎 API 参考核对。脚本本体不依赖 `smoke.lua`。
 
-`selfblox.lua` 用的是 Luau 专属语法（字符串插值、`+=`），Lua 5.4 解析不了这份自检；Termux 上没有现成的 Luau 包，手机上就以 CI 结果为准。
+`selfblox.lua` 用的是 Luau 专属语法（字符串插值、`+=`），Lua 5.4 解析不了这份自检；Termux 上没有现成的 Luau 包，手机上跑不了自检，只能在电脑上跑。
 
-CI 跑的是同一份自检：`.github/workflows/build.yml` 在 push 与 pull request 上下载官方 Luau 0.741 执行 `smoke.lua`，通过后即结束——本仓库不出包、不发版（脚本是从 `raw.githubusercontent.com` 现拉现跑的单文件，artifact 只会是一份逐字节重复的副本），整个工作流全程只读（`contents: read`），没有上传、Release、tag 或清理步骤。规范自检不在 CI 里，由 agent 每轮自己做。
+本仓库没有 CI 工作流，自检在电脑上跑（`.github/` 已删；CI 每轮要等一次远端往返，本地半秒就能得到同一个结论）：
+
+```bash
+bash tools/luau-driver/build.sh      # 编一个 Luau 0.741, 约 40 秒, 只需一次
+bash tools/luau-driver/run_smoke.sh  # 之后每次改完跑这个, 0.3 秒
+```
+
+最后一行是「全部通过 ✓」才算过；有断言没过时脚本会 `error` 退出、退出码非零。本仓库不出包、不发版：脚本是从 `raw.githubusercontent.com` 现拉现跑的单文件，打成 artifact 只会是一份逐字节重复的副本。规范自检由 agent 每轮自己做。
 
 ## 版本
 
