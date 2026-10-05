@@ -992,7 +992,7 @@ humanoid.props.MoveDirection = Vector3.new(1, 0, 0)
 step(1 / 60, 3)
 local fw = seat.props.CFrame.LookVector -- 前面方向盘测试已经把假车转过了, 车头不再是 -Z, 所以跟车头的实际朝向比
 fw = Vector3.new(fw.X, 0, fw.Z).Unit
-ok(lvc and lvc.VectorVelocity.Magnitude > 10 and lvc.VectorVelocity.Unit:Dot(fw) > 0.99, "相机转 90° 后, 前推仍是车头方向, 不跟着相机跑 (与车头夹角余弦 " .. string.format("%.3f", lvc and lvc.VectorVelocity.Unit:Dot(fw) or 0) .. ", 速度 " .. tostring(lvc and lvc.VectorVelocity) .. ")")
+ok(lvc and lvc.VectorVelocity.Magnitude > 10 and lvc.VectorVelocity.Unit:Dot(fw) > 0.99, "相机转 90° 后, 前推仍是车头方向, 不跟着相机跑 (与车头夹角余弦 " .. string.format("%.3f", lvc and lvc.VectorVelocity.Unit:Dot(fw) or 0) .. ", 速度 " .. tostring(lvc and lvc.VectorVelocity) .. ", 车头 " .. tostring(fw) .. ", 相机 " .. tostring(camera.CFrame.LookVector) .. ")")
 camera.CFrame = CFrame.new(Vector3.zero)
 humanoid.props.MoveDirection = Vector3.zero
 step(1 / 60, 3)
@@ -1293,7 +1293,7 @@ _G.__ncm = nil
 ok(pcall(hookF, {}, "x"), "记录失败(self 不是实例)不能拦住游戏自己的调用")
 click(findBtn("写报告"))
 rep = VFS["plane_debug.txt"]
-ok(rep:find("-- 发 1", 1, true) and rep:find('Workspace.Plane_RAF.FireGun:FireServer "bullet", (1,2,3), {a=1}', 1, true), "命中关键字的 FireServer 被记下来了, 参数格式化对")
+ok(rep:find("-- 发 1", 1, true) and rep:find('Workspace.Plane_RAF.FireGun:FireServer "bullet", (1,2,3), {a=1}', 1, true), "命中关键字的 FireServer 被记下来了, 参数格式化对 (报告里 FireGun 那行: " .. tostring(rep and (rep:match("[^\n]*FireGun[^\n]*") or "没有这行")) .. " | 发计数行: " .. tostring(rep and (rep:match("[^\n]*%-%- 发[^\n]*") or "没有这行")) .. ")")
 click(findBtn("全录"))
 _G.__ncm = "InvokeServer"
 hookF(chatFn, "hi")
