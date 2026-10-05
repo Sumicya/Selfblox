@@ -125,7 +125,8 @@ local ENUM_OK = { -- 枚举字面量 (KeyCode 是按配置字符串动态取的,
 }
 local MDLOG = {} -- MoveDirection 的读取记录(只留最近 4 条)
 local CFLOG, RID = {}, 0 -- CFrame.RightVector 的读取记录(带全局读序号, 只留最近 8 条)
-local CAMREF, CAMW, STEPLOG, CCLOG, LVLOG, CREAD, CWRITE = nil, {}, {}, {}, {}, {}, {} -- 相机本体 / 相机 CFrame 的写入 / 每帧开始时相机的 CFrame
+local CAMREF, CAMW, STEPLOG, CCLOG, LVLOG, CREAD, CWRITE = nil, {}, {}, {}, {}, {}, {}
+_G.__DBG = _G.__DBG or { cfr = {}, n = 0 } -- 诊断: 挂全局, 主 chunk 的局部变量已到 Lua 200 上限, 不能再加 -- 相机本体 / 相机 CFrame 的写入 / 每帧开始时相机的 CFrame
 local function guardMember(t, k) -- 读/写实例成员时调用
 	local cls = rawget(t, "ClassName")
 	local allow = VERIFIED[cls]
@@ -366,6 +367,9 @@ Color3 = {
 }
 local cfmt = {
 	__index = function(t, k)
+		local L = _G.__DBG.cfr -- 诊断: 谁摸了哪个 CFrame 的哪个成员
+		L[#L + 1] = "cf" .. tostring(t.__id) .. "." .. tostring(k)
+		if #L > 10 then table.remove(L, 1) end
 		if k == "Position" then return t.p end
 		if k == "LookVector" then return -t.z end
 		if k == "RightVector" then -- 诊断: 记下每次读到的右向量与当时的基向量, 看脚本读到的是不是同一份
@@ -387,7 +391,7 @@ local cfmt = {
 	__tostring = function(a) return "CFrame" .. tostring(a.p) end,
 }
 CFrame = {}
-CFrame.fromBasis = function(x, y, z, p) return setmetatable({ x = x, y = y, z = z, p = p }, cfmt) end
+CFrame.fromBasis = function(x, y, z, p) local d = _G.__DBG; d.n = d.n + 1; return setmetatable({ x = x, y = y, z = z, p = p, __id = d.n }, cfmt) end
 CFrame.new = function(p, look) if look then return CFrame.lookAt(p, look) end; return CFrame.fromBasis(Vector3.xAxis, Vector3.yAxis, Vector3.zAxis, p or Vector3.zero) end
 CFrame.Angles = function() return CFrame.new(Vector3.zero) end
 CFrame.fromAxisAngle = function(axis, ang)
@@ -1059,10 +1063,12 @@ for i = #CAMW, 1, -1 do CAMW[i] = nil end
 for i = #CCLOG, 1, -1 do CCLOG[i] = nil end
 for i = #LVLOG, 1, -1 do LVLOG[i] = nil end
 for i = #CREAD, 1, -1 do CREAD[i] = nil end
+for i = #_G.__DBG.cfr, 1, -1 do _G.__DBG.cfr[i] = nil end
 for i = #MDW, 1, -1 do MDW[i] = nil end
 NCC = 0 -- 从这行之后重新数
 for i = #CWRITE, 1, -1 do CWRITE[i] = nil end
 for i = #STEPLOG, 1, -1 do STEPLOG[i] = nil end
+_G.__DBG.oldCF = camera.CFrame -- 诊断: 留住赋值前那份 CFrame, 好认"脚本摸的是不是旧的"
 camera.CFrame = CFrame.new(Vector3.zero, Vector3.new(1, 0, 0)) -- 摄像机转到朝 +X: 前推 = 世界 +X, 但车还是该往车头(-Z)飞, 不能跟着相机跑
 humanoid.props.MoveDirection = Vector3.new(1, 0, 0)
 step(1 / 60, 3)
@@ -1098,6 +1104,8 @@ ok(lvc and lvc.VectorVelocity.Magnitude > 10 and lvc.VectorVelocity.Unit:Dot(fw)
  .. ", workspace上的原始字段CurrentCamera " .. tostring(rawget(workspace, "CurrentCamera"))
  .. ", props里的CurrentCamera " .. tostring(rawget(workspace, "props").CurrentCamera)
  .. ", 脚本对MoveDirection做了什么 " .. table.concat(MDW, " ")
+ .. ", CFrame成员读取 " .. table.concat(_G.__DBG.cfr, " ")
+ .. ", 相机现在的CFrame=cf" .. tostring(camera.props.CFrame.__id) .. " 赋值前那份=cf" .. tostring(_G.__DBG.oldCF and _G.__DBG.oldCF.__id)
  .. ", CurrentCamera读 " .. table.concat(CREAD, " | ") .. ", CurrentCamera写 " .. table.concat(CWRITE, " | ")
  .. ", .CFrame读 " .. table.concat(CCLOG, " | ")
  .. ", 相机CFrame写入 " .. table.concat(CAMW, " | ") .. ", 每帧开始时相机 " .. table.concat(STEPLOG, " | ") .. " || 脚本环境复算: " .. tostring(probeTxt) .. ")")
