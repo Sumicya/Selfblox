@@ -960,6 +960,7 @@ step(1 / 60, 2)
 ok(knob.Position.X.Offset == 0 and knob.Position.X.Scale == 0.5, "松手回中, 平时固定")
 ok(handle.Position.X.Scale == 0 and handle.Position.X.Offset == 0 and handle.Position.Y.Scale == 0 and handle.Position.Y.Offset == 0, "松手后手柄回到原位, 仍盖满整条轨道 (没被推到右下半格)")
 ok(track.Position.Y.Scale == 1 and track.Position.Y.Offset == -10, "钉在屏幕底部 (不跟面板跑)")
+ok(track.Position.X.Scale == 0.25 and track.AnchorPoint.X == 0.5, `钉在左下正中 (圆心在屏宽 {track.Position.X.Scale * 100}% 处, 即左半幅的中点)`)
 tapTitle() -- 折回去, 后面还要用面板
 ok(handle.Visible == false, "展开 → 滑条又固定")
 ok(track.ZIndex == 1 and handle.Visible == false, "面板开着时滑条降到最底层、触摸穿透")
@@ -1042,6 +1043,9 @@ do -- 急刹要挨在 ▲加速 / ▼减速 上方 (主人 2026-10-05 要求: �
 		if b.Text == "▲ 加速" then ig = i end
 	end
 	ok(ib ~= nil and ig ~= nil and ib == ig - 1, `急刹排在 ▲加速 正上方 (急刹第 {tostring(ib)} 个 / ▲加速第 {tostring(ig)} 个)`)
+	local jb
+	for _, b in ipairs(bs) do if b.Text:sub(1, #"急刹") == "急刹" then jb = b end end
+	ok(jb ~= nil and jb.Size.X.Scale == 1, `急刹单占一行 (宽度占比 {tostring(jb and jb.Size.X.Scale)}, 半行是 0.5)`)
 end
 
 print("\n[6c] 急刹")
