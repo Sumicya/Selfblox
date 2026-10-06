@@ -936,18 +936,19 @@ local knob = track and track:FindFirstChild("SB_Knob")
 local kd = track and track:FindFirstChildOfClass("UIDragDetector") -- 挂在整条轨道上: 面板折叠时可拖
 local kdk = knob and knob:FindFirstChildOfClass("UIDragDetector") -- 挂在圆点上: 面板展开时可拖
 ok(knob ~= nil and kd ~= nil and kdk ~= nil, "圆点 + 整条轨道 + 各自的拖拽器都在")
-ok(track.Active == false, "面板开着 → 滑条固定, 不接管触摸")
+ok(track.Active == false and knob.Active == true, "面板开着 → 整条轨道不接管触摸(会挡面板), 只有圆点可拖")
 local look0 = seat.props.CFrame.LookVector
+kdk.DragContinue:Fire(Vector2.new(999, 0)) -- 面板开着只有圆点是 Active 的; 假引擎不模拟输入路由, 所以只 Fire 真机上真能触发的那个
+step(1 / 60, 12)
+ok((seat.props.CFrame.LookVector - look0).Magnitude > 0.05, "面板开着拖圆点 → 车转了")
+kdk.DragEnd:Fire()
+tapTitle() -- 关起来 → 整条背景才可拖
+ok(track.Active == true and knob.Active == false, "面板关起来 → 整条轨道自己可拖, 圆点不另接管")
+local look1 = seat.props.CFrame.LookVector
 kd.DragContinue:Fire(Vector2.new(999, 0))
 step(1 / 60, 12)
-ok((seat.props.CFrame.LookVector - look0).Magnitude < 0.01, "面板开着时拖它 → 车不动")
-kd.DragEnd:Fire()
-tapTitle() -- 折起来 → 滑条才可拖
-ok(track.Active == true and knob.Active == false, "面板折起来 → 整条轨道自己可拖, 圆点不另接管")
-kd.DragContinue:Fire(Vector2.new(999, 0))
-step(1 / 60, 12)
-local turned = (seat.props.CFrame.LookVector - look0).Magnitude
-ok(turned > 0.05, `拖到最右 → 车真的转了 {string.format("%.2f", turned)}`)
+local turned = (seat.props.CFrame.LookVector - look1).Magnitude
+ok(turned > 0.05, `关起来拖背景 → 车真的转了 {string.format("%.2f", turned)}`)
 ok(knob.Position.X.Offset > 10, `圆点跟着手指跑 (偏 {knob.Position.X.Offset}px)`)
 seat.props.AssemblyLinearVelocity = Vector3.zero -- 停着也要能打方向
 local look1 = seat.props.CFrame.LookVector
@@ -963,7 +964,7 @@ ok(track.Position.Y.Scale == 1 and track.Position.Y.Offset == -10, "钉在屏幕
 ok(track.Position.X.Scale == 0.25 and track.AnchorPoint.X == 0.5, `钉在左下正中 (圆心在屏宽 {track.Position.X.Scale * 100}% 处, 即左半幅的中点)`)
 tapTitle() -- 折回去, 后面还要用面板
 ok(track.Active == false, "展开 → 滑条又固定")
-ok(track.ZIndex == 1 and track.Active == false, "面板开着时滑条降到最底层、触摸穿透")
+ok(track.ZIndex == 10 and track.Active == false, "面板开着时轨道自己不接触摸(只有圆点接), 所以不会挡住面板的操作")
 tapTitle()
 ok(track.ZIndex == 10 and track.Active == true, "折起来后滑条升到最上层、整条可拖")
 tapTitle()
@@ -1069,19 +1070,15 @@ ok(true, `按住/松开 {held} 个按钮 + 全开全关走完没炸`)
 ok(_G.__SVC.VirtualInputManager.props.keys ~= nil, "喇叭真的发了按键事件")
 ok(seat.CanCollide and carBody.CanCollide and CP.sur.CanCollide and CP.wheelL.CanCollide and CP.wheelUp.CanCollide and CP.hubL.CanCollide and CP.pad.CanCollide and CP.fence.CanCollide and not CP.shadow.CanCollide, "穿墙关掉后车部件原样还原 (本来不碰撞的影子仍是不碰撞)")
 
-print("\n[6b2] 滑条常可拖 (折不起来时的后备)")
-local alwaysBtn = findBtn("滑条常可拖")
-ok(alwaysBtn ~= nil, "车页有「滑条常可拖」")
-click(alwaysBtn)
-ok(track.Active == false and knob.Active == true, "面板开着 → 整条轨道不接管触摸(会挡面板), 只有圆点可拖")
+print("\n[6b2] 没有开关: 可拖区只看面板开合")
+ok(findBtn("滑条常可拖") == nil, "「滑条常可拖」开关已经去掉, 不再有两套状态打架")
+ok(track.Active == false and knob.Active == true, "面板开着 → 只有圆点可拖")
 local lookA2 = seat.props.CFrame.LookVector
 kdk.DragContinue:Fire(Vector2.new(999, 0))
 step(1 / 60, 10)
 ok((seat.props.CFrame.LookVector - lookA2).Magnitude > 0.03, "面板开着拖圆点也能转向了")
 kdk.DragEnd:Fire()
 ok(knob.Position.X.Offset == 0 and knob.Position.X.Scale == 0.5, "拖圆点松手也当帧回中")
-click(alwaysBtn)
-ok(track.Active == false and knob.Active == false, "关掉 → 面板开着时圆点也不给拖, 回到「折叠才能拖」")
 
 print("\n[6d2] 按住类按钮: 按住字变亮, 松手变回白色")
 local btnGas

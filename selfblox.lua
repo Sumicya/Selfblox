@@ -15,7 +15,7 @@
 --   语法基线就是 Luau(运行环境就是它): 26.10.5.28 起用了字符串插值(`{}`)、复合赋值(+= 等)与 if 表达式(if c then a else b),
 --            Lua 5.4 / fengari 都解析不了; 自检的权威跑法是 CI 里的官方 Luau 0.741 (本地怎么编同版本见 AGENTS.md)
 
-local VERSION = "26.10.6.3.38" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
+local VERSION = "26.10.6.4.39" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
@@ -299,7 +299,6 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 	local track, knob, kd, kdk, dragX -- 方向盘控件 (init 里建)
 	local TRACK_W, KNOB_R = 200, 18 -- 轨道宽 / 圆点直径: 圆心行程 = TRACK_W/2 - KNOB_R = ±82, 建控件和算转向共用这一处
 	local CENTER = UDim2.new(0.5, 0, 0.5, 0) -- 圆点的家: 正中
-	local live = false
 	local function seat() local h = hum(); return h and h.SeatPart end
 	local function seatIn(m) return m:FindFirstChildWhichIsA("VehicleSeat", true) or m:FindFirstChildWhichIsA("Seat", true) end -- 官方继承链: VehicleSeat 和 Seat 互不相干 (都挂在 BasePart 下), 只查 "Seat" 会把带 VehicleSeat 的车当成"没座位"
 	local function findByPath(path) -- 锁的那件被游戏换掉后按路径捞回来 (只在 workspace 底下找)
@@ -493,18 +492,13 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 	end
 	local function brakeNow(p, v) p.AssemblyLinearVelocity = Vector3.yAxis * v.Y end -- 急刹: 水平速度直接归零, 比推力快且不吃质量
 
-	local function setLive(v)
-		live = v
-		local folded = not body.Visible -- 面板折叠才把整条背景交出去拖; 展开时面板压在滑条上, 整条吞触摸会挡住面板, 只留圆点能拖
-		track.Active = v and folded -- 折叠时整条 track 自己接触摸; 展开时不接, 免得挡住面板
-		knob.Active = v and not folded
-		track.ZIndex, knob.ZIndex = (if v then 10 else 1), (if v then 11 else 2)
-		track.BackgroundTransparency, knob.BackgroundTransparency = (if v then 0.4 else 0.75), (if v then 0 else 0.55)
-		if not v then dragX = nil; knob.Position = CENTER end -- 正拖着时被关掉: 圆点当场归位
+	local function applyDrag() -- 可拖区只跟面板开合挂钩, 不给开关(开关和折叠两套状态会打架, 也没法一边看面板一边调位置): 关着拖整条背景, 开着只能拖圆点
+		local folded = not body.Visible
+		track.Active = folded -- 展开时整条轨道不接触摸, 免得挡住面板
+		knob.Active = not folded
 	end
 	local REACH = TRACK_W / 2 - KNOB_R -- 圆心能走的单侧行程 (82)
 	local function steer()
-		if not live then return 0 end
 		local cx = track.AbsolutePosition.X + TRACK_W / 2
 		local s = math.clamp((dragX or cx) - cx, -REACH, REACH)
 		knob.Position = UDim2.new(0.5, s, 0.5, 0) -- 圆点是纯显示, 只跟手指
@@ -530,8 +524,8 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 		kdk = mk("UIDragDetector", { DragStyle = Enum.UIDragDetectorDragStyle.TranslateLine, DragAxis = Vector2.new(1, 0) }, knob) -- 面板展开时只有圆点可拖
 		on(kdk.DragContinue, function(p) dragX = p.X end)
 		on(kdk.DragEnd, release)
-		foldHooks[#foldHooks + 1] = function(open) setLive(F.steeropen or not open) end -- 钩子收到的是"面板开着吗", 滑条要的是"能不能拖"
-		setLive(not body.Visible)
+		foldHooks[#foldHooks + 1] = applyDrag -- 折叠状态一变就重算可拖区
+		applyDrag()
 	end
 
 	local function carTick(dt)
@@ -692,7 +686,6 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 	feature{ kind = "btn", label = "翻转 180°", fn = flipCar }
 	feature{ key = "lamp", label = "常亮", set = function(v) if v then setLamps(true) else dropLamps() end end }
 	feature{ kind = "btn", label = "闪 ×3", fn = function() task.spawn(function() for _ = 1, 3 do setLamps(true); task.wait(0.12); setLamps(false); task.wait(0.12) end; if F.lamp then setLamps(true) else dropLamps() end end) end }
-	feature{ key = "steeropen", save = "steeropen", label = "滑条常可拖", w = 1, set = function(v) setLive(v or not body.Visible) end } -- true = 面板开着也能拖滑条 (默认: 折起来才能拖)
 	feature{ key = "carauto", save = "carauto", def = true, label = "自动绑车", w = 1 }
 	feature{ key = "hornon", label = `常声({S.hornkey})`, set = horn }
 	feature{ kind = "hold", label = "声", set = horn }

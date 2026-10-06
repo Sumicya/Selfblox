@@ -80,7 +80,6 @@ rm -f /storage/emulated/0/Delta/workspace/Selfblox-*.lua
 | `carauto` | true | 进游戏或下车后自动绑最近的空载具座位，手动「换车」锁定优先 |
 | `carswap` | true | 锁到没有座位的锚定件时，自动改绑附近最重的自由零件 |
 | `carclip` / `hornkey` | false / `H` | 车穿墙 / 喇叭键。`hornkey` 没有面板控件，只在「常声」按钮标题里显示 |
-| `steeropen` | false | 面板开着也能拖转向滑条。可拖区随折叠状态变：**折叠时整条背景可拖，展开时只有圆点可拖**（整条吞触摸会挡住面板）；松手即刻回正，不等下一帧 |
 | `dacc` `dbrake` `drift` | 5 10 true | 漂移推进：加速 / 刹车 / 开关 |
 | `stats` `arrow` `esp` | true | 数据条 / 速度箭头 / 玩家 ESP |
 | `clock` | `12` | 时钟制式，填 `24` 切 24 小时制，数据条和日志都受影响 |
