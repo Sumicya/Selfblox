@@ -5,3 +5,4 @@ selfblox_dump.txt
 plane_debug.txt
 luacheck/
 tools/luau-driver/luau
+tools/luau-driver/luau-src.tar.gz
