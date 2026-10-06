@@ -4,3 +4,4 @@ Selfblox_log.txt
 selfblox_dump.txt
 plane_debug.txt
 luacheck/
+tools/luau-driver/luau

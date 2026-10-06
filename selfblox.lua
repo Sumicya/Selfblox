@@ -15,7 +15,7 @@
 --   语法基线就是 Luau(运行环境就是它): 26.10.5.28 起用了字符串插值(`{}`)、复合赋值(+= 等)与 if 表达式(if c then a else b),
 --            Lua 5.4 / fengari 都解析不了; 自检的权威跑法是 CI 里的官方 Luau 0.741 (本地怎么编同版本见 AGENTS.md)
 
-local VERSION = "26.10.6.4.39" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
+local VERSION = "26.10.6.5.40" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
@@ -297,7 +297,7 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 	local rp = RaycastParams.new()
 	rp.FilterType = Enum.RaycastFilterType.Exclude
 	local track, knob, kd, kdk, dragX -- 方向盘控件 (init 里建)
-	local TRACK_W, KNOB_R = 200, 18 -- 轨道宽 / 圆点直径: 圆心行程 = TRACK_W/2 - KNOB_R = ±82, 建控件和算转向共用这一处
+	local TRACK_W, TRACK_H, KNOB_R = 200, 36, 18 -- 轨道宽/高、圆点直径: 圆心行程 = TRACK_W/2 - KNOB_R = ±82, 建控件和算转向共用这一处
 	local CENTER = UDim2.new(0.5, 0, 0.5, 0) -- 圆点的家: 正中
 	local function seat() local h = hum(); return h and h.SeatPart end
 	local function seatIn(m) return m:FindFirstChildWhichIsA("VehicleSeat", true) or m:FindFirstChildWhichIsA("Seat", true) end -- 官方继承链: VehicleSeat 和 Seat 互不相干 (都挂在 BasePart 下), 只查 "Seat" 会把带 VehicleSeat 的车当成"没座位"
@@ -492,10 +492,8 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 	end
 	local function brakeNow(p, v) p.AssemblyLinearVelocity = Vector3.yAxis * v.Y end -- 急刹: 水平速度直接归零, 比推力快且不吃质量
 
-	local function applyDrag() -- 可拖区只跟面板开合挂钩, 不给开关(开关和折叠两套状态会打架, 也没法一边看面板一边调位置): 关着拖整条背景, 开着只能拖圆点
-		local folded = not body.Visible
-		track.Active = folded -- 展开时整条轨道不接触摸, 免得挡住面板
-		knob.Active = not folded
+	local function applyDrag() -- 面板关着: 背景可拖(搬位置) + 圆点可拖(转向); 面板开着: 只有圆点, 背景不接触摸免得挡住面板
+		track.Active = not body.Visible
 	end
 	local REACH = TRACK_W / 2 - KNOB_R -- 圆心能走的单侧行程 (82)
 	local function steer()
@@ -512,16 +510,25 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 		return Vector3.new(md:Dot(r), 0, -md:Dot(Vector3.yAxis:Cross(r)))
 	end
 	local function wheelInit() -- 建好页之后: 钉在屏幕底部的方向盘 (有副作用, 不能放块级)
-		track = mk("Frame", { Name = "SB_Steer", AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.25, 0, 1, -10), Size = UDim2.fromOffset(TRACK_W, 36), BackgroundColor3 = BG, BackgroundTransparency = 0.4, BorderSizePixel = 0, Visible = false, ZIndex = 10 }, gui)
+		local sp = opt("steerpos", nil) -- 上次搬到的位置: 跟面板位置同一套做法, 存绝对像素、读回来夹回屏幕内
+		local homeX, homeY = 0.25 * vp.X - TRACK_W / 2, vp.Y - 10 - TRACK_H -- 默认: 左下正中(左半幅的水平中点), 离底边 10px
+		local sx = (if type(sp) == "table" and sp[1] then math.clamp(sp[1], 0, math.max(vp.X - TRACK_W, 0)) else homeX)
+		local sy = (if type(sp) == "table" and sp[2] then math.clamp(sp[2], 0, math.max(vp.Y - TRACK_H, 0)) else homeY)
+		track = mk("Frame", { Name = "SB_Steer", AnchorPoint = Vector2.new(0, 0), Position = UDim2.fromOffset(sx, sy), Size = UDim2.fromOffset(TRACK_W, TRACK_H), BackgroundColor3 = BG, BackgroundTransparency = 0.4, BorderSizePixel = 0, Visible = false, ZIndex = 10 }, gui)
 		mk("UICorner", { CornerRadius = UDim.new(1, 0) }, track)
-		knob = mk("Frame", { Name = "SB_Knob", AnchorPoint = Vector2.new(0.5, 0.5), Position = CENTER, Size = UDim2.fromOffset(KNOB_R * 2, KNOB_R * 2), BackgroundColor3 = Color3.fromRGB(95, 65, 135), BorderSizePixel = 0, ZIndex = 11 }, track)
+		knob = mk("Frame", { Name = "SB_Knob", AnchorPoint = Vector2.new(0.5, 0.5), Position = CENTER, Size = UDim2.fromOffset(KNOB_R * 2, KNOB_R * 2), BackgroundColor3 = Color3.fromRGB(95, 65, 135), BorderSizePixel = 0, Active = true, ZIndex = 11 }, track) -- 圆点任何时候都能拖(转向)
 		mk("UICorner", { CornerRadius = UDim.new(1, 0) }, knob)
-		-- 拖拽目标就是 track 自己: 原来靠一个 BackgroundTransparency=1 的隐形 handle 接触摸, 而它的 BoundingUI=track、尺寸又跟 track 一样大(可移动量 0), 真机上折叠后整条都拖不动
-		kd = mk("UIDragDetector", { DragStyle = Enum.UIDragDetectorDragStyle.TranslateLine, DragAxis = Vector2.new(1, 0) }, track) -- 不设 BoundingUI: steer() 自己把行程夹在 ±REACH, 检测器再夹一遍只会碍事
-		local function release() dragX = nil; knob.Position = CENTER end -- 松手即刻回正: 原来只归位手柄, 圆点要等下一帧 steer() 才被拉回中心, 手快了看着就是"粘住"
-		on(kd.DragContinue, function(p) dragX = p.X end) -- 官方文档: DragContinue 给的是 inputPosition: Vector2 (屏幕坐标), 不是 InputObject; 原来按 i.Position 读, 在 Vector2 上会直接抛错
-		on(kd.DragEnd, release)
-		kdk = mk("UIDragDetector", { DragStyle = Enum.UIDragDetectorDragStyle.TranslateLine, DragAxis = Vector2.new(1, 0) }, knob) -- 面板展开时只有圆点可拖
+		-- 拖背景 = 搬整条滑条(横竖都行), 照抄标题条那套: 检测器只报手指坐标, 位置自己算并夹在屏幕内, 松手存盘
+		kd = mk("UIDragDetector", { BoundingUI = gui }, track)
+		local dragOff
+		on(kd.DragStart, function(p) dragOff = Vector2.new(p.X - track.AbsolutePosition.X, p.Y - track.AbsolutePosition.Y) end)
+		on(kd.DragContinue, function(p) -- DragContinue 给的是 inputPosition: Vector2(屏幕坐标), 不是 InputObject
+			if not dragOff then return end
+			track.Position = UDim2.fromOffset(math.clamp(p.X - dragOff.X, 0, math.max(vp.X - TRACK_W, 0)), math.clamp(p.Y - dragOff.Y, 0, math.max(vp.Y - TRACK_H, 0)))
+		end)
+		on(kd.DragEnd, function() dragOff = nil; save("steerpos", { track.AbsolutePosition.X, track.AbsolutePosition.Y }) end)
+		local function release() dragX = nil; knob.Position = CENTER end -- 拖圆点松手即刻回正, 不等下一帧 steer()
+		kdk = mk("UIDragDetector", { DragStyle = Enum.UIDragDetectorDragStyle.TranslateLine, DragAxis = Vector2.new(1, 0) }, knob) -- 拖圆点 = 转向(只横)
 		on(kdk.DragContinue, function(p) dragX = p.X end)
 		on(kdk.DragEnd, release)
 		foldHooks[#foldHooks + 1] = applyDrag -- 折叠状态一变就重算可拖区

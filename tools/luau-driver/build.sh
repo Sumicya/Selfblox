@@ -4,8 +4,8 @@
 set -e
 V=0.741
 HERE="$(cd "$(dirname "$0")" && pwd)"
-[ -d /tmp/luausrc ] || { curl -sSL -o /tmp/luau-src.tar.gz https://codeload.github.com/luau-lang/luau/tar.gz/refs/tags/$V; mkdir -p /tmp/luausrc; tar xzf /tmp/luau-src.tar.gz -C /tmp/luausrc --strip-components=1; }
+[ -d /tmp/luausrc ] || { curl -sSL -o "$HERE/luau"-src.tar.gz https://codeload.github.com/luau-lang/luau/tar.gz/refs/tags/$V; mkdir -p /tmp/luausrc; tar xzf /tmp/luau-src.tar.gz -C /tmp/luausrc --strip-components=1; }
 cd /tmp/luausrc
 g++ -O1 -std=c++17 -w -ICommon/include -IVM/include -ICompiler/include -IAst/include -IBytecode/include \
-    "$HERE/run.cpp" $(ls Ast/src/*.cpp Common/src/*.cpp VM/src/*.cpp Compiler/src/*.cpp Bytecode/src/*.cpp) -o /tmp/luau
-echo "编好了: /tmp/luau"
+    "$HERE/run.cpp" $(ls Ast/src/*.cpp Common/src/*.cpp VM/src/*.cpp Compiler/src/*.cpp Bytecode/src/*.cpp) -o "$HERE/luau"
+echo "编好了: $HERE/luau"

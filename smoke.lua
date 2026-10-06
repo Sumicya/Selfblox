@@ -936,6 +936,8 @@ local knob = track and track:FindFirstChild("SB_Knob")
 local kd = track and track:FindFirstChildOfClass("UIDragDetector") -- 挂在整条轨道上: 面板折叠时可拖
 local kdk = knob and knob:FindFirstChildOfClass("UIDragDetector") -- 挂在圆点上: 面板展开时可拖
 ok(knob ~= nil and kd ~= nil and kdk ~= nil, "圆点 + 整条轨道 + 各自的拖拽器都在")
+local VP = camera.props.ViewportSize
+ok(track.Position.X.Scale == 0 and track.Position.X.Offset == 0.25 * VP.X - 100 and track.Position.Y.Offset == VP.Y - 46, `默认在左下正中 (左上角 {track.Position.X.Offset},{track.Position.Y.Offset}; 视口 {VP.X}x{VP.Y} → 圆心在屏宽 25% 处)`)
 ok(track.Active == false and knob.Active == true, "面板开着 → 整条轨道不接管触摸(会挡面板), 只有圆点可拖")
 local look0 = seat.props.CFrame.LookVector
 kdk.DragContinue:Fire(Vector2.new(999, 0)) -- 面板开着只有圆点是 Active 的; 假引擎不模拟输入路由, 所以只 Fire 真机上真能触发的那个
@@ -943,25 +945,32 @@ step(1 / 60, 12)
 ok((seat.props.CFrame.LookVector - look0).Magnitude > 0.05, "面板开着拖圆点 → 车转了")
 kdk.DragEnd:Fire()
 tapTitle() -- 关起来 → 整条背景才可拖
-ok(track.Active == true and knob.Active == false, "面板关起来 → 整条轨道自己可拖, 圆点不另接管")
-local look1 = seat.props.CFrame.LookVector
-kd.DragContinue:Fire(Vector2.new(999, 0))
+ok(track.Active == true and knob.Active == true, "面板关起来 → 背景可拖(搬位置), 圆点也照样可拖(转向)")
+local px, py = track.Position.X.Offset, track.Position.Y.Offset
+track.props.AbsolutePosition = { X = px, Y = py } -- 假布局不真算坐标, 给个起点让拖拽有参照
+local look1, knobX0 = seat.props.CFrame.LookVector, knob.Position.X.Offset
+kd.DragStart:Fire(Vector2.new(px + 5, py + 5))
+kd.DragContinue:Fire(Vector2.new(px + 105, py - 195))
 step(1 / 60, 12)
-local turned = (seat.props.CFrame.LookVector - look1).Magnitude
-ok(turned > 0.05, `关起来拖背景 → 车真的转了 {string.format("%.2f", turned)}`)
-ok(knob.Position.X.Offset > 10, `圆点跟着手指跑 (偏 {knob.Position.X.Offset}px)`)
-seat.props.AssemblyLinearVelocity = Vector3.zero -- 停着也要能打方向
-local look1 = seat.props.CFrame.LookVector
-kd.DragContinue:Fire(Vector2.new(999, 0))
-step(1 / 60, 10)
-ok((seat.props.CFrame.LookVector - look1).Magnitude > 0.02, "车停着, 拖滑条照样转")
+ok(track.Position.X.Offset == px + 100 and track.Position.Y.Offset == py - 200, `关起来拖背景 → 整条滑条被搬走了, 横竖都跟手 (到 {track.Position.X.Offset},{track.Position.Y.Offset})`)
+ok(knob.Position.X.Offset == knobX0, "搬滑条时圆点不跟着乱动")
+ok((seat.props.CFrame.LookVector - look1).Magnitude < 0.01, "搬滑条不是转向, 车不动")
+kd.DragContinue:Fire(Vector2.new(99999, 99999)) -- 拖出屏幕外要夹回来
+ok(track.Position.X.Offset == VP.X - 200 and track.Position.Y.Offset == VP.Y - 36, `拖过头会夹在屏幕内 ({track.Position.X.Offset},{track.Position.Y.Offset} = 视口减滑条尺寸)`)
 kd.DragEnd:Fire()
+ok(VFS["Selfblox.json"] ~= nil and VFS["Selfblox.json"]:find("steerpos", 1, true) ~= nil, "搬完松手 → 位置写进 Selfblox.json, 下次进来还在老地方")
+track.Position = UDim2.fromOffset(px, py); track.props.AbsolutePosition = { X = px, Y = py } -- 复原, 后面的转向断言要用原位
+seat.props.AssemblyLinearVelocity = Vector3.zero -- 停着也要能打方向
+local look2 = seat.props.CFrame.LookVector
+kdk.DragContinue:Fire(Vector2.new(999, 0))
+step(1 / 60, 10)
+ok((seat.props.CFrame.LookVector - look2).Magnitude > 0.02, "车停着, 拖圆点照样转")
+ok(knob.Position.X.Offset > 10, `圆点跟着手指跑 (偏 {knob.Position.X.Offset}px)`)
+kdk.DragEnd:Fire()
 ok(knob.Position.X.Offset == 0 and knob.Position.X.Scale == 0.5, "松手当帧就回中, 不等下一帧 steer()")
 step(1 / 60, 2)
 ok(knob.Position.X.Offset == 0 and knob.Position.X.Scale == 0.5, "松手回中, 平时固定")
 ok(track:FindFirstChild("SB_Handle") == nil, "隐形手柄已经去掉: 折叠时拖的就是轨道本身, 不再靠全透明 Frame 接触摸")
-ok(track.Position.Y.Scale == 1 and track.Position.Y.Offset == -10, "钉在屏幕底部 (不跟面板跑)")
-ok(track.Position.X.Scale == 0.25 and track.AnchorPoint.X == 0.5, `钉在左下正中 (圆心在屏宽 {track.Position.X.Scale * 100}% 处, 即左半幅的中点)`)
 tapTitle() -- 折回去, 后面还要用面板
 ok(track.Active == false, "展开 → 滑条又固定")
 ok(track.ZIndex == 10 and track.Active == false, "面板开着时轨道自己不接触摸(只有圆点接), 所以不会挡住面板的操作")
@@ -985,10 +994,10 @@ for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" 
 ok(stTxt ~= nil, `状态行直接标出锚定 ({tostring(stTxt)})`)
 tapTitle() -- 折起来才能拖滑条
 local lookA = seat.props.CFrame.LookVector
-kd.DragContinue:Fire(Vector2.new(999, 0))
+kdk.DragContinue:Fire(Vector2.new(999, 0))
 step(1 / 60, 10)
 ok((seat.props.CFrame.LookVector - lookA).Magnitude > 0.02, "锚定车的转向照样有效 (走 CFrame)")
-kd.DragEnd:Fire()
+kdk.DragEnd:Fire()
 tapTitle()
 seat.props.Anchored = false
 step(1 / 60, 3)
