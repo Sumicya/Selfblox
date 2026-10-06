@@ -1,15 +1,32 @@
 # Selfblox 项目规则
 
-- 本仓库用途：Roblox 执行器脚本 Selfblox 的源码、离线自检与文档，面向 Delta（安卓）最新版，纯触屏。
-- 唯一入口 `selfblox.lua`：一次 `loadstring` 装七个模块（`moc` `sibs` `drift` `hud` `log` `plane` `brick`），重跑自动先卸载，手动卸载调用 `_G.SB_UNLOAD()`。
-- 版本单一来源：`selfblox.lua` 顶部的 `VERSION`，五段 `yy.m.d.当日序号.总序号`，展示不带 `v`，标签为 `v` 加版本号；本仓库无发布工作流，两个序号手工计数，口径写在 README「版本」。
-- 产物不是 APK：远程加载入口是 `raw.githubusercontent.com` 上的 `selfblox.lua`；不发 Release，文档里不写 Release 下载入口。**本仓库无可下载产物**（CI 不出包、不发版，理由见下条），Release / 正式 tag 同样未获授权。脚本运行时写 `Selfblox.json`、`Selfblox_log.txt`、`selfblox_dump.txt`、`plane_debug.txt`，已在 `.gitignore` 里。
-- 离线自检：`smoke.lua`（假 Roblox 引擎，不连游戏）。**权威跑法是本地 `tools/luau-driver/`**：`bash tools/luau-driver/build.sh` 编一个 Luau 0.741（约 40 秒，只需一次），之后每次改完 `bash tools/luau-driver/run_smoke.sh`，实测 0.3 秒，最后一行「全部通过 ✓」才算过（有断言没过时 `smoke.lua` 会 `error` 退出、退出码非零，别只信退出码就看结果）。Luau 版本 0.741 钉死在 `build.sh` 里，换版本要连 `smoke.lua` 一起复跑。**本仓库已无任何 CI 工作流**（`.github/` 整个删掉）：主人 2026-10-05 裁定「把你 ci 去掉」——每轮等一次 Actions 排队加下载 Luau 的远端往返，换来的只是本地半秒就能得到的同一个结论。规范第二十一版要求保留构建/自检工作流，本条与主人当轮指示冲突，按【权威与冲突】以主人当轮指示为准；恢复 CI 前先报主人。本地也能跑同版本 Luau（旧记录「本地沙箱装不了 Luau」已作废）：官方 release 的资源域名在沙箱里下不动（回 0 字节），但 `codeload.github.com` 通，取 0.741 源码后自建一个约 30 行驱动、用 `g++ -O1 -std=c++17 -ICommon/include -IVM/include -ICompiler/include -IAst/include -IBytecode/include <驱动> Ast/src/*.cpp Common/src/*.cpp VM/src/*.cpp Compiler/src/*.cpp Bytecode/src/*.cpp` 就能编出与 CI 行为一致的解释器。驱动必须照抄官方 CLI 的 `setupState` + `runFile`：`luaL_openlibs` → 注册同实现的 `loadstring` → `luaL_sandbox` → `lua_newthread` + `luaL_sandboxthread` → `lua_resume`；少了 `luaL_sandboxthread` 那步，全局表会变成只读、`smoke.lua` 直接跑不起来。跑法与 CI 一致：把 `selfblox.lua` 用 `[====[ … ]====]` 注入成 `SB_SRC_INJECTED` 再接上 `smoke.lua`。**规范自检由 agent 每轮自己做**（读 `AGENTS.md` 与 `GLOBAL.md`、核版本戳与指针、核权限与禁发版），做完在交付里报结果。
-- 语法基线是 **Luau**（目标运行环境就是它）：`selfblox.lua` 从 `26.10.5.28` 起确实用上了 Luau 专属写法——字符串插值（`` `a{x}b` ``，63 处）、复合赋值（`+=`，4 处）与 if 表达式（`(if c then a else b)`，33 处）；`smoke.lua` 同样按 Luau 写（插值 93 处、复合赋值 13 处、if 表达式 1 处）。因此本地 `lua5.4` / fengari **已解析不了这两个文件**，别再拿它们的结果当数；本地要验就用上面那条自编的 Luau。批量改写时踩过一个坑，别再踩：`x = x - a + b` **不能**写成 `x -= a + b`（右边有多个顶层项时符号会变），`smoke.lua` 的 `FIXED` 那行就是这样被写坏过、由 12/24 小时制两条断言抓出来的。**未验证**：Delta 内置的 Luau 版本号我拿不到证据，插值需要较新的 Luau（2023 年之后的版本才有），若真机上报语法错就是这条，回退方式是把该次改写单独 revert。
-- 假引擎为「Luau 与真引擎的差异」做的两处适配，都带上游出处，别当成 bug 改回去：① `smoke.lua` 的 `mt.__newindex` 写 `CFrame` 时会就地更新旧对象——Luau 把 `a.b.c` 这种全常量键链编译成 `GETIMPORT`，本地实测：经 `loadstring` 装载的 chunk 里，同一条链首次求值后就被冻住（第二次读返回旧对象、`__index` 一次都不再触发），而主 chunk 里直接读每次都新鲜。相关上游：`VM/src/lvmexecute.cpp:489-508`（`LOP_GETIMPORT` 的常量池快路径）、`VM/src/lvmload.cpp:91`（`luaV_getimport` 自身不缓存、且最多 3 段）。真引擎的属性不是 Lua 表链，没这回事。② `FireServer` 参数断言按引擎分判——`typeof` 在 Luau 里是内建函数（`VM/src/lbuiltins.cpp:887`，编译器还按名字认它：`Compiler/src/Builtins.cpp:78`），假引擎盖不住，假 `Vector3` 只会被认成 `table`；真引擎里 `typeof(Vector3)` 就是 `"Vector3"`，所以只在 Lua 5.4 下严判 `(1,2,3)`。
-- 降级路径的取舍按主人裁决办：关闭 PR#2 里那套「删兜底」的改法**没有采纳**，本仓库保留兜底。按规范第十七版「不做冗余降级」，要删任何一条兜底前先确认最坏失败模式不是不可恢复（宁可功能不生效，不要弄坏系统），并先报主人。
-- 本仓库无可下载产物（第二十一版【CI 出包与 CI 发版】的例外条款要求在此写明事实与原因）：CI **不出包、不发版**，且本仓库已无任何 CI 工作流：没有 `upload-artifact`、没有 Release / tag、也没有清理 job。原因：主人 2026-10-05 裁定「lua 不需要下载不需要发版」。`selfblox.lua` 是单文件脚本，唯一入口就是从 `raw.githubusercontent.com/Sumicya/Selfblox/<分支>/selfblox.lua` 现拉现跑，打成 artifact 只会得到一份与仓库内容逐字节重复、还得额外养一个清理 job 的副本。若将来改成要出包（拆成多文件，或获准发版），按规范一次补齐：artifact 名 `Selfblox-<版本>`、版本从 `selfblox.lua` 的 `VERSION` 现取不写死、`retention-days` 只当兜底，另配按前缀完整分页的滚动清理 job（`actions: write`、不 checkout 代码、不执行来自 PR 的代码），且清理实现必须进 `main`，不许只留在分支或未合并 PR 上。
-- 遗留 artifact 的处置（如实记录，不是待办）：出包那版跑过 2 个 `Selfblox-26.10.5.32.32`。沙箱里的 gh 令牌没有 `actions: write`，`DELETE /actions/artifacts/<id>` 回 403 `Resource not accessible by integration`，**删不掉**；靠当时设的 `retention-days: 5` 自动过期，要立刻清就在仓库 Settings → Actions → Artifacts 手动删。清理 job 本身已随出包一起移除（不再产出 artifact，留着只是 CI 噪音）。
-- 本仓库上次同步 = 第二十一版（其中【CI 精简与权限】【CI 出包与 CI 发版】两节因主人当轮裁定「去掉 CI」而不适用，见上）。
+按规范第二十二版，本文件只记项目事实、计数口径、必要限制和规范指针，不复制全局规则。
 
-规范指针：全局规则唯一权威是 `Sumicya/selfs` 的 `GLOBAL.md`，按其最新版执行；本文件只保留本仓库专属条目，不复制全局规则。
+## 项目事实
+
+- 用途：Roblox 执行器脚本 Selfblox 的源码、离线自检与文档；目标环境 Delta（安卓）最新版，纯触屏。
+- 唯一入口 `selfblox.lua`：一次 `loadstring` 装七个模块（`moc` `sibs` `drift` `hud` `log` `plane` `brick`），重跑自动先卸载，手动卸载调 `_G.SB_UNLOAD()`。远程加载走 `raw.githubusercontent.com/Sumicya/Selfblox/<分支>/selfblox.lua`。
+- 版本单一来源是 `selfblox.lua` 顶部的 `VERSION`，面板标题、诊断快照、启动打印都读它。
+- 语法基线是 **Luau**（目标运行环境就是它）：`selfblox.lua` 用了字符串插值、复合赋值、if 表达式，`smoke.lua` 同样按 Luau 写。本地 `lua5.4` / fengari 解析不了这两个文件，别拿它们的结果当数。
+- 脚本运行时写 `Selfblox.json`、`Selfblox_log.txt`、`selfblox_dump.txt`、`plane_debug.txt`，已在 `.gitignore` 里。
+
+## 计数口径
+
+- 五段 `yy.m.d.当日序号.总序号`，日界线按 **UTC+8**；年份两位，月日不补零。
+- **一次构建 = 一轮完整交付**：改了代码或文档 → 本地 `tools/luau-driver/run_smoke.sh` 跑到「全部通过 ✓」→ 提交并推送。触发事件是「自检通过并交付」，不是 git 推送这个动作本身。
+- 同一轮里重复跑自检只算一次；自检没过、没有交付的不占号；推送被拒后把同一版重推也不占号。
+- 本仓库无 CI，平台侧没有构建运行记录可依据，所以两个序号由 agent 按上述触发事件递增，并在每轮汇报里写明本次是当天第几次、累计第几次。缺的是平台侧可追溯记录这一点，如实标注，不伪造序号。
+
+## 必要限制
+
+- **无可下载产物，无 CI**：不出包、不发版、无任何工作流（`.github/` 已删）。原因是主人 2026-10-05 裁定「lua 不需要下载不需要发版」「把你 ci 去掉」；脚本是单文件、从 raw 现拉现跑，打成 artifact 只会得到一份逐字节重复、还要额外养清理的副本。恢复 CI 或出包前先报主人。规范第二十二版「只读是权限原则，不是删除测试的理由」与本裁定的关系已报过主人，按「用户明确指示优先于本规范」维持现状。
+- **离线自检的唯一权威跑法是本地 `tools/luau-driver/`**：`bash build.sh` 编一次 Luau 0.741（约 40 秒），之后每次改完 `bash run_smoke.sh`（约 0.3 秒）。最后一行「全部通过 ✓」才算过；有断言没过时 `smoke.lua` 会 `error` 退出、退出码非零，所以别只看退出码不看输出。换 Luau 版本要连 `smoke.lua` 一起复跑。
+- 假引擎为「Luau 与真引擎的差异」做的两处适配**不要当 bug 改回去**：① `smoke.lua` 的 `mt.__newindex` 写 `CFrame` 时就地更新旧对象——经 `loadstring` 装载的 chunk 里，全常量且不超过 3 段的键链首次求值后会被冻住，第二次读返回旧对象、`__index` 不再触发；真引擎的属性不是 Lua 表链，没这回事。② `FireServer` 参数断言按引擎分判——`typeof` 在 Luau 里是内建函数、假引擎盖不住，假 `Vector3` 只会被认成 `table`；真引擎里就是 `"Vector3"`。
+- 批量改写的坑：`x = x - a + b` **不能**写成 `x -= a + b`（右边有多个顶层项时符号会变），`smoke.lua` 的 `FIXED` 那行被这样写坏过、由 12/24 小时制两条断言抓出来。
+- 降级取舍：关闭 PR#2 里那套「删兜底」的改法**没有采纳**，本仓库保留兜底。要删任何一条兜底前先确认最坏失败模式不是不可恢复（宁可功能不生效，不要弄坏系统），并先报主人。
+- 遗留 2 个 `Selfblox-26.10.5.32.32` artifact：沙箱里的 gh 令牌没有 `actions: write`，`DELETE /actions/artifacts/<id>` 回 403 删不掉，删除命令已交主人自己跑。
+- **未验证**：Delta 内置的 Luau 版本号（插值需要 2023 年之后的版本才有，真机报语法错就是这条）；真机手感。
+
+规范指针：全局规则唯一权威是 `Sumicya/selfs` 默认分支的 `GLOBAL.md`，按其最新版执行。
+
+- 本仓库上次同步 = 第二十二版。
