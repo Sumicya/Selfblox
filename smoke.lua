@@ -932,18 +932,18 @@ seat.props.AssemblyLinearVelocity = Vector3.new(0, 0, -30)
 local track
 for _, d in ipairs(all()) do if d.Name == "SB_Steer" then track = d end end
 ok(track ~= nil, "滑条建出来了")
-local knob, handle = track and track:FindFirstChild("SB_Knob"), track and track:FindFirstChild("SB_Handle")
-local kd = handle and handle:FindFirstChildOfClass("UIDragDetector") -- 挂在全宽手柄上: 面板折叠时可拖
+local knob = track and track:FindFirstChild("SB_Knob")
+local kd = track and track:FindFirstChildOfClass("UIDragDetector") -- 挂在整条轨道上: 面板折叠时可拖
 local kdk = knob and knob:FindFirstChildOfClass("UIDragDetector") -- 挂在圆点上: 面板展开时可拖
-ok(knob ~= nil and kd ~= nil and kdk ~= nil, "圆点 + 全宽手柄 + 各自的拖拽器都在")
-ok(handle and handle.Visible == false, "面板开着 → 滑条固定, 不接管触摸")
+ok(knob ~= nil and kd ~= nil and kdk ~= nil, "圆点 + 整条轨道 + 各自的拖拽器都在")
+ok(track.Active == false, "面板开着 → 滑条固定, 不接管触摸")
 local look0 = seat.props.CFrame.LookVector
 kd.DragContinue:Fire(Vector2.new(999, 0))
 step(1 / 60, 12)
 ok((seat.props.CFrame.LookVector - look0).Magnitude < 0.01, "面板开着时拖它 → 车不动")
 kd.DragEnd:Fire()
 tapTitle() -- 折起来 → 滑条才可拖
-ok(handle.Visible == true and knob.Active == false, "面板折起来 → 整条背景可拖, 圆点不另接管")
+ok(track.Active == true and knob.Active == false, "面板折起来 → 整条轨道自己可拖, 圆点不另接管")
 kd.DragContinue:Fire(Vector2.new(999, 0))
 step(1 / 60, 12)
 local turned = (seat.props.CFrame.LookVector - look0).Magnitude
@@ -958,14 +958,14 @@ kd.DragEnd:Fire()
 ok(knob.Position.X.Offset == 0 and knob.Position.X.Scale == 0.5, "松手当帧就回中, 不等下一帧 steer()")
 step(1 / 60, 2)
 ok(knob.Position.X.Offset == 0 and knob.Position.X.Scale == 0.5, "松手回中, 平时固定")
-ok(handle.Position.X.Scale == 0 and handle.Position.X.Offset == 0 and handle.Position.Y.Scale == 0 and handle.Position.Y.Offset == 0, "松手后手柄回到原位, 仍盖满整条轨道 (没被推到右下半格)")
+ok(track:FindFirstChild("SB_Handle") == nil, "隐形手柄已经去掉: 折叠时拖的就是轨道本身, 不再靠全透明 Frame 接触摸")
 ok(track.Position.Y.Scale == 1 and track.Position.Y.Offset == -10, "钉在屏幕底部 (不跟面板跑)")
 ok(track.Position.X.Scale == 0.25 and track.AnchorPoint.X == 0.5, `钉在左下正中 (圆心在屏宽 {track.Position.X.Scale * 100}% 处, 即左半幅的中点)`)
 tapTitle() -- 折回去, 后面还要用面板
-ok(handle.Visible == false, "展开 → 滑条又固定")
-ok(track.ZIndex == 1 and handle.Visible == false, "面板开着时滑条降到最底层、触摸穿透")
+ok(track.Active == false, "展开 → 滑条又固定")
+ok(track.ZIndex == 1 and track.Active == false, "面板开着时滑条降到最底层、触摸穿透")
 tapTitle()
-ok(track.ZIndex == 10 and handle.Visible == true, "折起来后滑条升到最上层")
+ok(track.ZIndex == 10 and track.Active == true, "折起来后滑条升到最上层、整条可拖")
 tapTitle()
 print("\n[6e] 锚定的车也要立刻绑上 (不再等游戏解锁)")
 seat.props.Anchored = true
@@ -1073,7 +1073,7 @@ print("\n[6b2] 滑条常可拖 (折不起来时的后备)")
 local alwaysBtn = findBtn("滑条常可拖")
 ok(alwaysBtn ~= nil, "车页有「滑条常可拖」")
 click(alwaysBtn)
-ok(handle and handle.Visible == false and knob.Active == true, "面板开着 → 整条背景不接管触摸(会挡面板), 只有圆点可拖")
+ok(track.Active == false and knob.Active == true, "面板开着 → 整条轨道不接管触摸(会挡面板), 只有圆点可拖")
 local lookA2 = seat.props.CFrame.LookVector
 kdk.DragContinue:Fire(Vector2.new(999, 0))
 step(1 / 60, 10)
@@ -1081,7 +1081,7 @@ ok((seat.props.CFrame.LookVector - lookA2).Magnitude > 0.03, "面板开着拖圆
 kdk.DragEnd:Fire()
 ok(knob.Position.X.Offset == 0 and knob.Position.X.Scale == 0.5, "拖圆点松手也当帧回中")
 click(alwaysBtn)
-ok(handle and handle.Visible == false and knob.Active == false, "关掉 → 面板开着时圆点也不给拖, 回到「折叠才能拖」")
+ok(track.Active == false and knob.Active == false, "关掉 → 面板开着时圆点也不给拖, 回到「折叠才能拖」")
 
 print("\n[6d2] 按住类按钮: 按住字变亮, 松手变回白色")
 local btnGas

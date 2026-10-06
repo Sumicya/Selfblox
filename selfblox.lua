@@ -15,7 +15,7 @@
 --   语法基线就是 Luau(运行环境就是它): 26.10.5.28 起用了字符串插值(`{}`)、复合赋值(+= 等)与 if 表达式(if c then a else b),
 --            Lua 5.4 / fengari 都解析不了; 自检的权威跑法是 CI 里的官方 Luau 0.741 (本地怎么编同版本见 AGENTS.md)
 
-local VERSION = "26.10.6.2.37" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
+local VERSION = "26.10.6.3.38" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
@@ -296,9 +296,8 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 	local lamps, lampSaved, col = {}, setmetatable({}, { __mode = "k" }), setmetatable({}, { __mode = "k" })
 	local rp = RaycastParams.new()
 	rp.FilterType = Enum.RaycastFilterType.Exclude
-	local track, knob, handle, kd, kdk, dragX -- 方向盘控件 (init 里建)
+	local track, knob, kd, kdk, dragX -- 方向盘控件 (init 里建)
 	local TRACK_W, KNOB_R = 200, 18 -- 轨道宽 / 圆点直径: 圆心行程 = TRACK_W/2 - KNOB_R = ±82, 建控件和算转向共用这一处
-	local HOME = UDim2.new(0, 0, 0, 0) -- 手柄的家: 全宽 + 锚点(0,0). 原来照抄圆点的 fromScale(0.5,0.5), 一松手整条手柄被推到右下半格
 	local CENTER = UDim2.new(0.5, 0, 0.5, 0) -- 圆点的家: 正中
 	local live = false
 	local function seat() local h = hum(); return h and h.SeatPart end
@@ -497,11 +496,11 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 	local function setLive(v)
 		live = v
 		local folded = not body.Visible -- 面板折叠才把整条背景交出去拖; 展开时面板压在滑条上, 整条吞触摸会挡住面板, 只留圆点能拖
-		handle.Visible = v and folded
+		track.Active = v and folded -- 折叠时整条 track 自己接触摸; 展开时不接, 免得挡住面板
 		knob.Active = v and not folded
 		track.ZIndex, knob.ZIndex = (if v then 10 else 1), (if v then 11 else 2)
 		track.BackgroundTransparency, knob.BackgroundTransparency = (if v then 0.4 else 0.75), (if v then 0 else 0.55)
-		if not v then dragX = nil; knob.Position = CENTER; handle.Position = HOME end -- 正拖着时被关掉: 手柄也得归位, 不然下次露出来是偏的
+		if not v then dragX = nil; knob.Position = CENTER end -- 正拖着时被关掉: 圆点当场归位
 	end
 	local REACH = TRACK_W / 2 - KNOB_R -- 圆心能走的单侧行程 (82)
 	local function steer()
@@ -523,13 +522,12 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 		mk("UICorner", { CornerRadius = UDim.new(1, 0) }, track)
 		knob = mk("Frame", { Name = "SB_Knob", AnchorPoint = Vector2.new(0.5, 0.5), Position = CENTER, Size = UDim2.fromOffset(KNOB_R * 2, KNOB_R * 2), BackgroundColor3 = Color3.fromRGB(95, 65, 135), BorderSizePixel = 0, ZIndex = 11 }, track)
 		mk("UICorner", { CornerRadius = UDim.new(1, 0) }, knob)
-		-- HOME / CENTER 提到上面声明处了条就按不到了
-		handle = mk("Frame", { Name = "SB_Handle", Position = HOME, Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Active = true, ZIndex = 12 }, track) -- 看不见的手柄盖在最上面, 整条都能按
-		kd = mk("UIDragDetector", { DragStyle = Enum.UIDragDetectorDragStyle.TranslateLine, DragAxis = Vector2.new(1, 0), BoundingUI = track }, handle)
-		local function release() dragX = nil; knob.Position = CENTER; handle.Position = HOME end -- 松手即刻回正: 原来只归位手柄, 圆点要等下一帧 steer() 才被拉回中心, 手快了看着就是"粘住"
+		-- 拖拽目标就是 track 自己: 原来靠一个 BackgroundTransparency=1 的隐形 handle 接触摸, 而它的 BoundingUI=track、尺寸又跟 track 一样大(可移动量 0), 真机上折叠后整条都拖不动
+		kd = mk("UIDragDetector", { DragStyle = Enum.UIDragDetectorDragStyle.TranslateLine, DragAxis = Vector2.new(1, 0) }, track) -- 不设 BoundingUI: steer() 自己把行程夹在 ±REACH, 检测器再夹一遍只会碍事
+		local function release() dragX = nil; knob.Position = CENTER end -- 松手即刻回正: 原来只归位手柄, 圆点要等下一帧 steer() 才被拉回中心, 手快了看着就是"粘住"
 		on(kd.DragContinue, function(p) dragX = p.X end) -- 官方文档: DragContinue 给的是 inputPosition: Vector2 (屏幕坐标), 不是 InputObject; 原来按 i.Position 读, 在 Vector2 上会直接抛错
 		on(kd.DragEnd, release)
-		kdk = mk("UIDragDetector", { DragStyle = Enum.UIDragDetectorDragStyle.TranslateLine, DragAxis = Vector2.new(1, 0), BoundingUI = track }, knob) -- 面板展开时只有圆点可拖
+		kdk = mk("UIDragDetector", { DragStyle = Enum.UIDragDetectorDragStyle.TranslateLine, DragAxis = Vector2.new(1, 0) }, knob) -- 面板展开时只有圆点可拖
 		on(kdk.DragContinue, function(p) dragX = p.X end)
 		on(kdk.DragEnd, release)
 		foldHooks[#foldHooks + 1] = function(open) setLive(F.steeropen or not open) end -- 钩子收到的是"面板开着吗", 滑条要的是"能不能拖"
