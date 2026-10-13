@@ -15,7 +15,7 @@
 --   语法基线就是 Luau(运行环境就是它): 26.10.5.28 起用了字符串插值(`{}`)、复合赋值(+= 等)与 if 表达式(if c then a else b),
 --            Lua 5.4 / fengari 都解析不了; 自检的权威跑法是 CI 里的官方 Luau 0.741 (本地怎么编同版本见 AGENTS.md)
 
-local VERSION = "26.10.13.6.47" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
+local VERSION = "26.10.13.7.48" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
@@ -887,7 +887,7 @@ end
 
 do -- ═════════ 志: 周期记录 / 诊断打包 ═════════
 	local LOGFILE, count, written = "Selfblox_log.txt", 0, 0
-	local function head() local h = `---- Selfblox {os.date("%Y-%m-%d ")}{clock(true)} ----\n`; writefile(LOGFILE, h); written = #h end
+	local function head() local h = `---- Selfblox {VERSION} {os.date("%Y-%m-%d ")}{clock(true)} ----\n`; writefile(LOGFILE, h); written = #h end -- 文件头带版本: 日志文件会跨会话留着, 不带版本就分不清这一份是哪个构建录的
 	local function logTick() -- 每 S.logint 秒一轮 (清单的 loop 每轮 pcall: 某个页的状态函数 / 序列化 / 写盘抛错, 记录也不会永久停)
 		local L = { `[{clock(true)}] #{count}`, `配置 {Http:JSONEncode(saved)}` } -- 数值不用各模块自己拼, 这里全有
 		for _, line in ipairs(pageInfos()) do L[#L + 1] = line end

@@ -1491,6 +1491,7 @@ step(1 / 60, 250)
 local _, entries = (VFS["Selfblox_log.txt"] or ""):gsub("%] #%d+", "")
 ok(entries == 1, `超过上限 → 直接重写, 文件里只剩最新一条 ({entries} 条)`)
 ok((VFS["Selfblox_log.txt"] or ""):sub(1, 13) == "---- Selfblox", "重写时补上表头")
+ok((VFS["Selfblox_log.txt"] or ""):find(`---- Selfblox {tostring(VER)} `, 1, true) == 1, "表头带版本号 (日志文件跨会话留着, 不带版本就分不清这一份是哪个构建录的)")
 limitBox.Text = "512"; limitBox.FocusLost:Fire()
 -- 循环里任何一步抛错, 记录循环都不能永久死掉
 local HS = _G.__SVC.HttpService
