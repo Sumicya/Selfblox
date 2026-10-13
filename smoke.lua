@@ -1566,6 +1566,11 @@ humanoid.props.MoveDirection = Vector3.new(0, 0, -1)
 local z0 = hrp.props.CFrame.Position.Z
 step(1 / 60, 6)
 ok(hrp.props.CFrame.Position.Z < z0, "速度·cframe: 直接推 CFrame")
+humanoid.props.MoveDirection = Vector3.new(0, 0, -1)
+hrp.props.AssemblyLinearVelocity = Vector3.new(0, 0, -999) -- 引擎从 CFrame 位移里攒出来的动量
+step(1 / 60, 6)
+ok(hrp.props.AssemblyLinearVelocity.Z == 0, `速度·cframe: 推着走的时候水平速度也每帧钉死, 攒不出动量 (实际 {hrp.props.AssemblyLinearVelocity.Z})`)
+ok(hrp.props.CFrame.Position.Z < z0, "速度·cframe: 钉速度不影响推 CFrame")
 hrp.props.AssemblyLinearVelocity = Vector3.new(0, 0, -16) -- 逐帧推 CFrame 留下的残余速度
 humanoid.props.MoveDirection = Vector3.zero
 step(1 / 60, 4)
