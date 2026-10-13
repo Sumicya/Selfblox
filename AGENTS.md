@@ -24,7 +24,8 @@
 ## 必要限制
 
 - **无可下载产物，不出包不发版**：主人 2026-10-05 裁定「lua 不需要下载不需要发版」「把你 ci 去掉」。脚本是单文件、从 raw 现拉现跑，打成 artifact 只会得到一份逐字节重复、还要额外养清理的副本。出包或发版前先报主人。
-- **CI 现状与规范第0版冲突，未自行处理**：`main` 和本分支都还有主人自己 `fed6bb7e` 加的 `.github/workflows/spec-check.yml`（GitHub 上另注册着 `Build`、`smoke` 两个历史工作流，文件已不在树里）。第0版写明「无产物/无 CI 仓（selfs、qqapk、Selfblox 等）清零，禁止新增工作流」，且「CI 只服务构建与清理，不设规范检查等冗余流程」「CI 用具体镜像，不用 `ubuntu-latest`」，`spec-check.yml` 三条都撞：它是规范检查、用 `ubuntu-latest`、还留着 54 条运行记录。文件是主人的，删它属于删远端对象，等主人裁定；清运行记录要 `actions: write`，沙箱令牌没有。
+- **CI 现状按规范第0版核对过，本分支合规**：本分支树里没有 `.github/`——`git ls-tree origin/arena/01a10a41-selfblox -- .github` 输出为空，API 查 `.github/workflows?ref=arena/01a10a41-selfblox` 回 404，符合「无产物/无 CI 仓清零、禁止新增工作流」和「CI 只服务构建与清理，不设规范检查等冗余流程」。`main` 上还留着主人 `fed6bb7e` 加的 `spec-check.yml`（API 查 `?ref=main` 有），合并 PR 时随之消失。
+- **54 条历史运行记录清零这件事阻塞**：GitHub 上 `Build`/`smoke`/`spec-check` 三个工作流仍注册为 `active`，共 54 条 run。本轮实测 `DELETE /actions/runs/38058987969` 回 `HTTP/2.0 403 Forbidden`，沙箱令牌没有 `actions: write`（仓库 `permissions` 显示 `admin: true`，但令牌本身没这个 scope），按规范「无权限就直接说阻塞」交主人执行。
 - **离线自检的唯一权威跑法是本地 `tools/luau-driver/`**：`bash build.sh` 编一次 Luau 0.741（约 40 秒），之后每次改完 `bash run_smoke.sh`（约 0.3 秒）。最后一行「全部通过 ✓」才算过；有断言没过时 `smoke.lua` 会 `error` 退出、退出码非零，所以别只看退出码不看输出。换 Luau 版本要连 `smoke.lua` 一起复跑。
 - 假引擎为「Luau 与真引擎的差异」做的两处适配**不要当 bug 改回去**：① `smoke.lua` 的 `mt.__newindex` 写 `CFrame` 时就地更新旧对象——经 `loadstring` 装载的 chunk 里，全常量且不超过 3 段的键链首次求值后会被冻住，第二次读返回旧对象、`__index` 不再触发；真引擎的属性不是 Lua 表链，没这回事。② `FireServer` 参数断言按引擎分判——`typeof` 在 Luau 里是内建函数、假引擎盖不住，假 `Vector3` 只会被认成 `table`；真引擎里就是 `"Vector3"`。
 - 批量改写的坑：`x = x - a + b` **不能**写成 `x -= a + b`（右边有多个顶层项时符号会变），`smoke.lua` 的 `FIXED` 那行被这样写坏过、由 12/24 小时制两条断言抓出来。
