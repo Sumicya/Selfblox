@@ -1542,7 +1542,13 @@ humanoid.props.MoveDirection = Vector3.new(0, 0, -1)
 local z0 = hrp.props.CFrame.Position.Z
 step(1 / 60, 6)
 ok(hrp.props.CFrame.Position.Z < z0, "速度·cframe: 直接推 CFrame")
+hrp.props.AssemblyLinearVelocity = Vector3.new(0, 0, -16) -- 逐帧推 CFrame 留下的残余速度
 humanoid.props.MoveDirection = Vector3.zero
+step(1 / 60, 4)
+ok(hrp.props.AssemblyLinearVelocity.Z == 0 and hrp.props.AssemblyLinearVelocity.X == 0, "速度·cframe: 松摇杆也归零一次, 残余速度不会带着人一直滑")
+local zStop = hrp.props.CFrame.Position.Z
+step(1 / 60, 6)
+ok(hrp.props.CFrame.Position.Z == zStop, "速度·cframe: 松摇杆后 CFrame 不再前进")
 click(modeBtn)
 click(spdBtn)
 step(1 / 60, 3)

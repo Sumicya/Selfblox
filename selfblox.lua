@@ -15,7 +15,7 @@
 --   语法基线就是 Luau(运行环境就是它): 26.10.5.28 起用了字符串插值(`{}`)、复合赋值(+= 等)与 if 表达式(if c then a else b),
 --            Lua 5.4 / fengari 都解析不了; 自检的权威跑法是 CI 里的官方 Luau 0.741 (本地怎么编同版本见 AGENTS.md)
 
-local VERSION = "26.10.13.2.43" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
+local VERSION = "26.10.13.3.44" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
@@ -224,7 +224,12 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 	local function doSpeed(r, h, dt)
 		local md = h.MoveDirection
 		if F.spdmode == "walk" then baseOf(h); h.WalkSpeed = S.spd
-		elseif F.spdmode == "cframe" then if md.Magnitude > 0 then r.CFrame = r.CFrame + md * (S.spd * dt) end
+		elseif F.spdmode == "cframe" then
+			if md.Magnitude > 0 then r.CFrame = r.CFrame + md * (S.spd * dt); moving = true
+			elseif moving then -- 逐帧写 CFrame 会给装配体留下残余速度, 松摇杆必须归零一次, 不然人会一直滑停不下来(和 root 分支同一处理)
+				local v = r.AssemblyLinearVelocity
+				r.AssemblyLinearVelocity = Vector3.new(0, v.Y, 0); moving = false
+			end
 		else -- root: 直接写水平速度, 松摇杆归零一次
 			local v = r.AssemblyLinearVelocity
 			if md.Magnitude > 0 then r.AssemblyLinearVelocity = Vector3.new(md.X * S.spd, v.Y, md.Z * S.spd); moving = true
