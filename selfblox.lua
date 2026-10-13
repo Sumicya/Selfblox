@@ -15,7 +15,7 @@
 --   语法基线就是 Luau(运行环境就是它): 26.10.5.28 起用了字符串插值(`{}`)、复合赋值(+= 等)与 if 表达式(if c then a else b),
 --            Lua 5.4 / fengari 都解析不了; 自检的权威跑法是 CI 里的官方 Luau 0.741 (本地怎么编同版本见 AGENTS.md)
 
-local VERSION = "26.10.13.5.46" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
+local VERSION = "26.10.13.6.47" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
@@ -192,6 +192,7 @@ local NOUI = { tick = true, dump = true }
 
 do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转 / 无限跳 / 穿墙 / 夜视 / 秒互动) ═════════
 	local moving, nvT = false, 0
+	local mdNow, pushN, tickN = Vector3.zero, 0, 0 -- 诊断: 摇杆原值 / cframe 真推了几帧 / doSpeed 跑了几帧
 	local att, flyLV, flyAO, spinAV, cc, nvSaved
 	local base = setmetatable({}, { __mode = "k" }) -- humanoid -> 原始 WalkSpeed/JumpPower/JumpHeight
 	local col = setmetatable({}, { __mode = "k" }) -- 穿墙前 CanCollide=true 的部件
@@ -223,13 +224,14 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 	end
 	local function doSpeed(r, h, dt)
 		local md = h.MoveDirection
+		mdNow, tickN = md, tickN + 1
 		if F.spdmode == "walk" then baseOf(h); h.WalkSpeed = S.spd
 		elseif F.spdmode == "cframe" then
 			-- 这个模式下位置全由 CFrame 推, 所以水平速度每帧钉死: 逐帧写 CFrame 会让引擎给装配体攒出速度, 松摇杆后那点动量带着人一直滑
 			-- 只"松摇杆归零一次"不够 —— 归零发生在推之后, 挡不住下一帧又攒出来的; 每帧钉住才没有动量可留
 			local v = r.AssemblyLinearVelocity
 			r.AssemblyLinearVelocity = Vector3.new(0, v.Y, 0)
-			if md.Magnitude > 0 then r.CFrame = r.CFrame + md * (S.spd * dt) end
+			if md.Magnitude > 0 then r.CFrame = r.CFrame + md * (S.spd * dt); pushN += 1 end
 		else -- root: 直接写水平速度, 松摇杆归零一次
 			local v = r.AssemblyLinearVelocity
 			if md.Magnitude > 0 then r.AssemblyLinearVelocity = Vector3.new(md.X * S.spd, v.Y, md.Z * S.spd); moving = true
@@ -281,7 +283,9 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 	local function spinTick() local _, h, r = body(); if h then if h.SeatPart then if spinAV then stopSpin() end else doSpin(r) end end end
 	local function clipTick() local c = body(); if c then noclip(c) end end
 	local function nvTick() if body() and os.clock() - nvT > 0.5 then nvT = os.clock(); nvOn() end end -- 游戏会重置光照, 半秒补一次
-	feature{ kind = "page", id = "moc", tab = "动" }
+	feature{ kind = "page", id = "moc", tab = "动", info = function() -- 摇杆值不进日志就只能靠猜: 停不下来到底是摇杆没回中还是别处在推, 这一行分开
+		return string.format("摇杆=(%.2f,%.2f,%.2f)|%.2f 推=%d/跑=%d", mdNow.X, mdNow.Y, mdNow.Z, mdNow.Magnitude, pushN, tickN)
+	end }
 	feature{ key = "speed", label = "速度", num = { "spd", 16 }, tick = speedTick, set = function(v) if v then moving = false end end, off = function() stopMove(); restore() end }
 	feature{ kind = "cycle", key = "spdmode", save = "spdmode", def = "root", cycle = { "root", "walk", "cframe" }, text = function(v) return "模式 " .. v end, set = function() stopMove(); restore() end, w = 1 }
 	feature{ key = "fly", label = "飞行", num = { "flyspd", 50 }, tick = flyTick, off = stopFly }

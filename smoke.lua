@@ -1234,6 +1234,7 @@ ok(dm and dm:find("执行器 isfile=", 1, true) ~= nil, "快照里有执行器�
 ok(dm and dm:find(`脚本={tostring(VER)}`, 1, true) ~= nil, `诊断快照的版本 = VERSION ({tostring(VER)})`)
 ok(dm and dm:find("MobilePedals", 1, true) ~= nil, "快照里有踏板树")
 ok(dm and dm:find("sibs ", 1, true) ~= nil, "快照里有各模块状态")
+ok(dm and dm:find("摇杆=", 1, true) ~= nil, `快照的 moc 行带摇杆原值和推帧计数 (停不下来时靠它分清是摇杆没回中还是别处在推)`)
 ok(dm and dm:find("PlayerGui 树", 1, true) == nil, "快照里不再带整个 PlayerGui 树 (原来是给「选按钮」准备的)")
 ok(dm and dm:find("CAr", 1, true) == nil and dm:find("=== CAR", 1, true) ~= nil, "快照里有车结构")
 ok(CLIP ~= nil and CLIP:find("Selfblox 诊断", 1, true) ~= nil, "快照同时进了剪贴板")
