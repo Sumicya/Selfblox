@@ -1589,6 +1589,12 @@ click(spdBtn)
 step(1 / 60, 3)
 ok(hrp.props.AssemblyLinearVelocity.Z == 0 and hrp.props.AssemblyLinearVelocity.X == 0, "关掉「速度」也得清掉残余水平速度, 不然开关关了人还在滑")
 ok(humanoid.WalkSpeed == 16, "关速度 → WalkSpeed 还原")
+-- 速度关着也要能看出摇杆回没回中 (上一版把摇杆缓存在 doSpeed 里, 速度关着就一直是旧值, 20 个初始零被当成了证据)
+humanoid.props.MoveDirection = Vector3.new(0, 0, -1)
+for _, d in ipairs(all()) do if d:IsA("TextButton") and type(d.Text) == "string" and d.Text:find("诊断打包", 1, true) then d.Activated:Fire() end end
+step(1 / 60, 2)
+ok((VFS["selfblox_dump.txt"] or ""):find("摇杆=(0.00,0.00,-1.00)", 1, true) ~= nil, "速度关着也照采摇杆 (info() 现读, 不缓存)")
+humanoid.props.MoveDirection = Vector3.zero
 hrp.props.CFrame, hrp.props.Position = CFrame.new(startPos), startPos
 
 -- ── sibs 角落: 翻转 / 缓存的车 ──
