@@ -938,6 +938,16 @@ local kdk = knob and knob:FindFirstChildOfClass("UIDragDetector") -- 挂在圆�
 ok(knob ~= nil and kd ~= nil and kdk ~= nil, "圆点 + 整条轨道 + 各自的拖拽器都在")
 local VP = camera.props.ViewportSize
 ok(track.Position.X.Scale == 0 and track.Position.X.Offset == 0.25 * VP.X - 100 and track.Position.Y.Offset == VP.Y - 46, `默认在左下正中 (左上角 {track.Position.X.Offset},{track.Position.Y.Offset}; 视口 {VP.X}x{VP.Y} → 圆心在屏宽 25% 处)`)
+track.props.AbsolutePosition = { X = track.Position.X.Offset, Y = track.Position.Y.Offset }
+do -- 面板开着时就算平台真把背景的拖动事件发过来, 处理函数自己也得挡住
+	local bx, by = track.Position.X.Offset, track.Position.Y.Offset
+	kd.DragStart:Fire(Vector2.new(bx + 5, by + 5))
+	kd.DragContinue:Fire(Vector2.new(bx + 300, by - 300))
+	ok(track.Position.X.Offset == bx and track.Position.Y.Offset == by, "面板开着 → 拖背景不搬 (不只靠 Active, 处理函数自己也挡)")
+	kd.DragEnd:Fire()
+	ok(track.Position.X.Offset == bx, "面板开着时没真搬过 → 也不写盘")
+end
+ok(kdk.BoundingUI == track, "圆点的拖拽器以轨道为边界: 36 的圆点在 200 的轨道里行程正好 ±82, 拖不出去")
 ok(track.Active == false and knob.Active == true, "面板开着 → 整条轨道不接管触摸(会挡面板), 只有圆点可拖")
 local look0 = seat.props.CFrame.LookVector
 kdk.DragContinue:Fire(Vector2.new(999, 0)) -- 面板开着只有圆点是 Active 的; 假引擎不模拟输入路由, 所以只 Fire 真机上真能触发的那个

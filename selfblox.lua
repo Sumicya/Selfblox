@@ -15,7 +15,7 @@
 --   语法基线就是 Luau(运行环境就是它): 26.10.5.28 起用了字符串插值(`{}`)、复合赋值(+= 等)与 if 表达式(if c then a else b),
 --            Lua 5.4 / fengari 都解析不了; 自检的权威跑法是 CI 里的官方 Luau 0.741 (本地怎么编同版本见 AGENTS.md)
 
-local VERSION = "26.10.6.6.41" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
+local VERSION = "26.10.6.7.42" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
@@ -521,14 +521,16 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 		-- 拖背景 = 搬整条滑条(横竖都行), 照抄标题条那套: 检测器只报手指坐标, 位置自己算并夹在屏幕内, 松手存盘
 		kd = mk("UIDragDetector", { BoundingUI = gui }, track)
 		local dragOff
-		on(kd.DragStart, function(p) dragOff = Vector2.new(p.X - track.AbsolutePosition.X, p.Y - track.AbsolutePosition.Y) end)
+		on(kd.DragStart, function(p) if body.Visible then return end -- 面板开着不许搬背景: 不只靠 track.Active, 处理函数自己也挡一道
+			dragOff = Vector2.new(p.X - track.AbsolutePosition.X, p.Y - track.AbsolutePosition.Y)
+		end)
 		on(kd.DragContinue, function(p) -- DragContinue 给的是 inputPosition: Vector2(屏幕坐标), 不是 InputObject
-			if not dragOff then return end
+			if not dragOff or body.Visible then return end
 			track.Position = UDim2.fromOffset(math.clamp(p.X - dragOff.X, 0, math.max(vp.X - TRACK_W, 0)), math.clamp(p.Y - dragOff.Y, 0, math.max(vp.Y - TRACK_H, 0)))
 		end)
-		on(kd.DragEnd, function() dragOff = nil; save("steerpos", { track.AbsolutePosition.X, track.AbsolutePosition.Y }) end)
+		on(kd.DragEnd, function() if not dragOff then return end; dragOff = nil; save("steerpos", { track.AbsolutePosition.X, track.AbsolutePosition.Y }) end) -- 没真拖动过就不写盘
 		local function release() dragX = nil; knob.Position = CENTER end -- 拖圆点松手即刻回正, 不等下一帧 steer()
-		kdk = mk("UIDragDetector", { DragStyle = Enum.UIDragDetectorDragStyle.TranslateLine, DragAxis = Vector2.new(1, 0) }, knob) -- 拖圆点 = 转向(只横)
+		kdk = mk("UIDragDetector", { DragStyle = Enum.UIDragDetectorDragStyle.TranslateLine, DragAxis = Vector2.new(1, 0), BoundingUI = track }, knob) -- 拖圆点 = 转向(只横); 必须以轨道为边界: 圆点 36 / 轨道 200 → 行程正好 ±82, 拖不出去。上一版凭猜测把这个 BoundingUI 删了, 真机上圆点就能被拖出轨道
 		on(kdk.DragContinue, function(p) dragX = p.X end)
 		on(kdk.DragEnd, release)
 		foldHooks[#foldHooks + 1] = applyDrag -- 折叠状态一变就重算可拖区
