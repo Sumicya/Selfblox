@@ -15,7 +15,7 @@
 --   语法基线就是 Luau(运行环境就是它): 26.10.5.28 起用了字符串插值(`{}`)、复合赋值(+= 等)与 if 表达式(if c then a else b),
 --            Lua 5.4 / fengari 都解析不了; 自检的权威跑法是 CI 里的官方 Luau 0.741 (本地怎么编同版本见 AGENTS.md)
 
-local VERSION = "26.10.13.3.44" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
+local VERSION = "26.10.13.4.45" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
@@ -99,7 +99,7 @@ local function num(parent, s, S, k, w, savek) -- 直接绑 S[k], 改完自动存
 	local f = mk("Frame", { Size = w and UDim2.new(w, 0, 1, 0) or UDim2.new(1, 0, 0, ROW), LayoutOrder = ord(), BackgroundColor3 = OFF, BackgroundTransparency = CLEAR, BorderSizePixel = 0 }, parent) -- 一行分两半: 左半标签, 右半输入框, 文字各在自己那半格里居中 (原来标签靠左 + 前面垫个空格, 和居中的按钮/输入框对不齐)
 	if s then ui("TextLabel", f, nil, { Text = s, BackgroundTransparency = 1, Size = UDim2.fromScale(0.5, 1) }) end
 	local tb = mk("TextBox", { Size = UDim2.fromScale((if s then 0.5 else 1), 1), Position = UDim2.fromScale((if s then 0.5 else 0), 0), BackgroundTransparency = 1, Font = FONT, TextSize = 12, TextColor3 = Color3.fromRGB(255, 225, 140), Text = tostring(S[k]), TextXAlignment = Enum.TextXAlignment.Center, TextYAlignment = Enum.TextYAlignment.Center, ClearTextOnFocus = false }, f)
-	on(tb.FocusLost, function() local v = tonumber(tb.Text); if v then S[k] = v; save(savek or k, v) end; tb.Text = tostring(S[k]) end)
+	on(tb.FocusLost, function() local v = tonumber(tb.Text); if v and v == v and v ~= math.huge and v ~= -math.huge then S[k] = v; save(savek or k, v) end; tb.Text = tostring(S[k]) end) -- nan/inf 存进配置会让 JSONEncode 抛错, 之后每次改设置都失败
 end
 
 local vp = workspace.CurrentCamera.ViewportSize
@@ -271,6 +271,10 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 		if m ~= "off" then for _, p in ipairs(workspace:GetDescendants()) do patch(p) end end
 	end
 
+	local function stopMove() -- 关速度 / 切模式时收尾: doSpeed 的一次性归零靠 moving, 而 set 里把 moving 清了它就再也不会跑, 残余速度得在这里自己清
+		local _, _, r = body(); if r then local v = r.AssemblyLinearVelocity; r.AssemblyLinearVelocity = Vector3.new(0, v.Y, 0) end
+		moving = false
+	end
 	local function speedTick(dt) local _, h, r = body(); if h and not h.SeatPart and h.Health > 0 then doSpeed(r, h, dt) end end
 	local function flyTick() local _, h, r = body(); if h then if h.SeatPart then W.fly(false) else doFly(r, h) end end end
 	local function jumpTick() local _, h = body(); if h then baseOf(h); if h.UseJumpPower then h.JumpPower = S.jump else h.JumpHeight = S.jump end end end
@@ -278,8 +282,8 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 	local function clipTick() local c = body(); if c then noclip(c) end end
 	local function nvTick() if body() and os.clock() - nvT > 0.5 then nvT = os.clock(); nvOn() end end -- 游戏会重置光照, 半秒补一次
 	feature{ kind = "page", id = "moc", tab = "动" }
-	feature{ key = "speed", label = "速度", num = { "spd", 16 }, tick = speedTick, set = function() moving = false end, off = restore }
-	feature{ kind = "cycle", key = "spdmode", save = "spdmode", def = "root", cycle = { "root", "walk", "cframe" }, text = function(v) return "模式 " .. v end, set = function() restore(); moving = false end, w = 1 }
+	feature{ key = "speed", label = "速度", num = { "spd", 16 }, tick = speedTick, set = function(v) if v then moving = false end end, off = function() stopMove(); restore() end }
+	feature{ kind = "cycle", key = "spdmode", save = "spdmode", def = "root", cycle = { "root", "walk", "cframe" }, text = function(v) return "模式 " .. v end, set = function() stopMove(); restore() end, w = 1 }
 	feature{ key = "fly", label = "飞行", num = { "flyspd", 50 }, tick = flyTick, off = stopFly }
 	feature{ key = "jump", label = "高跳", num = { "jump", 50 }, tick = jumpTick, off = restore }
 	feature{ key = "spin", label = "旋转", num = { "spin", 50 }, tick = spinTick, off = stopSpin }
@@ -441,7 +445,9 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 		end
 		for _, l in ipairs(lamps) do l.Enabled = v end
 	end
-	local function horn(v) VIM:SendKeyEvent(v, Enum.KeyCode[S.hornkey], false, game) end
+	local okHorn, HORN = pcall(function() return Enum.KeyCode[S.hornkey] end) -- 存档里 hornkey 大小写写错时 Enum 索引直接抛错; horn 在卸载路径上, 不能让它炸
+	if not okHorn or not HORN then HORN = Enum.KeyCode.H end
+	local function horn(v) VIM:SendKeyEvent(v, HORN, false, game) end
 	local function pick()
 		local cam = workspace.CurrentCamera
 		rp.FilterDescendantsInstances = { me.Character }
@@ -1096,6 +1102,7 @@ do -- ═════════ 砖: BitFarmer 刷砖 (单游戏专用) ══
 		local last, lastT, seen = bits.Value, os.clock(), bits.Value -- seen = 上次记账时的 Bits: 按它算增量, 周期之间到账的也不丢
 		local conn = workspace.ChildAdded:Connect(function(c) task.defer(function() if F.brick and ownBrick(c) then ingest(c, col); st.got = st.got + 1 end end) end)
 		local function drain() for _, c in ipairs(workspace:GetChildren()) do if ownBrick(c) then ingest(c, col) end end end
+		local okw, errw = pcall(function()
 		while F.brick and alive do
 			st.cycles += 1
 			drain()
@@ -1110,9 +1117,11 @@ do -- ═════════ 砖: BitFarmer 刷砖 (单游戏专用) ══
 			say("brick_status", string.format("周期 %d · +%.0f · %.1f/s · 发 %d 收 %d", st.cycles, st.earned, st.rate, st.sent, st.got))
 			task.wait(0.15)
 		end
-		conn:Disconnect()
+		end)
+		conn:Disconnect() -- 清理必须在 pcall 外面: 循环里任何一句抛错, 死连接就会一直搬砖、倍率也回不来
 		if mult and mult0 then mult.Value = mult0 end
 		me:SetAttribute("MultiplierUpgradeLevel", lvl0)
+		if not okw then error(errw, 0) end -- 照旧让 brickSet 那层 pcall 报错并弹提示
 	end
 	local looping = false -- 关了立刻又开时旧循环还没退出: 只认一条, 不然两条同时跑 (请求翻倍, 还原值也乱)
 	local function brickSet(v)

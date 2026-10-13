@@ -1461,6 +1461,14 @@ ok(fires - f0 <= 16, `关了立刻又开: 只有一条循环在跑 (3.2 秒发�
 click(btnExact("刷砖 开"))
 step(1 / 60, 150)
 ok(mult.Value == 2 and player:GetAttribute("MultiplierUpgradeLevel") == nil, "关掉 → 倍率和等级还原 (原来的 2 / 没有)")
+-- 循环里抛错也得把清理跑完: 倍率要还原 (死连接泄漏由「没漏连接」那几条覆盖)
+local fireOk, nfire = spawnBit.props.FireServer, 0
+spawnBit.props.FireServer = function() nfire = nfire + 1; fires = fires + 1; if nfire > 4 then error("故意炸") end end -- 批次=4: 让第一轮跑完(倍率已顶上去), 第二轮才炸
+click(btnExact("刷砖 关"))
+step(1 / 60, 150)
+ok(mult.Value == 2, `循环抛错 → 倍率照样还原 (还是 {mult.Value})`)
+ok(toastText():find("刷砖出错", 1, true) ~= nil, `循环抛错 → 自己关回去并提示 ({toastText()})`)
+spawnBit.props.FireServer = fireOk
 local f1 = fires
 step(1 / 60, 120)
 ok(fires == f1, "关掉以后循环真的停了")
@@ -1526,6 +1534,22 @@ local modeBtn = findBtn("模式 ")
 local spdBtn = findBtn("速度 ")
 if spdBtn.Text:find("开", 1, true) then click(spdBtn) end
 click(spdBtn)
+-- 数字框打 nan / inf: 不能落进配置 (JSONEncode 会抛错, 之后每次改设置都失败)
+local spdBox
+for _, d in ipairs(all()) do if d:IsA("TextBox") and d.Text == "16" then spdBox = d end end
+ok(spdBox ~= nil, "找到速度的数字框 (前置)")
+spdBox.Text = "30"; spdBox.FocusLost:Fire()
+humanoid.props.MoveDirection = Vector3.new(0, 0, -1)
+step(1 / 60, 3)
+ok(hrp.props.AssemblyLinearVelocity.Z == -30, `前置: 这个框确实是速度框 (改成 30 就跑到 30, 实际 {hrp.props.AssemblyLinearVelocity.Z})`)
+spdBox.Text = "nan"; spdBox.FocusLost:Fire()
+step(1 / 60, 3)
+ok(hrp.props.AssemblyLinearVelocity.Z == -30, `打 nan → 不落进配置, 速度还是 30 (实际 {hrp.props.AssemblyLinearVelocity.Z})`)
+spdBox.Text = "inf"; spdBox.FocusLost:Fire()
+step(1 / 60, 3)
+ok(hrp.props.AssemblyLinearVelocity.Z == -30, `打 inf → 同样挡掉 (实际 {hrp.props.AssemblyLinearVelocity.Z})`)
+spdBox.Text = "16"; spdBox.FocusLost:Fire()
+step(1 / 60, 3)
 humanoid.props.MoveDirection = Vector3.new(0, 0, -1)
 step(1 / 60, 4)
 ok(hrp.props.AssemblyLinearVelocity.Z == -16 and hrp.props.AssemblyLinearVelocity.X == 0, `速度·root: 直接写水平速度 ({tostring(hrp.props.AssemblyLinearVelocity)})`)
@@ -1549,9 +1573,14 @@ ok(hrp.props.AssemblyLinearVelocity.Z == 0 and hrp.props.AssemblyLinearVelocity.
 local zStop = hrp.props.CFrame.Position.Z
 step(1 / 60, 6)
 ok(hrp.props.CFrame.Position.Z == zStop, "速度·cframe: 松摇杆后 CFrame 不再前进")
-click(modeBtn)
+click(modeBtn) -- 回到 root
+humanoid.props.MoveDirection = Vector3.new(0, 0, -1)
+step(1 / 60, 3)
+ok(hrp.props.AssemblyLinearVelocity.Z == -16, "前置: root 模式推着摇杆, 水平速度 = 16")
+humanoid.props.MoveDirection = Vector3.zero -- 松摇杆但这一帧不跑 tick, 直接关开关
 click(spdBtn)
 step(1 / 60, 3)
+ok(hrp.props.AssemblyLinearVelocity.Z == 0 and hrp.props.AssemblyLinearVelocity.X == 0, "关掉「速度」也得清掉残余水平速度, 不然开关关了人还在滑")
 ok(humanoid.WalkSpeed == 16, "关速度 → WalkSpeed 还原")
 hrp.props.CFrame, hrp.props.Position = CFrame.new(startPos), startPos
 
