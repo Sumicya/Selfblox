@@ -25,10 +25,13 @@ if FROZEN_G then local realG = _G; _G = setmetatable({}, { __index = realG }) en
 -- Luau CLI: _G 是上面换掉的可写代理, 可 selfblox.lua 和下面的 inst() 读的是裸全局;
 -- 这些名字在本文件里是 local, 直接写会写到 local 上, 所以借一个没有同名 local 的 chunk 把它们写成真全局。
 -- 每批 _G.X = ... 之后都要再调一次: 假引擎自己也会按全局名读它们 (Color3.fromRGB 就是)。
+local MODULES = {} -- ModuleScript 实例 -> require 它拿到的表 (假引擎里 require 就是查这张表)
+local function fakeRequire(ms) local m = MODULES[ms]; if m == nil then error("ModuleScript 没有内容", 2) end; return m end
+
 local function exposeGlobals()
 	if not FROZEN_G then return end
-	local expose = assert(load_chunk("Instance, RaycastParams, OverlapParams, Vector3, Vector2, Color3, CFrame, UDim, UDim2, Enum, workspace, CoreGui, warn, typeof = ...", "smoke_expose"))
-	expose(_G.Instance, _G.RaycastParams, _G.OverlapParams, _G.Vector3, _G.Vector2, _G.Color3, _G.CFrame, _G.UDim, _G.UDim2, _G.Enum, _G.workspace, _G.CoreGui, _G.warn, _G.typeof) -- typeof 也要装: Luau 自带原生 typeof, 对假 Vector3 只回 "table",
+	local expose = assert(load_chunk("Instance, RaycastParams, OverlapParams, Vector3, Vector2, Color3, CFrame, UDim, UDim2, Enum, workspace, CoreGui, warn, typeof, require = ...", "smoke_expose"))
+	expose(_G.Instance, _G.RaycastParams, _G.OverlapParams, _G.Vector3, _G.Vector2, _G.Color3, _G.CFrame, _G.UDim, _G.UDim2, _G.Enum, _G.workspace, _G.CoreGui, _G.warn, _G.typeof, fakeRequire) -- typeof 也要装: Luau 自带原生 typeof, 对假 Vector3 只回 "table",
 	-- 脚本第 883 行的 `t == "Vector3"` 分支走不到, 参数会被渲染成 {Y=2,X=1,Z=3} 而不是 (1,2,3)
 end
 
@@ -264,8 +267,12 @@ local mt = {
 				-- 让被冻住的引用也跟着变; props 里另存一份, 不和调用方手里的对象串味。
 				local wasC = rawget(t, "props")[k]
 				if type(wasC) == "table" and rawget(wasC, "x") and type(v) == "table" and rawget(v, "x") then
+					-- 就地改 wasC 并且**不换掉它**: 原来这里改完又把一份副本存回 props, 于是被冻住的那个引用只在
+					-- 第一次写入时跟着变, 第二次写入改的是副本, 脚本手里的旧对象从此停在中间值上 —— selfblox 读
+					-- workspace.CurrentCamera.CFrame 拿到飞车测试时朝 +X 的相机, 而主 chunk 现读的是新的, 两边对不上。
+					-- 只维护同一个规范对象就两头都新鲜, 调用方手里那个 v 也照样不被串改。
 					wasC.x, wasC.y, wasC.z, wasC.p = v.x, v.y, v.z, v.p
-					v = setmetatable({ x = v.x, y = v.y, z = v.z, p = v.p }, getmetatable(v))
+					return
 				end
 			end
 			rawget(t, "props")[k] = v
@@ -408,6 +415,25 @@ char.Parent = workspace
 local player = inst("Player", { Name = "Me", DisplayName = "Me", UserId = 1, Character = char, Team = nil, TeamColor = nil, CharacterAdded = Signal.new() })
 local pgui = inst("PlayerGui", sig())
 pgui.Parent = player
+
+-- 官方 PlayerModule: PlayerScripts/PlayerModule → :GetModule():GetControls():GetMoveVector()
+-- 默认镜像 Humanoid.MoveDirection(正常游戏就是 摇杆 → 控制模块 → Humanoid:Move, 两边一致)。
+-- SBMV.force 不为 nil 时返回它, SBMV.gone 为真时抛错 —— 用来造真机上「MoveDirection 冻住 / 控制模块坏了」这两种分歧。
+local SBMV = {}
+local pmodule = inst("ModuleScript", { Name = "PlayerModule" })
+pmodule.Parent = inst("PlayerScripts", { Name = "PlayerScripts" })
+pmodule.Parent.Parent = player
+MODULES[pmodule] = { GetModule = function()
+	if SBMV.gone then error("PlayerModule 不可用") end
+	return { GetControls = function() return { GetMoveVector = function()
+		if SBMV.gone then error("控制模块不可用") end
+		if SBMV.force ~= nil then return SBMV.force end
+		local md = humanoid.props.MoveDirection or Vector3.zero -- 世界 → 相机相对(前推 Z=-1)
+		if md.Magnitude < 1e-9 then return Vector3.zero end
+		local cf = camera.CFrame
+		return Vector3.new(md:Dot(cf.RightVector), md:Dot(cf.UpVector), -md:Dot(cf.LookVector))
+	end } end }
+end }
 svc("Players", inst("Players", { LocalPlayer = player, MaxPlayers = 12, GetPlayers = function() return { player } end, GetPlayerFromCharacter = function(_, c) return c == char and player or nil end, PlayerAdded = Signal.new(), PlayerRemoving = Signal.new() }))
 svc("RunService", inst("RunService", { PreSimulation = Signal.new(), PreRender = Signal.new(), Heartbeat = Signal.new() }))
 svc("UserInputService", inst("UserInputService", { JumpRequest = Signal.new(), TouchEnabled = true, GetMouseLocation = function() return Vector2.new(100, 100) end }))
@@ -1568,6 +1594,26 @@ ok(hrp.props.AssemblyLinearVelocity.Z == 0 and hrp.props.AssemblyLinearVelocity.
 local zStop = hrp.props.CFrame.Position.Z
 step(1 / 60, 6)
 ok(hrp.props.CFrame.Position.Z == zStop, "速度·cframe: 松摇杆后 CFrame 不再前进")
+
+-- 「停不下来」的真机现场: 主人 26.10.13.5.46 的日志里水平速度已钉到 1 而人还在动, 这个模式又只在 md 非零时才推
+-- ⟹ 动只能来自一直非零的 h.MoveDirection。前四版都在改怎么拦, 这版换源, 所以这里造的就是两个源分歧的场面。
+SBMV.force = Vector3.zero -- 控制模块(每帧现算)说手已经离开摇杆
+humanoid.props.MoveDirection = Vector3.new(0, 0, -1) -- 而 MoveDirection 冻在最后一次推的方向上
+local zFrozen = hrp.props.CFrame.Position.Z
+step(1 / 60, 6)
+ok(hrp.props.CFrame.Position.Z == zFrozen, "MoveDirection 冻住但控制模块说松手了 → 一帧都不推 (这就是「停不下来」的出口)")
+SBMV.force = Vector3.new(0, 0, -1)
+step(1 / 60, 6)
+ok(hrp.props.CFrame.Position.Z < zFrozen, "控制模块说有输入 → 照推, 换源没把正常移动弄坏")
+SBMV.force = nil
+-- 控制模块坏了不许连速度一起废掉: 丢掉缓存, 退回 Humanoid.MoveDirection
+SBMV.gone = true
+step(1 / 60, 130) -- 跨过每秒一次的重探窗口
+local zFb = hrp.props.CFrame.Position.Z
+step(1 / 60, 6)
+ok(hrp.props.CFrame.Position.Z < zFb, "控制模块抛错 → 退回 Humanoid.MoveDirection, 速度照常能用")
+SBMV.gone = nil
+step(1 / 60, 130) -- 让它重新拿到控制模块, 后面的断言按原路走
 click(modeBtn) -- 回到 root
 humanoid.props.MoveDirection = Vector3.new(0, 0, -1)
 step(1 / 60, 3)

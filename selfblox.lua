@@ -15,7 +15,7 @@
 --   语法基线就是 Luau(运行环境就是它): 26.10.5.28 起用了字符串插值(`{}`)、复合赋值(+= 等)与 if 表达式(if c then a else b),
 --            Lua 5.4 / fengari 都解析不了; 自检的权威跑法是 CI 里的官方 Luau 0.741 (本地怎么编同版本见 AGENTS.md)
 
-local VERSION = "26.10.14.4.57" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
+local VERSION = "26.10.14.5.58" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
@@ -222,8 +222,39 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 		flyLV.VectorVelocity = md * S.flyspd + Vector3.yAxis * (S.flyspd * (cam.LookVector.Y * md:Dot(look) + ((if F.up then 1 else 0)) - ((if F.down then 1 else 0))))
 		flyAO.CFrame = CFrame.lookAt(Vector3.zero, look)
 	end
+	local ctrl, ctrlT, stickFrom, stickRaw = nil, -1e9, false, Vector3.zero
+	-- 摇杆真值。前四版修「停不下来」全在改怎么拦(松手归零一次 / 每帧钉死水平速度 / GetState 门), 方向错了:
+	-- 主人 26.10.13.5.46 的日志里水平速度已经钉到 1 而人还在动, 而这个模式只在 md 非零时才推 ⟹ 动只能来自
+	-- 那个一直非零的 h.MoveDirection。所以这版换源: PlayerModule.ControlModule:GetMoveVector() 是控制模块
+	-- 每帧现算的原始摇杆量(相机相对, 前推 Z=-1), 松手当帧归零, 不看 Humanoid 状态, 不会冻住。
+	local function stick()
+		if not ctrl and os.clock() - ctrlT > 1 then -- 控制模块可能还没起来, 每秒重试; require 不能每帧调
+			ctrlT = os.clock()
+			local ps = me:FindFirstChildOfClass("PlayerScripts")
+			local pm = ps and ps:FindFirstChild("PlayerModule")
+			if pm then pcall(function() local m = require(pm):GetModule(); local c = m and m:GetControls(); if c and c.GetMoveVector then ctrl = c end end) end
+		end
+		if ctrl then
+			local okM, mv = pcall(function() return ctrl:GetMoveVector() end)
+			if not okM then -- pcall 失败时第二个返回值是错误字符串, 不能当向量用; 丢掉缓存下一秒重探, 这一帧走下面的退回
+				ctrl, ctrlT, stickRaw = nil, os.clock(), Vector3.zero
+			else
+				stickFrom, stickRaw = true, mv or Vector3.zero
+				if mv and mv.Magnitude > 1e-4 then
+					local cf = workspace.CurrentCamera.CFrame -- 相机相对 → 世界。归一化: 这版只改「松手归零」一件事, 推一半仍旧全速, 手感不变
+					local w = cf.RightVector * mv.X + cf.UpVector * mv.Y - cf.LookVector * mv.Z
+					if w.Magnitude > 1e-4 then return w.Unit end
+				end
+				return Vector3.zero -- 模块说没输入就是没输入: 这一行就是「停不下来」的出口
+			end
+		end
+		local h = hum() -- 取不到控制模块(游戏改过 PlayerScripts)才退回原路
+		local md = h and h.MoveDirection
+		stickFrom, stickRaw = false, Vector3.zero
+		return (md and md.Magnitude > 1e-4 and md.Unit) or Vector3.zero
+	end
 	local function doSpeed(r, h, dt)
-		local md = h.MoveDirection -- 不加状态门: 真机实测站着不动 GetState() 也回 Running(26.10.14.2.55 日志 #0-#13, 摇杆=0 而 态=Running 连着 3.5 秒), 拿 Idle 当判据永远不会命中
+		local md = stick()
 		tickN += 1
 		if F.spdmode == "walk" then baseOf(h); h.WalkSpeed = S.spd
 		elseif F.spdmode == "cframe" then
@@ -286,9 +317,12 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 	feature{ kind = "page", id = "moc", tab = "动", info = function() -- 摇杆在这里现读, 不在 doSpeed 里缓存: 速度关着也要能看出摇杆到底回没回中
 		local h, r = hum(), root()
 		local md = (h and h.MoveDirection) or Vector3.zero
-		local okS, st = pcall(function() return h and h:GetState() end) -- 状态一起打出来: 摇杆值冻没冻住, 看这一栏就知道
+		local okS, st = pcall(function() return h and h:GetState() end)
 		local q = r and r.Position or Vector3.zero
-		return string.format("摇杆=(%.2f,%.2f,%.2f)|%.2f 推=%d/跑=%d 态=%s 位=(%.0f,%.0f,%.0f)", md.X, md.Y, md.Z, md.Magnitude, pushN, tickN, (okS and st and tostring(st.Name)) or "?", q.X, q.Y, q.Z)
+		-- 两个源并排打: 摇杆=Humanoid.MoveDirection(会冻), 模块=ControlModule:GetMoveVector(每帧现算)。
+		-- 再出「停不下来」, 这两个数一对就知道是谁没归零, 不用第五轮猜。源= 标明这次是谁在驱动。
+		local modTxt = stickFrom and string.format("(%.2f,%.2f,%.2f)|%.2f", stickRaw.X, stickRaw.Y, stickRaw.Z, stickRaw.Magnitude) or "无(退回 Humanoid)"
+		return string.format("摇杆=(%.2f,%.2f,%.2f)|%.2f 模块=%s 源=%s 推=%d/跑=%d 态=%s 位=(%.0f,%.0f,%.0f)", md.X, md.Y, md.Z, md.Magnitude, modTxt, stickFrom and "模块" or "Humanoid", pushN, tickN, (okS and st and tostring(st.Name)) or "?", q.X, q.Y, q.Z)
 	end }
 	feature{ key = "speed", label = "速度", num = { "spd", 16 }, tick = speedTick, set = function(v) if v then moving = false end end, off = function() stopMove(); restore() end }
 	feature{ kind = "cycle", key = "spdmode", save = "spdmode", def = "root", cycle = { "root", "walk", "cframe" }, text = function(v) return "模式 " .. v end, set = function() stopMove(); restore() end, w = 1 }
