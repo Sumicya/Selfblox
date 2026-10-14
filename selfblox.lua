@@ -15,7 +15,7 @@
 --   语法基线就是 Luau(运行环境就是它): 26.10.5.28 起用了字符串插值(`{}`)、复合赋值(+= 等)与 if 表达式(if c then a else b),
 --            Lua 5.4 / fengari 都解析不了; 自检的权威跑法是 CI 里的官方 Luau 0.741 (本地怎么编同版本见 AGENTS.md)
 
-local VERSION = "26.10.14.3.56" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
+local VERSION = "26.10.14.4.57" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
@@ -727,59 +727,8 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 	feature{ kind = "tick", tick = carTick, init = wheelInit, off = carStop }
 end
 
-do -- ═════════ 漂: 人物推进 (自动找踏板; 找不到就用面板按钮) ═════════
-	local att, vf, pedalRoot
-	local slots = {} -- slots[1]=刹车 slots[2]=油门
-	F.dgas, F.dbrake = false, false -- 油门 / 刹车现在是不是踩着: 游戏踏板和面板按钮都写这两个
-	local function pedalLines() -- 踏板的真实结构: 绑不上时能直接看出它长啥样
-		local pg = me:FindFirstChild("PlayerGui")
-		local f = pg and pg:FindFirstChild("MobilePedals")
-		if not f then
-			local tops = {}
-			if pg then for _, c in ipairs(pg:GetChildren()) do tops[#tops + 1] = c.Name .. "(" .. c.ClassName .. ")" end end
-			return { `无 MobilePedals; PlayerGui 顶层: {(#tops > 0 and table.concat(tops, ", ") or "(空)")}` }
-		end
-		local L = { `MobilePedals: {f:GetFullName()}` }
-		for _, d in ipairs(f:GetDescendants()) do
-			local ap, sz = d.AbsolutePosition or Vector2.zero, d.AbsoluteSize or Vector2.zero
-			L[#L + 1] = string.format("  %-28s %-12s 可见=%-5s 可点=%-5s 位置=(%.0f,%.0f) 尺寸=(%.0f,%.0f)", d.Name, d.ClassName, tostring(d.Visible), tostring(d.Active), nn(ap.X), nn(ap.Y), nn(sz.X), nn(sz.Y))
-		end
-		return L
-	end
-	local function slotName(n) return slots[n] and slots[n].btn.Name or "未绑" end
-	local function setSlot(n, v) if n == 1 then F.dbrake = v else F.dgas = v end end
-	local function clearSlot(n) local sl = slots[n]; if sl then for _, c in ipairs(sl.conns) do c:Disconnect() end end; slots[n] = nil; F.dgas, F.dbrake = F.dgas or false, F.dbrake or false end
-	local function bindSlot(n, g) -- 按住 g 就当踩着第 n 个踏板
-		clearSlot(n)
-		local conns = {}
-		conns[#conns + 1] = g.InputBegan:Connect(function(i) if tap(i) then setSlot(n, true) end end)
-		conns[#conns + 1] = g.InputEnded:Connect(function(i) if tap(i) then setSlot(n, false) end end)
-		slots[n] = { btn = g, conns = conns }
-	end
-	local function slotsText() return "踏板 刹=" .. slotName(1) .. " 油=" .. slotName(2) end
-	local function slotLive(n) local sl = slots[n]; return (sl and sl.btn and sl.btn.Parent) and true or false end
-	local function prune() -- 游戏重建 UI 时旧按钮会消失, 留着就是按不动的死连接
-		for n = 1, 2 do if slots[n] and not slots[n].btn.Parent then clearSlot(n) end end
-	end
-	local function autoBind(force) -- force = 手动点了「重绑踏板」(清掉重来)
-		if force then clearSlot(1); clearSlot(2) end
-		pedalRoot = nil
-		local pg = me:FindFirstChild("PlayerGui")
-		local f = pg and pg:FindFirstChild("MobilePedals")
-		if not f then
-			if not slotLive(1) and not slotLive(2) then say("drift_status", "无 MobilePedals → 用下面的 ▲ 油门 / ▼ 刹车") end
-			return
-		end
-		local b = {}
-		for _, c in ipairs(f:GetDescendants()) do if c:IsA("GuiButton") then b[#b + 1] = c end end -- 框名/嵌套深度每个游戏不一样, 整个子树找按钮
-		table.sort(b, function(x, y) return (x.AbsolutePosition or Vector2.zero).X < (y.AbsolutePosition or Vector2.zero).X end)
-		if #b < 2 then if force then say("drift_status", `MobilePedals 里只找到 {#b} 个按钮 → 用下面的 ▲ 油门 / ▼ 刹车`) end; return end
-		bindSlot(1, b[1])
-		bindSlot(2, b[2])
-		pedalRoot = f
-		say("drift_status", slotsText())
-	end
-
+do -- ═════════ 漂: 人物推进 (开着就一直沿车头方向推, 不需要油门/刹车) ═════════
+	local att, vf
 	local function driftTick()
 		local c = me.Character
 		local r = c and c:FindFirstChild("Root") or root() -- 漂移游戏的车体叫 Root
@@ -790,36 +739,18 @@ do -- ═════════ 漂: 人物推进 (自动找踏板; 找不到�
 			vf = mk("VectorForce", { Attachment0 = att, Force = Vector3.zero, RelativeTo = Enum.ActuatorRelativeTo.World, ApplyAtCenterOfMass = true }, att)
 		end
 		local look = flat(r.CFrame.LookVector) or Vector3.zAxis
-		local m, fs = r.AssemblyMass, r.AssemblyLinearVelocity:Dot(look)
-		local push = Vector3.zero
-		if F.dgas and F.dbrake then if math.abs(fs) > 0.1 then push = -look * (math.sign(fs) * S.dbrake * m) end
-		elseif F.dgas then push = look * (S.dacc * m)
-		elseif F.dbrake then push = -look * ((fs > 0.1 and S.dbrake or S.dacc) * m) end -- 前进中刹车, 停了倒退
-		vf.Force = push
+		vf.Force = look * (S.dacc * r.AssemblyMass) -- 力按质量给, 换车体不用重调数字
 	end
 	local function driftOff() if att then att:Destroy(); att = nil end end
-	local function pedalInit() -- 游戏晚点才生成踏板 UI / 重建 UI: 出现就绑
-		task.spawn(function()
-			local pg = me:WaitForChild("PlayerGui")
-			on(pg.ChildAdded, function(c) if c.Name == "MobilePedals" then task.delay(0.2, autoBind) end end)
-			autoBind()
-		end)
-	end
-	local function pedalPoll() -- 每秒: 清掉死按钮; 没绑上就自己再试 (不用手动点)
-		prune()
-		if F.drift and (not pedalRoot or not pedalRoot.Parent or not slotLive(1) or not slotLive(2)) then autoBind() end
-	end
-	local function pedalStop() driftOff(); for _, sl in pairs(slots) do for _, c in ipairs(sl.conns) do c:Disconnect() end end end
-	feature{ kind = "page", id = "drift", tab = "漂", info = function() return "油门=" .. tostring(F.dgas) .. " 刹车=" .. tostring(F.dbrake) .. " " .. slotsText() .. " 状态=" .. tostring(W.drift_status and W.drift_status.Text) end }
+	feature{ kind = "page", id = "drift", tab = "漂", info = function()
+		local c = me.Character
+		local r = c and c:FindFirstChild("Root") or root()
+		if not (r and r:IsDescendantOf(workspace)) then return "加速=" .. tostring(S.dacc) .. " 无车体" end
+		local look = flat(r.CFrame.LookVector) or Vector3.zAxis
+		return string.format("加速=%s 前向速度=%.1f 质量=%.0f 锚=%s", tostring(S.dacc), r.AssemblyLinearVelocity:Dot(look), nn(r.AssemblyMass), tostring(r.Anchored))
+	end }
 	feature{ kind = "num", key = "dacc", def = 5, label = "加速" }
-	feature{ kind = "num", key = "dbrake", def = 10, label = "刹车" }
 	feature{ key = "drift", save = "drift", def = true, label = "推进", tick = driftTick, off = driftOff }
-	feature{ kind = "btn", label = "重绑踏板", fn = function() autoBind(true) end }
-	feature{ kind = "hold", key = "dgas", label = "▲ 油门", h = 36 }
-	feature{ kind = "hold", key = "dbrake", label = "▼ 刹车", h = 36 }
-	feature{ kind = "text", key = "drift_status", label = "…" }
-	feature{ kind = "dump", key = "pedals", dump = pedalLines }
-	feature{ kind = "tick", loop = pedalPoll, every = 1, init = pedalInit, off = pedalStop }
 end
 
 do -- ═════════ 显: 数据条 / 速度箭头 / 玩家 ESP (原生 Highlight + BillboardGui) ═════════

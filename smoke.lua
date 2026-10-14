@@ -423,14 +423,6 @@ _G.CoreGui = _G.__SVC.CoreGui
 
 exposeGlobals()
 
--- 漂移游戏的踏板 UI: 故意嵌两层 + ImageButton, 老代码只认 MobilePedals.Frame 的直接子节点
-local pedals = inst("ScreenGui", { Name = "MobilePedals" })
-local pedalBox = inst("Frame", { Name = "Pedals" })
-local brakeBtn = inst("ImageButton", { Name = "Brake", AbsolutePosition = Vector2.new(20, 2100) }) -- 刹车在左
-local gasBtn = inst("ImageButton", { Name = "Gas", AbsolutePosition = Vector2.new(900, 2100) }) -- 油门在右
-pedalBox.Parent, brakeBtn.Parent, gasBtn.Parent = pedals, pedalBox, pedalBox
-pedals.Parent = pgui
-
 
 -- 一辆假车 (座位 + 车身), 用来跑 sibs
 local car = inst("Model", { Name = "Car" })
@@ -653,46 +645,41 @@ for _, t in ipairs({ "动", "车", "漂", "显", "志", "机", "砖" }) do
 	ok(on == 1, `点「{t}」后只有它高亮`)
 end
 
-print("\n[3a] 漂移踏板: 嵌套的 MobilePedals 也要绑上 + 间距=0")
-local bound
-for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" and d.Text:find("刹=Brake", 1, true) then bound = d.Text end end
-ok(bound ~= nil, `嵌套 ImageButton 也自动绑上了 ({tostring(bound)})`)
+print("\n[3a] 漂移: 不要油门/刹车, 推进开着就一直推")
 local pads = 0
 for _, d in ipairs(all()) do if d.ClassName == "UIListLayout" then pads = pads + d.Padding.Offset + d.Padding.Scale end end
 ok(pads == 0, "所有 UIListLayout 间距 = 0")
-
-pedals:Destroy() -- 模拟游戏重建踏板 UI: 老代码要手动点重绑, 现在应该自己每秒重试
-step(1 / 60, 130) -- 2 秒多, 够循环跑两轮
-local dead = 0
-for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" and d.Text:find("无 MobilePedals", 1, true) then dead = dead + 1 end end
-ok(dead == 1, "踏板没了 → 状态说自己没了, 不假装绑着")
-local pedals2 = inst("ScreenGui", { Name = "MobilePedals" })
-local box2 = inst("Frame", { Name = "Pedals" })
-local b1 = inst("ImageButton", { Name = "Brake", AbsolutePosition = Vector2.new(20, 2100) })
-local b2 = inst("ImageButton", { Name = "Gas", AbsolutePosition = Vector2.new(900, 2100) })
-box2.Parent, b1.Parent, b2.Parent = pedals2, box2, box2
-pedals2.Parent = pgui
-step(1 / 60, 130)
-local rebound
-for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" and d.Text:find("刹=Brake", 1, true) then rebound = d.Text end end
-ok(rebound ~= nil, `踏板重建后自动重绑 ({tostring(rebound)})`)
--- 自动绑上的踏板: 按住真的生效 (原来这条是靠手动点选的那套测的; 用重建后的 b2)
-b2.InputBegan:Fire(input("Touch"))
-step(1 / 60, 3)
-if _G.SB_DUMP then _G.SB_DUMP() end
-local dumpP = VFS["selfblox_dump.txt"]
-ok(dumpP and dumpP:find("油门=true", 1, true) ~= nil, "按住自动绑上的油门键 → 油门状态真的变真")
-b2.InputEnded:Fire(input("Touch"))
-step(1 / 60, 3)
-if _G.SB_DUMP then _G.SB_DUMP() end
-ok(VFS["selfblox_dump.txt"]:find("油门=true", 1, true) == nil, "松手 → 油门状态回假")
-pedals2:Destroy() -- 这套假踏板是测试自己造的, 用完自己收, 不然算漏实例
-
--- 漂移页只剩原来的: 重绑踏板 / ▲ 油门 / ▼ 刹车 (v13 多出来的「选刹车」「选油门」整套删了)
-ok(findBtn("重绑踏板") ~= nil and findBtn("▲ 油门") ~= nil and findBtn("▼ 刹车") ~= nil, "漂页有 重绑踏板 / ▲ 油门 / ▼ 刹车")
+ok(findBtn("▲ 油门") == nil and findBtn("▼ 刹车") == nil, "漂页没有 ▲ 油门 / ▼ 刹车 (漂移不需要)")
+ok(findBtn("重绑踏板") == nil, "漂页没有 重绑踏板 (踏板是油门/刹车的输入, 一起没了)")
+local pedText = 0
+for _, d in ipairs(all()) do if d:IsA("TextLabel") and type(d.Text) == "string" and (d.Text:find("刹=", 1, true) or d.Text:find("MobilePedals", 1, true)) then pedText = pedText + 1 end end
+ok(pedText == 0, `漂页不再报踏板绑定状态 (剩 {pedText} 条)`)
 local oldBtns = 0
 for _, d in ipairs(all()) do if d:IsA("TextButton") and (starts(d.Text, "选") or starts(d.Text, "绑") or starts(d.Text, "自动找踏板") or starts(d.Text, "扫车") or starts(d.Text, "复制状态")) then oldBtns = oldBtns + 1 end end
 ok(oldBtns == 0, `面板里没有「选…」「绑…」「自动找踏板」「扫车」「复制状态」 (剩 {oldBtns} 个)`)
+-- 推进默认开: 不需要按任何键, VectorForce 就该已经挂上并且出着力
+local function driftForce() -- VectorForce 挂在车体上(workspace), 不在 CoreGui 里, all() 找不到
+	for _, d in ipairs(workspace:GetDescendants()) do
+		if d.ClassName == "VectorForce" and d.props.Attachment0 and d.props.Attachment0.Name == "SB_DRIFT" then return d end
+	end
+	return nil
+end
+local dforce = driftForce()
+ok(dforce ~= nil, "推进开着 → SB_DRIFT 的 VectorForce 已经挂上")
+step(1 / 60, 3)
+local fm = dforce and dforce.props.Force.Magnitude or 0
+ok(fm > 0, string.format("不按任何键也在出力 (|F|=%.0f, 加速 5 × 质量 10)", fm))
+local lk = hrp.props.CFrame.LookVector
+local along = dforce.props.Force.X * lk.X + dforce.props.Force.Z * lk.Z
+ok(along > 0, "力沿车头方向, 不是反的")
+local driftBtn = findBtn("推进 ")
+ok(driftBtn ~= nil and driftBtn.Text:find("开", 1, true) ~= nil, "推进默认开")
+click(driftBtn)
+step(1 / 60, 3)
+ok(driftForce() == nil, "关掉推进 → Attachment 连带 VectorForce 一起删掉")
+click(driftBtn)
+step(1 / 60, 3)
+ok(driftForce() ~= nil, "再开回来 → VectorForce 重新挂上")
 
 print("\n[3b] 点标题条 = 折叠 (+/- 也还能用)")
 local tl, bd = tabs():FindFirstChild("SB_Title"), tabs():FindFirstChild("SB_Body")
@@ -1233,7 +1220,7 @@ local dm = VFS["selfblox_dump.txt"]
 ok(dm ~= nil, "写了 selfblox_dump.txt")
 ok(dm and dm:find("执行器 isfile=", 1, true) ~= nil, "快照里有执行器能力")
 ok(dm and dm:find(`脚本={tostring(VER)}`, 1, true) ~= nil, `诊断快照的版本 = VERSION ({tostring(VER)})`)
-ok(dm and dm:find("MobilePedals", 1, true) ~= nil, "快照里有踏板树")
+ok(dm and dm:find("MobilePedals", 1, true) == nil, "快照里不再有踏板树 (漂移不看踏板了)")
 ok(dm and dm:find("sibs ", 1, true) ~= nil, "快照里有各模块状态")
 ok(dm and dm:find("摇杆=", 1, true) ~= nil, `快照的 moc 行带摇杆原值和推帧计数 (停不下来时靠它分清是摇杆没回中还是别处在推)`)
 ok(dm and dm:find("PlayerGui 树", 1, true) == nil, "快照里不再带整个 PlayerGui 树 (原来是给「选按钮」准备的)")

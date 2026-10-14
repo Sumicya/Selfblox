@@ -24,9 +24,9 @@
 
 - **无可下载产物，不出包不发版**：主人 2026-10-05 裁定「lua 不需要下载不需要发版」「把你 ci 去掉」。脚本是单文件、从 raw 现拉现跑，打成 artifact 只会得到一份逐字节重复、还要额外养清理的副本。出包或发版前先报主人。
 - **两条分支现在都没有工作流文件**：本分支树里没有 `.github/`（API 查 `.github/workflows?ref=arena/01a10a41-selfblox` 回 404）；`main` 上主人 `fed6bb7e` 加的 `spec-check.yml` 已由主人自己在 `9e96f2b5`（2026-10-14 00:00:46Z「清理：删除被禁的规范检查工作流」）删掉。
-- **分支**：仓库只剩 `main` 和本分支。删会话分支的唯一判据是工作已继承进默认分支（`compare` 的 `ahead_by=0`）；本分支挂着开放的 PR #4 且 `ahead_by=64`，不删。PR #2/#3 关闭时未合入、分支已不在（不是本会话删的），head 提交 `46dbb699`/`d8fd908d` 仍可解析，内容没丢。
+- **分支**：仓库只剩 `main` 和本分支。删会话分支的唯一判据是工作已继承进默认分支（`compare` 的 `ahead_by=0`）；本分支 `ahead_by=67`、`behind_by=2`（`main` 到 `9e96f2b5`），不删。PR #2/#3 关闭时未合入、分支已不在（不是本会话删的），head 提交 `46dbb699`/`d8fd908d` 仍可解析，内容没丢。
 - **运行记录 / artifact / 工作流注册现均为 0**：主人 2026-10-13 手动跑完清理，54 条 run 全删，`Build`/`smoke`/`spec-check` 三条工作流注册随之消失，原有 2 个 `Selfblox-26.10.5.32.32` artifact 也已删。
-- **这类清理沙箱做不了，每次得交主人跑**：`DELETE /actions/runs/<id>` 和 `DELETE /actions/artifacts/<id>` 实测都回 `403 Forbidden`，令牌没有 `actions: write`（仓库 `permissions` 显示 `admin: true`，但令牌本身没这个 scope）。删 ref 不一样，那个有权限。
+- **`actions` 类写权限是缺口**：`DELETE /repos/Sumicya/Selfblox/actions/runs/<id>` 与 `.../actions/artifacts/<id>` 用沙箱令牌实测回 `403 Forbidden`（缺 `actions: write`；仓库 `permissions` 里的 `admin: true`/`push: true` 是名义权限，不作依据）。本仓无 CI、也不许新增工作流，所以没有清理 job 可接管，这类对象再出现按缺口报：端点、返回码、缺哪一类权限。`refs` 与 `contents` 类写在本仓可用（提交、推送都实测过）；删 ref 本身本会话没删过任何一条，属未验证。
 - **离线自检的唯一权威跑法是本地 `tools/luau-driver/`**：`bash build.sh` 编一次 Luau 0.741（约 40 秒），之后每次改完 `bash run_smoke.sh`（约 0.3 秒）。最后一行「全部通过 ✓」才算过；有断言没过时 `smoke.lua` 会 `error` 退出、退出码非零，所以别只看退出码不看输出。换 Luau 版本要连 `smoke.lua` 一起复跑。
 - 假引擎为「Luau 与真引擎的差异」做的两处适配**不要当 bug 改回去**：① `smoke.lua` 的 `mt.__newindex` 写 `CFrame` 时就地更新旧对象——经 `loadstring` 装载的 chunk 里，全常量且不超过 3 段的键链首次求值后会被冻住，第二次读返回旧对象、`__index` 不再触发；真引擎的属性不是 Lua 表链，没这回事。② `FireServer` 参数断言按引擎分判——`typeof` 在 Luau 里是内建函数、假引擎盖不住，假 `Vector3` 只会被认成 `table`；真引擎里就是 `"Vector3"`。
 - 批量改写的坑：`x = x - a + b` **不能**写成 `x -= a + b`（右边有多个顶层项时符号会变），`smoke.lua` 的 `FIXED` 那行被这样写坏过、由 12/24 小时制两条断言抓出来。
