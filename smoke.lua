@@ -1581,26 +1581,10 @@ ok(hrp.props.AssemblyLinearVelocity.Z == 0 and hrp.props.AssemblyLinearVelocity.
 local zStop = hrp.props.CFrame.Position.Z
 step(1 / 60, 6)
 ok(hrp.props.CFrame.Position.Z == zStop, "速度·cframe: 松摇杆后 CFrame 不再前进")
--- MoveDirection 在 Idle 下不刷新: 游戏的触屏控件松手不一定调 Humanoid:Move(0), 值会冻在最后一次推的方向上, cframe 就一直推 ⟹「停不下来」
-rawset(humanoid, "sbstate", Enum.HumanoidStateType.Idle)
-humanoid.props.MoveDirection = Vector3.new(0, 0, -1)
-local zIdle = hrp.props.CFrame.Position.Z
-step(1 / 60, 6)
-ok(hrp.props.CFrame.Position.Z == zIdle, "速度·cframe: 状态 Idle 时摇杆值冻住也不推")
-rawset(humanoid, "sbstate", Enum.HumanoidStateType.Running)
-step(1 / 60, 6)
-ok(hrp.props.CFrame.Position.Z < zIdle, "速度·cframe: 状态 Running 照推, 门没误伤")
-rawset(humanoid, "sbstate", Enum.HumanoidStateType.Running)
 click(modeBtn) -- 回到 root
 humanoid.props.MoveDirection = Vector3.new(0, 0, -1)
 step(1 / 60, 3)
 ok(hrp.props.AssemblyLinearVelocity.Z == -16, "前置: root 模式推着摇杆, 水平速度 = 16")
-rawset(humanoid, "sbstate", Enum.HumanoidStateType.Idle)
-step(1 / 60, 4)
-ok(hrp.props.AssemblyLinearVelocity.Z == 0, "速度·root: 状态 Idle 时冻住的摇杆值也不写水平速度, 人不会一直滑")
-rawset(humanoid, "sbstate", Enum.HumanoidStateType.Running)
-step(1 / 60, 4)
-ok(hrp.props.AssemblyLinearVelocity.Z == -16, "速度·root: 回到 Running 照写")
 humanoid.props.MoveDirection = Vector3.zero -- 松摇杆但这一帧不跑 tick, 直接关开关
 click(spdBtn)
 step(1 / 60, 3)
@@ -1611,7 +1595,7 @@ humanoid.props.MoveDirection = Vector3.new(0, 0, -1)
 for _, d in ipairs(all()) do if d:IsA("TextButton") and type(d.Text) == "string" and d.Text:find("诊断打包", 1, true) then d.Activated:Fire() end end
 step(1 / 60, 2)
 ok((VFS["selfblox_dump.txt"] or ""):find("摇杆=(0.00,0.00,-1.00)", 1, true) ~= nil, "速度关着也照采摇杆 (info() 现读, 不缓存)")
-ok((VFS["selfblox_dump.txt"] or ""):find("态=Running", 1, true) ~= nil, "诊断里带人形状态, 下次日志能直接看出摇杆值是不是冻住的")
+ok((VFS["selfblox_dump.txt"] or ""):find("态=Running", 1, true) ~= nil, "诊断里带人形状态 (真机实测站着不动也是 Running, 所以不能拿它当没输入的判据; 但 Climbing 这类能看出来)")
 humanoid.props.MoveDirection = Vector3.zero
 hrp.props.CFrame, hrp.props.Position = CFrame.new(startPos), startPos
 
