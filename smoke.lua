@@ -70,7 +70,7 @@ local VERIFIED = {
 	Frame = words("AbsolutePosition AbsoluteSize Active AnchorPoint AutomaticSize BackgroundColor3 BackgroundTransparency BorderSizePixel LayoutOrder Position Rotation Size Visible ZIndex"),
 	Highlight = words("Adornee DepthMode Enabled FillColor FillTransparency OutlineColor OutlineTransparency"),
 	HttpService = words("JSONDecode JSONEncode"),
-	Humanoid = words("ChangeState Health JumpHeight JumpPower MoveDirection PlatformStand SeatPart UseJumpPower WalkSpeed"),
+	Humanoid = words("ChangeState GetState Health JumpHeight JumpPower MoveDirection PlatformStand SeatPart UseJumpPower WalkSpeed"),
 	ImageButton = words("AbsolutePosition AbsoluteSize Active InputBegan InputEnded Visible"),
 	IntValue = words("Value"),
 	Lighting = words("Ambient Brightness FogEnd GlobalShadows OutdoorAmbient"),
@@ -221,6 +221,7 @@ function methods.GetConnectedParts(self) -- 假装配体: 同 Model 里 Assembly
 	if not seen[self] then o[#o + 1] = self end
 	return o
 end
+function methods.GetState(self) return rawget(self, "sbstate") or { Name = "Running" } end -- 默认 Running: 状态门在旧断言里应当是空操作
 function methods.SetNetworkOwner() error("SetNetworkOwner 客户端不让调 (上一版就是这一句把车搞成完全绑不上)") end
 function methods.GetPartBoundsInRadius() _G.__radiusCalls = (_G.__radiusCalls or 0) + 1; return _G.__radius or {} end -- 记次数: 好验绑车的空间查询有没有节流
 
@@ -1580,10 +1581,26 @@ ok(hrp.props.AssemblyLinearVelocity.Z == 0 and hrp.props.AssemblyLinearVelocity.
 local zStop = hrp.props.CFrame.Position.Z
 step(1 / 60, 6)
 ok(hrp.props.CFrame.Position.Z == zStop, "速度·cframe: 松摇杆后 CFrame 不再前进")
+-- MoveDirection 在 Idle 下不刷新: 游戏的触屏控件松手不一定调 Humanoid:Move(0), 值会冻在最后一次推的方向上, cframe 就一直推 ⟹「停不下来」
+rawset(humanoid, "sbstate", Enum.HumanoidStateType.Idle)
+humanoid.props.MoveDirection = Vector3.new(0, 0, -1)
+local zIdle = hrp.props.CFrame.Position.Z
+step(1 / 60, 6)
+ok(hrp.props.CFrame.Position.Z == zIdle, "速度·cframe: 状态 Idle 时摇杆值冻住也不推")
+rawset(humanoid, "sbstate", Enum.HumanoidStateType.Running)
+step(1 / 60, 6)
+ok(hrp.props.CFrame.Position.Z < zIdle, "速度·cframe: 状态 Running 照推, 门没误伤")
+rawset(humanoid, "sbstate", Enum.HumanoidStateType.Running)
 click(modeBtn) -- 回到 root
 humanoid.props.MoveDirection = Vector3.new(0, 0, -1)
 step(1 / 60, 3)
 ok(hrp.props.AssemblyLinearVelocity.Z == -16, "前置: root 模式推着摇杆, 水平速度 = 16")
+rawset(humanoid, "sbstate", Enum.HumanoidStateType.Idle)
+step(1 / 60, 4)
+ok(hrp.props.AssemblyLinearVelocity.Z == 0, "速度·root: 状态 Idle 时冻住的摇杆值也不写水平速度, 人不会一直滑")
+rawset(humanoid, "sbstate", Enum.HumanoidStateType.Running)
+step(1 / 60, 4)
+ok(hrp.props.AssemblyLinearVelocity.Z == -16, "速度·root: 回到 Running 照写")
 humanoid.props.MoveDirection = Vector3.zero -- 松摇杆但这一帧不跑 tick, 直接关开关
 click(spdBtn)
 step(1 / 60, 3)
@@ -1594,6 +1611,7 @@ humanoid.props.MoveDirection = Vector3.new(0, 0, -1)
 for _, d in ipairs(all()) do if d:IsA("TextButton") and type(d.Text) == "string" and d.Text:find("诊断打包", 1, true) then d.Activated:Fire() end end
 step(1 / 60, 2)
 ok((VFS["selfblox_dump.txt"] or ""):find("摇杆=(0.00,0.00,-1.00)", 1, true) ~= nil, "速度关着也照采摇杆 (info() 现读, 不缓存)")
+ok((VFS["selfblox_dump.txt"] or ""):find("态=Running", 1, true) ~= nil, "诊断里带人形状态, 下次日志能直接看出摇杆值是不是冻住的")
 humanoid.props.MoveDirection = Vector3.zero
 hrp.props.CFrame, hrp.props.Position = CFrame.new(startPos), startPos
 

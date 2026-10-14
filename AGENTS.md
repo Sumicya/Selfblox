@@ -18,7 +18,7 @@
 - 一次本地构建 = 一轮交付：改代码或文档 → 跑 `tools/luau-driver/run_smoke.sh` → 出一个提交、一个版本。同一轮里为定位问题反复跑自检算同一次构建。
 - 当日序号：本提交在会话分支**当日（UTC+8）提交序列中的位次**，当天所有提交都算。
 - 总序号：本提交在会话分支**提交序列中的位次 − 基线 25**。锚点 `5351d32` = 总序号 53，在完整历史里位次 78。
-- 位次取 `git rev-list --count origin/arena/01a10a41-selfblox`，**必须在非浅克隆上量**：浅克隆少数提交，量出来的基线是错的（本仓库浅克隆时数到 65，加深后是 78，基线因此从 12 改成 25）。拿不准先 `git rev-parse --is-shallow-repository`，是 `true` 就 `git fetch --unshallow`。
+- 位次取 `git rev-list --count origin/arena/01a10a41-selfblox`，**必须在非浅克隆上量**：浅克隆少数提交，量出来的基线是错的（本仓库浅克隆时数到 65，加深后是 78，基线因此从 12 改成 25）。拿不准先 `git rev-parse --is-shallow-repository`，是 `true` 就 `git fetch --depth=500 origin arena/01a10a41-selfblox`。别用 `git fetch --unshallow origin`：它拉默认分支，`FETCH_HEAD` 会指到 `main`（16 个提交），数出来的位次是错的。量之前一律先 `gh api …/commits/arena/01a10a41-selfblox -q .sha` 拿到分支 tip 的 SHA，再 `git rev-list --count <SHA>`。
 
 ## 必要限制
 

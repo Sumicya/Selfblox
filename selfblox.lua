@@ -15,7 +15,7 @@
 --   语法基线就是 Luau(运行环境就是它): 26.10.5.28 起用了字符串插值(`{}`)、复合赋值(+= 等)与 if 表达式(if c then a else b),
 --            Lua 5.4 / fengari 都解析不了; 自检的权威跑法是 CI 里的官方 Luau 0.741 (本地怎么编同版本见 AGENTS.md)
 
-local VERSION = "26.10.14.1.54" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
+local VERSION = "26.10.14.2.55" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
@@ -222,8 +222,19 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 		flyLV.VectorVelocity = md * S.flyspd + Vector3.yAxis * (S.flyspd * (cam.LookVector.Y * md:Dot(look) + ((if F.up then 1 else 0)) - ((if F.down then 1 else 0))))
 		flyAO.CFrame = CFrame.lookAt(Vector3.zero, look)
 	end
-	local function doSpeed(r, h, dt)
+	-- MoveDirection 在 Idle/Seated/Physics/Dead 这几个状态下不刷新, 会冻在最后一次推的方向上。
+	-- 游戏自己的触屏控件松手时不一定调 Humanoid:Move(0), 那个值就永远不归零, 于是一直按最后的方向推 —— 这就是「松了摇杆还停不下来」。
+	-- 这几个状态下人本来也走不动, 所以当没有输入处理; 真在走的时候状态是 Running, 门不会误伤。
+	local STALE = { Idle = true, Seated = true, Physics = true, Dead = true }
+	local function moveOf(h)
 		local md = h.MoveDirection
+		if md.Magnitude <= 0 then return md end
+		local okS, st = pcall(function() return h:GetState() end)
+		if okS and st and STALE[tostring(st.Name)] then return Vector3.zero end
+		return md
+	end
+	local function doSpeed(r, h, dt)
+		local md = moveOf(h)
 		tickN += 1
 		if F.spdmode == "walk" then baseOf(h); h.WalkSpeed = S.spd
 		elseif F.spdmode == "cframe" then
@@ -286,8 +297,9 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 	feature{ kind = "page", id = "moc", tab = "动", info = function() -- 摇杆在这里现读, 不在 doSpeed 里缓存: 速度关着也要能看出摇杆到底回没回中
 		local h, r = hum(), root()
 		local md = (h and h.MoveDirection) or Vector3.zero
+		local okS, st = pcall(function() return h and h:GetState() end) -- 状态一起打出来: 摇杆值冻没冻住, 看这一栏就知道
 		local q = r and r.Position or Vector3.zero
-		return string.format("摇杆=(%.2f,%.2f,%.2f)|%.2f 推=%d/跑=%d 位=(%.0f,%.0f,%.0f)", md.X, md.Y, md.Z, md.Magnitude, pushN, tickN, q.X, q.Y, q.Z)
+		return string.format("摇杆=(%.2f,%.2f,%.2f)|%.2f 推=%d/跑=%d 态=%s 位=(%.0f,%.0f,%.0f)", md.X, md.Y, md.Z, md.Magnitude, pushN, tickN, (okS and st and tostring(st.Name)) or "?", q.X, q.Y, q.Z)
 	end }
 	feature{ key = "speed", label = "速度", num = { "spd", 16 }, tick = speedTick, set = function(v) if v then moving = false end end, off = function() stopMove(); restore() end }
 	feature{ kind = "cycle", key = "spdmode", save = "spdmode", def = "root", cycle = { "root", "walk", "cframe" }, text = function(v) return "模式 " .. v end, set = function() stopMove(); restore() end, w = 1 }
