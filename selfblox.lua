@@ -569,7 +569,7 @@ MODS[#MODS + 1] = { name = "log", tab = "志", fn = function(page)
 					run = false
 					if status.Parent then status.Text = "写日志失败，已停止录制" end
 					warn("[Selfblox] 日志写入失败: " .. tostring(err))
-				end"
+				end
 			end
 		end
 	end)
