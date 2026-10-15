@@ -605,6 +605,9 @@ local function step(dt, n)
 		_G.__SVC.RunService.props.PreSimulation:Fire(dt)
 		_G.__SVC.RunService.props.PreRender:Fire(dt)
 		if _G.__SVC.UserInputService.props.JumpRequest then _G.__SVC.UserInputService.props.JumpRequest:Fire() end
+		-- 假引擎不算物理, "游戏自己把人挪走了"这一步只能由测试演。放在信号跑完之后, 顺序才和真引擎一致:
+		-- 脚本先在 PreSimulation 里量上一帧到这一帧的位移(= 游戏挪的量), 推完, 然后游戏才挪这一步。
+		if _G.__gameMove then hrp.props.CFrame = hrp.props.CFrame + _G.__gameMove end
 	end
 end
 local function tabs() return _G.__SVC.CoreGui:FindFirstChild("Selfblox") end
@@ -1611,46 +1614,75 @@ ok(hrp.props.AssemblyLinearVelocity.Z == -16 and hrp.props.AssemblyLinearVelocit
 humanoid.props.MoveDirection = Vector3.zero
 step(1 / 60, 4)
 ok(hrp.props.AssemblyLinearVelocity.Z == 0, "松摇杆 → 水平速度归零")
+-- 模块恒为 0 的游戏里, 速度不能跟着一起废掉。真机 26.10.15.6.89 的 162 条里 ControlModule:GetMoveVector()
+-- 全是 0 而人一直在动(相邻样本水平中位 14.1 格/秒), 推=0/跑=489 —— 上一版就是这么把功能整个关掉的。
+SBMV.force = Vector3.zero
+humanoid.props.MoveDirection = Vector3.new(0, 0, -1)
+step(1 / 60, 3)
+ok(hrp.props.AssemblyLinearVelocity.Z == -16, `模块报 0 时退回 MoveDirection, root 模式照常写速度 (实际 {tostring(hrp.props.AssemblyLinearVelocity)})`)
+SBMV.force = nil
+humanoid.props.MoveDirection = Vector3.zero
+step(1 / 60, 3)
 click(modeBtn)
 ok(modeBtn.Text == "模式 walk", "模式按钮循环到 walk")
 step(1 / 60, 4)
 ok(humanoid.WalkSpeed == 16, "速度·walk: 写 WalkSpeed")
 click(modeBtn)
 ok(modeBtn.Text == "模式 cframe", "模式按钮循环到 cframe")
-humanoid.props.MoveDirection = Vector3.new(0, 0, -1)
+-- cframe 模式不再看输入源, 看的是"游戏自己这一步把人挪了多少"。数字照 26.10.15.6.89 的真机日志:
+-- 游戏自己那一步约 22 格/秒, spd 设的是 16, 而两个输入源一个恒 1.00 一个恒 0。
+_G.__gameMove = Vector3.new(0, 0, -22 / 60)
+humanoid.props.MoveDirection = Vector3.new(0, 0, -1) -- 游戏写的满偏, 而且从不归零 (真机 287 条全是 1.00)
+step(1 / 60, 1) -- 开门第一帧只记位置基准, 不推
 local z0 = hrp.props.CFrame.Position.Z
-step(1 / 60, 6)
-ok(hrp.props.CFrame.Position.Z < z0, "速度·cframe: 直接推 CFrame")
-humanoid.props.MoveDirection = Vector3.new(0, 0, -1)
+step(1 / 60, 5)
+local per = (z0 - hrp.props.CFrame.Position.Z) / 5 * 60
+ok(math.abs(per - 16) < 1e-6, `速度·cframe: 游戏自己在挪人 → 把每帧位移换成 spd*dt, 出来的速度就是 spd (量到 {per} 格/秒, 设的是 16)`)
 hrp.props.AssemblyLinearVelocity = Vector3.new(0, 0, -999) -- 引擎从 CFrame 位移里攒出来的动量
-step(1 / 60, 6)
+step(1 / 60, 3)
 ok(hrp.props.AssemblyLinearVelocity.Z == 0, `速度·cframe: 推着走的时候水平速度也每帧钉死, 攒不出动量 (实际 {hrp.props.AssemblyLinearVelocity.Z})`)
-ok(hrp.props.CFrame.Position.Z < z0, "速度·cframe: 钉速度不影响推 CFrame")
-hrp.props.AssemblyLinearVelocity = Vector3.new(0, 0, -16) -- 逐帧推 CFrame 留下的残余速度
-humanoid.props.MoveDirection = Vector3.zero
-step(1 / 60, 4)
-ok(hrp.props.AssemblyLinearVelocity.Z == 0 and hrp.props.AssemblyLinearVelocity.X == 0, "速度·cframe: 松摇杆也归零一次, 残余速度不会带着人一直滑")
+
+-- 松手 = 游戏不再挪人。两个源这时候都还满偏着, 一帧都不许推 —— 26.10.15.5.63 的 #172–#286 就是这个场面
+-- (连续 115 条、23.0 秒人不动而摇杆恒为 (-0.97,0.00,-0.25))。前六版都在改怎么拦, 这版把判据换成了游戏本身。
+_G.__gameMove = nil
+SBMV.force = Vector3.new(0, 0, -1) -- 连控制模块都跟着喊满偏
 local zStop = hrp.props.CFrame.Position.Z
 step(1 / 60, 6)
-ok(hrp.props.CFrame.Position.Z == zStop, "速度·cframe: 松摇杆后 CFrame 不再前进")
-
--- 「停不下来」的真机现场: 主人 26.10.13.5.46 的日志里水平速度已钉到 1 而人还在动, 这个模式又只在 md 非零时才推
--- ⟹ 动只能来自一直非零的 h.MoveDirection。前四版都在改怎么拦, 这版换源, 所以这里造的就是两个源分歧的场面。
-SBMV.force = Vector3.zero -- 控制模块(每帧现算)说手已经离开摇杆
-humanoid.props.MoveDirection = Vector3.new(0, 0, -1) -- 而 MoveDirection 冻在最后一次推的方向上
-local zFrozen = hrp.props.CFrame.Position.Z
+local extra = hrp.props.CFrame.Position.Z - zStop
+ok(extra >= 0 and extra < 16 / 60, `游戏不挪人了 → 顶多把上一帧已经量到的那点补完, 不再往前走 (多走了 {extra} 格, 一帧的量是 {16 / 60} 格)`)
+local zEnd = hrp.props.CFrame.Position.Z
 step(1 / 60, 6)
-ok(hrp.props.CFrame.Position.Z == zFrozen, "MoveDirection 冻住但控制模块说松手了 → 一帧都不推 (这就是「停不下来」的出口)")
-SBMV.force = Vector3.new(0, 0, -1)
-step(1 / 60, 6)
-ok(hrp.props.CFrame.Position.Z < zFrozen, "控制模块说有输入 → 照推, 换源没把正常移动弄坏")
+ok(hrp.props.CFrame.Position.Z == zEnd, "停下之后就一步都不动了, 两个源还满偏也不动 (这就是「停不下来」的出口)")
+ok(hrp.props.AssemblyLinearVelocity.Z == 0 and hrp.props.AssemblyLinearVelocity.X == 0, "速度·cframe: 残余速度也钉住, 不会带着人一直滑")
 SBMV.force = nil
+
+-- 门槛: 水平不到 1 格/秒算没动。物理抖动 / 站在斜坡上慢慢蹭不能当成走路, 否则站在原地也会被推着走。
+_G.__gameMove = Vector3.new(0, 0, -0.3 / 60)
+local zCreep = hrp.props.CFrame.Position.Z
+step(1 / 60, 6)
+ok(math.abs(hrp.props.CFrame.Position.Z - (zCreep - 0.3 / 60 * 6)) < 1e-9, `水平 0.3 格/秒不算走路: 只跟着游戏蹭, 一帧都不额外推 (人在 {hrp.props.CFrame.Position.Z}, 该在 {zCreep - 0.3 / 60 * 6})`)
+_G.__gameMove = nil
+
+-- 传送/重生那种一步几十格不能当走路: 当成走路的话下一帧 -d 会照着原路把人拽回去
+_G.__gameMove = Vector3.new(0, 0, -30)
+step(1 / 60, 2) -- 第二帧才轮到量到那一步 30 格
+local zTp = hrp.props.CFrame.Position.Z
+_G.__gameMove = nil
+step(1 / 60, 3)
+ok(hrp.props.CFrame.Position.Z == zTp, `一步 30 格只重新对位, 下一帧不照着 -d 把人拽回去 (人还在 {hrp.props.CFrame.Position.Z}, 对完位是 {zTp})`)
+_G.__gameMove = Vector3.new(0, 0, -22 / 60)
+step(1 / 60, 2) -- 重新对位那一帧不推, 下一帧才重新开门
+ok(hrp.props.CFrame.Position.Z < zTp, "传送之后接着走, 门重新打开")
+_G.__gameMove = nil
+
 -- 控制模块坏了不许连速度一起废掉: 丢掉缓存, 退回 Humanoid.MoveDirection
 SBMV.gone = true
 step(1 / 60, 130) -- 跨过每秒一次的重探窗口
+_G.__gameMove = Vector3.new(0, 0, -22 / 60)
 local zFb = hrp.props.CFrame.Position.Z
-step(1 / 60, 6)
+step(1 / 60, 5)
 ok(hrp.props.CFrame.Position.Z < zFb, "控制模块抛错 → 退回 Humanoid.MoveDirection, 速度照常能用")
+_G.__gameMove = nil
 SBMV.gone = nil
 step(1 / 60, 130) -- 让它重新拿到控制模块, 后面的断言按原路走
 
@@ -1771,6 +1803,22 @@ do -- 控制模块那两条路。真机 26.10.15.5.63 的错误串 ":278: attemp
 	ok(dl:find("路=GetModule", 1, true) ~= nil, "只有 GetModule 那套也认得出来, 自动走第二条路")
 	step(1 / 60, 130)
 	ok(dumpTxt():find("路=GetControls", 1, true) ~= nil, "换回官方那张表后回到直调那条路")
+end
+
+do -- cframe 的门必须自己打进日志: 26.10.15.6.89 那份日志只有「推=0/跑=489」, 光看它分不清是门没开还是根本没跑
+	local function dumpTxt()
+		for _, d in ipairs(all()) do if d:IsA("TextButton") and type(d.Text) == "string" and d.Text:find("诊断打包", 1, true) then d.Activated:Fire() end end
+		step(1 / 60, 2)
+		return VFS["selfblox_dump.txt"] or ""
+	end
+	_G.__gameMove = Vector3.new(0, 0, -22 / 60)
+	step(1 / 60, 4)
+	local dOn = dumpTxt()
+	ok(dOn:find("门=开", 1, true) ~= nil, "游戏在挪人 → 日志里门是开的")
+	ok(dOn:find("游=22.0格/秒", 1, true) ~= nil, `量出来的游戏自身速度也打出来, 真机好对账 (实际 {tostring(dOn:match("游=[^ ]*"))})`)
+	_G.__gameMove = nil
+	step(1 / 60, 4)
+	ok(dumpTxt():find("门=关", 1, true) ~= nil, "游戏不挪人了 → 门是关的 (下一份日志一眼就能看出门开没开)")
 end
 click(modeBtn) -- 回到 root
 humanoid.props.MoveDirection = Vector3.new(0, 0, -1)

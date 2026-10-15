@@ -22,7 +22,7 @@
 --   语法基线就是 Luau(运行环境就是它): 26.10.5.28 起用了字符串插值(`{}`)、复合赋值(+= 等)与 if 表达式(if c then a else b),
 --            Lua 5.4 / fengari 都解析不了; 自检的权威跑法是官方 Luau 0.741 (本地怎么编见 tools/luau-driver/build.sh)
 
-local VERSION = "26.10.15.6.89" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
+local VERSION = "26.10.15.7.90" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
@@ -218,6 +218,7 @@ local NOUI = { tick = true, dump = true }
 do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转 / 无限跳 / 穿墙 / 夜视 / 秒互动) ═════════
 	local moving, nvT = false, 0
 	local pushN, tickN = 0, 0 -- 诊断: cframe 真推了几帧 / doSpeed 跑了几帧 (摇杆值在 info() 里现读, 不缓存: 缓存的话速度关着就一直是旧值, 上一版就是这么把 20 个初始零当成了证据)
+	local lastPos, gateOpen, gateSpd = nil, false, 0 -- cframe 门: 上一帧推完时人在哪 / 这一帧门开没开 / 游戏自己这一步的水平速度
 	local att, flyLV, flyAO, spinAV, cc, nvSaved
 	local base = setmetatable({}, { __mode = "k" }) -- humanoid -> 原始 WalkSpeed/JumpPower/JumpHeight
 	local col = setmetatable({}, { __mode = "k" }) -- 穿墙前 CanCollide=true 的部件
@@ -252,10 +253,13 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 	local ctrl, ctrlT, stickFrom, stickRaw = nil, -1e9, false, Vector3.zero
 	local ctrlWhy = "还没探过" -- 探不到控制模块时记下"为什么", 打进日志; 只报「模块=无」等于没报
 	local ctrlPath = "" -- 认出来的是哪一路 (GetControls 直调 / GetModule 再一层), 打进日志
-	-- 摇杆真值。前四版修「停不下来」全在改怎么拦(松手归零一次 / 每帧钉死水平速度 / GetState 门), 方向错了:
-	-- 主人 26.10.13.5.46 的日志里水平速度已经钉到 1 而人还在动, 而这个模式只在 md 非零时才推 ⟹ 动只能来自
-	-- 那个一直非零的 h.MoveDirection。所以这版换源: PlayerModule.ControlModule:GetMoveVector() 是控制模块
-	-- 每帧现算的原始摇杆量(相机相对, 前推 Z=-1), 松手当帧归零, 不看 Humanoid 状态, 不会冻住。
+	-- 摇杆方向。两份真机日志把「哪个源能判松手」这个问题问到底了, 答案是: 这个游戏里两个都不能。
+	--   26.10.15.5.63(287 条): Humanoid.MoveDirection 模长全是 1.00, 其中 #172–#286 连续 115 条(23.0 秒)
+	--     人不动而摇杆满偏 ⟹ 它永不归零, 拿它当"有输入"就是永久推。
+	--   26.10.15.6.89(162 条): ControlModule:GetMoveVector() 全是 0, 而同期人一直在动(相邻样本水平中位
+	--     14.1 格/秒), 推=0/跑=489 ⟹ 它恒为零, 拿它当唯一源等于把功能整个关掉。
+	-- 所以这里只管方向, 谁有输入用谁(模块活着的普通游戏两个源一起归零, 不会误判); 判"松手"交给 doSpeed
+	-- 里那道量游戏自己挪了多少的门 —— 那是唯一一个不依赖输入源、游戏怎么改控制都还成立的信号。
 	local function stick()
 		if not ctrl and os.clock() - ctrlT > 1 then -- 控制模块可能还没起来, 每秒重试; require 不能每帧调
 			ctrlT = os.clock()
@@ -304,15 +308,20 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 		if ctrl then
 			local okM, mv = pcall(function() return ctrl:GetMoveVector() end)
 			if not okM then -- pcall 失败时第二个返回值是错误字符串, 不能当向量用; 丢掉缓存下一秒重探, 这一帧走下面的退回
-				ctrl, ctrlT, stickRaw = nil, os.clock(), Vector3.zero
+				ctrl, ctrlT = nil, os.clock()
 			else
 				stickFrom, stickRaw = true, mv or Vector3.zero
-				if mv and mv.Magnitude > 1e-4 then
-					local cf = workspace.CurrentCamera.CFrame -- 相机相对 → 世界。归一化: 这版只改「松手归零」一件事, 推一半仍旧全速, 手感不变
-					local w = cf.RightVector * mv.X + cf.UpVector * mv.Y - cf.LookVector * mv.Z
+				if stickRaw.Magnitude > 1e-4 then
+					local cf = workspace.CurrentCamera.CFrame -- 相机相对 → 世界。归一化: 推一半仍旧全速, 手感不变
+					local w = cf.RightVector * stickRaw.X + cf.UpVector * stickRaw.Y - cf.LookVector * stickRaw.Z
 					if w.Magnitude > 1e-4 then return w.Unit end
 				end
-				return Vector3.zero -- 模块说没输入就是没输入: 这一行就是「停不下来」的出口
+				-- 模块报 0 不再直接当"松手": 26.10.15.6.89 的真机日志里它 162 条全是 0 而人一直在动, 这个 0 是
+				-- "源在这个游戏里是死的", 不是"手离开了摇杆"。所以再看一眼 MoveDirection —— 模块活着的普通
+				-- 游戏里, MoveDirection 就是控制模块每帧从 moveVector 写过去的, 两个一起归零, 不会因此误判。
+				local h = hum()
+				local md = h and h.MoveDirection
+				return (md and md.Magnitude > 1e-4 and md.Unit) or Vector3.zero
 			end
 		end
 		local h = hum() -- 取不到控制模块(游戏改过 PlayerScripts)才退回原路
@@ -322,15 +331,13 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 	end
 
 	-- ── 游戏自己的输入物件探针 ─────────────────────────────────────────────
-	-- 26.10.15.5.63 的真机日志(287 条)把成因钉死了: 摇杆模长 287 条全是 1.00, 一条都不例外;
-	-- 其中 #172–#286 连续 115 条(23.0 秒)摇杆恒为 (-0.97,0.00,-0.25), 位只在 x[-132,-130] z[-86,-76] 里挪。
-	-- 人早停了, Humanoid.MoveDirection 还冻在满偏上 ⟹ 它在这个游戏里根本不回零。
-	-- 而 cframe 推的条件是 md.Magnitude > 0, 源永不归零 = 永久推, 这就是「停不下来」。
-	-- 主人说这游戏有自己的跳跃和趴下滑竿(右边上下), 控制不走 Roblox 那套 ⟹ 真值不在 Humanoid 上。
-	-- 前六次修「停不下来」全在改「怎么拦」(松手归零 / 每帧钉速度 / GetState 门 / 换控制模块), 没一次碰过
-	-- 「源本身是陈的」。这次是把源换对: 控制模块那条路上一版被一个不存在的 GetModule 挡死了, 见上面。
-	-- 游戏那些物件叫什么名字还不知道, 所以先扫不问: 每秒一次, 认「Position 变过」的子物件当滑块,
-	-- 顺带把右半屏 Active 方块的父名/坐标/尺寸报出来。名字进了日志, 下一版才能直接读它。
+	-- 主人说这游戏有自己的跳跃和趴下滑竿(右边上下), 控制不走 Roblox 那套 ⟹ 真值不在 Humanoid 上;
+	-- 而两份真机日志已经把两个官方源都排除了(见上面 stick() 的注释), 所以要认的是游戏自己的控件。
+	-- 叫什么名字还不知道, 所以先扫不问: 每秒一次, 认「Position 变过」的子物件当滑块, 顺带把右半屏 Active
+	-- 方块的父名/坐标/尺寸/子物件数报出来。
+	-- 26.10.15.6.89(162 条)的实测: 「没认出滑块」, 右半屏 6 个 Unlocked/ImageIcon, 父名/类名/尺寸/子物件数
+	-- 6 个全一样, 只有坐标能分 —— #0–#139 排成一行 y=109 60x60 (x 329/421/514/606/698/791, 间距 ~92),
+	-- #140 起同一排变成 y=183 63x63 (x 1121…1611, 间距 98), Active 方块 54 → 64。是横排的一排图标, 还没认出来。
 	local uiFound, uiSeen, uiBtn, uiWhy, uiT = {}, {}, "", "还没探过", -1e9
 	local function sbOwn(p) while p do if p == gui or p == FX then return true end; p = p.Parent end; return false end
 	local function halfW() return ((vp and vp.X) or 800) / 2 end
@@ -402,13 +409,26 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 	local function doSpeed(r, h, dt)
 		local md = stick()
 		tickN += 1
+		gateOpen, gateSpd = false, 0
 		if F.spdmode == "walk" then baseOf(h); h.WalkSpeed = S.spd
 		elseif F.spdmode == "cframe" then
-			-- 这个模式下位置全由 CFrame 推, 所以水平速度每帧钉死: 逐帧写 CFrame 会让引擎给装配体攒出速度, 松摇杆后那点动量带着人一直滑
-			-- 只"松摇杆归零一次"不够 —— 归零发生在推之后, 挡不住下一帧又攒出来的; 每帧钉住才没有动量可留
+			-- 水平速度每帧钉死: 逐帧写 CFrame 会让引擎给装配体攒出速度, 那点动量能带着人一直滑。
 			local v = r.AssemblyLinearVelocity
 			r.AssemblyLinearVelocity = Vector3.new(0, v.Y, 0)
-			if md.Magnitude > 0 then r.CFrame = r.CFrame + md * (S.spd * dt); pushN += 1 end
+			-- "什么时候推"不看输入源了, 改成量游戏自己挪了多少: lastPos 记的是上一帧我们推完的位置, 到这一帧
+			-- 开始, 中间那段水平位移只有游戏/物理能造成。没挪 = 手已经离开摇杆 = 一帧都不推; 挪了就把这一步换成
+			-- spd*dt。出来的速度就是 spd, 游戏是靠速度挪人还是靠写位置挪人都一样, 也不用挑输入源。
+			local p = r.CFrame.Position
+			local d = lastPos and Vector3.new(p.X - lastPos.X, 0, p.Z - lastPos.Z) or nil
+			if d then
+				gateSpd = d.Magnitude / math.max(dt, 1e-6)
+				-- 下限: 水平不到 1 格/秒当没动 (阈值跟 dt 走, 掉帧不误判)。
+				-- 上限: 传送/重生那种一步几十格, 当走路的话 -d 会照着原路把人拽回去, 这种帧只重新对位不推。
+				gateOpen = d.Magnitude > dt and d.Magnitude < 60 * dt
+				if gateOpen then r.CFrame = r.CFrame + d.Unit * (S.spd * dt) - d; pushN += 1 end
+			end
+			-- 基准必须记推完之后的位置: 记推之前的话, 下一帧量到的差里会混进自己刚才那一下, 推一帧停一帧地摆。
+			lastPos = r.CFrame.Position
 		else -- root: 直接写水平速度, 松摇杆归零一次
 			local v = r.AssemblyLinearVelocity
 			if md.Magnitude > 0 then r.AssemblyLinearVelocity = Vector3.new(md.X * S.spd, v.Y, md.Z * S.spd); moving = true
@@ -453,6 +473,7 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 	local function stopMove() -- 关速度 / 切模式时收尾: doSpeed 的一次性归零靠 moving, 而 set 里把 moving 清了它就再也不会跑, 残余速度得在这里自己清
 		local _, _, r = body(); if r then local v = r.AssemblyLinearVelocity; r.AssemblyLinearVelocity = Vector3.new(0, v.Y, 0) end
 		moving = false
+		lastPos = nil -- cframe 门的位置基准也作废: 不清的话重开那一刻会拿旧位置算出一大步位移, 照着 -d 把人拽回去
 	end
 	local function speedTick(dt) local _, h, r = body(); if h and not h.SeatPart and h.Health > 0 then doSpeed(r, h, dt) end end
 	local function flyTick() local _, h, r = body(); if h then if h.SeatPart then W.fly(false) else doFly(r, h) end end end
@@ -468,12 +489,15 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 		local md = (h and h.MoveDirection) or Vector3.zero
 		local okS, st = pcall(function() return h and h:GetState() end)
 		local q = r and r.Position or Vector3.zero
-		-- 两个源并排打: 摇杆=Humanoid.MoveDirection(会冻), 模块=ControlModule:GetMoveVector(每帧现算)。
-		-- 再出「停不下来」, 这两个数一对就知道是谁没归零, 不用第五轮猜。源= 标明这次是谁在驱动。
+		-- 三个数并排打: 摇杆=Humanoid.MoveDirection(真机 26.10.15.5.63 的 287 条全是 1.00, 会冻),
+		-- 模块=ControlModule:GetMoveVector(真机 26.10.15.6.89 的 162 条全是 0, 这游戏的控制不走 PlayerModule),
+		-- 门=cframe 推不推的唯一依据(量游戏自己这一步的水平位移), 游=量出来的游戏自身速度。
+		-- 源已经不再决定推不推了, 所以不打"谁在驱动", 打门开没开 —— 下一份日志一眼就能对账。
 		local modTxt = stickFrom and string.format("(%.2f,%.2f,%.2f)|%.2f 路=%s", stickRaw.X, stickRaw.Y, stickRaw.Z, stickRaw.Magnitude, ctrlPath) or `无({ctrlWhy})`
-		return string.format("摇杆=(%.2f,%.2f,%.2f)|%.2f 模块=%s 源=%s 推=%d/跑=%d 态=%s 位=(%.0f,%.0f,%.0f) 游戏=%s", md.X, md.Y, md.Z, md.Magnitude, modTxt, stickFrom and "模块" or "Humanoid", pushN, tickN, (okS and st and tostring(st.Name)) or "?", q.X, q.Y, q.Z, uiTxt())
+		local gateTxt = (F.spdmode == "cframe") and (gateOpen and "开" or "关") or "—"
+		return string.format("摇杆=(%.2f,%.2f,%.2f)|%.2f 模块=%s 门=%s 游=%.1f格/秒 推=%d/跑=%d 态=%s 位=(%.0f,%.0f,%.0f) 游戏=%s", md.X, md.Y, md.Z, md.Magnitude, modTxt, gateTxt, gateSpd, pushN, tickN, (okS and st and tostring(st.Name)) or "?", q.X, q.Y, q.Z, uiTxt())
 	end }
-	feature{ key = "speed", label = "速度", num = { "spd", 16 }, tick = speedTick, set = function(v) if v then moving = false end end, off = function() stopMove(); restoreSpeed() end }
+	feature{ key = "speed", label = "速度", num = { "spd", 16 }, tick = speedTick, set = function(v) if v then moving, lastPos = false, nil end end, off = function() stopMove(); restoreSpeed() end }
 	feature{ kind = "cycle", key = "spdmode", save = "spdmode", def = "root", cycle = { "root", "walk", "cframe" }, text = function(v) return "模式 " .. v end, set = function() stopMove(); restoreSpeed() end, w = 1 }
 	feature{ key = "fly", label = "飞行", num = { "flyspd", 50 }, tick = flyTick, off = stopFly }
 	feature{ key = "jump", label = "高跳", num = { "jump", 50 }, tick = jumpTick, off = restoreJump }
