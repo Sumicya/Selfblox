@@ -149,11 +149,42 @@ MODS[#MODS + 1] = { name = "moc", tab = "动", fn = function(page)
 		flyLV.VectorVelocity = md * S.fly + Vector3.yAxis * (S.fly * (cam.LookVector.Y * md:Dot(look) + (up and 1 or 0) - (down and 1 or 0)))
 		flyAO.CFrame = CFrame.lookAt(Vector3.zero, look)
 	end
+	local ctrl, ctrlT = nil, -1e9
+	local function cframeMoveVector()
+		-- CFrame 模式直接读控制模块的原始输入；MoveDirection 在部分角色状态下会残留非零值。
+		if not ctrl and os.clock() - ctrlT > 1 then
+			ctrlT = os.clock()
+			local ps = me:FindFirstChildOfClass("PlayerScripts")
+			local pm = ps and ps:FindFirstChild("PlayerModule")
+			if pm then
+				pcall(function()
+					local module = require(pm)
+					local controls = module and module:GetControls()
+					if controls and controls.GetMoveVector then ctrl = controls end
+				end)
+			end
+		end
+		if not ctrl then return Vector3.zero end
+		local ok, mv = pcall(function() return ctrl:GetMoveVector() end)
+		if not ok or typeof(mv) ~= "Vector3" then ctrl, ctrlT = nil, os.clock(); return Vector3.zero end
+		if mv.Magnitude <= 1e-4 then return Vector3.zero end
+		local cam = workspace.CurrentCamera
+		if not cam then return Vector3.zero end
+		local cf = cam.CFrame
+		local world = Vector3.new(cf.RightVector.X * mv.X - cf.LookVector.X * mv.Z, 0, cf.RightVector.Z * mv.X - cf.LookVector.Z * mv.Z)
+		return world.Magnitude > 1e-4 and world.Unit or Vector3.zero
+	end
 	local function doSpeed(r, h, dt)
-		local md = h.MoveDirection
-		if S.mode == "walk" then baseOf(h); h.WalkSpeed = S.spd
-		elseif S.mode == "cframe" then if md.Magnitude > 0 then r.CFrame = r.CFrame + md * (S.spd * dt) end
+		if S.mode == "walk" then
+			baseOf(h); h.WalkSpeed = S.spd
+		elseif S.mode == "cframe" then
+			local md = cframeMoveVector()
+			-- CFrame 驱动时每帧清水平动量，避免松手后物理速度继续带动角色。
+			local v = r.AssemblyLinearVelocity
+			r.AssemblyLinearVelocity = Vector3.new(0, v.Y, 0)
+			if md.Magnitude > 0 then r.CFrame = r.CFrame + md * (S.spd * dt) end
 		else -- root: 直接写水平速度, 松摇杆归零一次
+			local md = h.MoveDirection
 			local v = r.AssemblyLinearVelocity
 			if md.Magnitude > 0 then r.AssemblyLinearVelocity = Vector3.new(md.X * S.spd, v.Y, md.Z * S.spd); moving = true
 			elseif moving then r.AssemblyLinearVelocity = Vector3.new(0, v.Y, 0); moving = false end
@@ -210,10 +241,19 @@ MODS[#MODS + 1] = { name = "moc", tab = "动", fn = function(page)
 	end)
 
 	local r1 = row(page)
-	toggle(r1, "速度", false, function(v) speedOn, moving = v, false; if not v then restoreSpeed() end end, 0.5)
+	toggle(r1, "速度", false, function(v)
+		speedOn, moving = v, false
+		if not v then
+			if S.mode == "cframe" then local r = root(); if r then local vel = r.AssemblyLinearVelocity; r.AssemblyLinearVelocity = Vector3.new(0, vel.Y, 0) end end
+			restoreSpeed()
+		end
+	end, 0.5)
 	num(r1, nil, function() return S.spd end, function(v) S.spd = v; save("spd", v) end, 0.5)
 	local MODES = { root = "walk", walk = "cframe", cframe = "root" }
-	btn(page, "模式 " .. S.mode, function(b) restoreSpeed(); moving = false; S.mode = MODES[S.mode] or "root"; save("spdmode", S.mode); b.Text = "模式 " .. S.mode end)
+	btn(page, "模式 " .. S.mode, function(b)
+		if S.mode == "cframe" then local r = root(); if r then local vel = r.AssemblyLinearVelocity; r.AssemblyLinearVelocity = Vector3.new(0, vel.Y, 0) end end
+		restoreSpeed(); moving = false; S.mode = MODES[S.mode] or "root"; save("spdmode", S.mode); b.Text = "模式 " .. S.mode
+	end)
 	local r2 = row(page)
 	setFly = toggle(r2, "飞行", false, function(v) flyOn = v; if not v then stopFly() end end, 0.5)
 	num(r2, nil, function() return S.fly end, function(v) S.fly = v; save("flyspd", v) end, 0.5)
