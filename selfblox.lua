@@ -22,7 +22,7 @@
 --   语法基线就是 Luau(运行环境就是它): 26.10.5.28 起用了字符串插值(`{}`)、复合赋值(+= 等)与 if 表达式(if c then a else b),
 --            Lua 5.4 / fengari 都解析不了; 自检的权威跑法是官方 Luau 0.741 (本地怎么编见 tools/luau-driver/build.sh)
 
-local VERSION = "26.10.15.5.63" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
+local VERSION = "26.10.15.6.89" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
@@ -251,6 +251,7 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 	end
 	local ctrl, ctrlT, stickFrom, stickRaw = nil, -1e9, false, Vector3.zero
 	local ctrlWhy = "还没探过" -- 探不到控制模块时记下"为什么", 打进日志; 只报「模块=无」等于没报
+	local ctrlPath = "" -- 认出来的是哪一路 (GetControls 直调 / GetModule 再一层), 打进日志
 	-- 摇杆真值。前四版修「停不下来」全在改怎么拦(松手归零一次 / 每帧钉死水平速度 / GetState 门), 方向错了:
 	-- 主人 26.10.13.5.46 的日志里水平速度已经钉到 1 而人还在动, 而这个模式只在 md 非零时才推 ⟹ 动只能来自
 	-- 那个一直非零的 h.MoveDirection。所以这版换源: PlayerModule.ControlModule:GetMoveVector() 是控制模块
@@ -273,12 +274,25 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 				for i = 1, math.min(#names, 8) do shown[#shown + 1] = names[i] end
 				ctrlWhy = `PlayerScripts 在, 但没有 PlayerModule; 底下 {#names} 个: {(#shown > 0 and table.concat(shown, " ") or "(空)")}{(#names > 8 and " …" or "")}`
 			elseif not ctrl then
-				-- 26.10.15.4.62 真机日志确认走的就是这一支(PlayerModule 在, 但抛错), 所以光报「抛错」还是不够:
-				-- 是 require 被执行器挡了、还是 PlayerModule 脚本自己报错, 修法完全不同。pcall 第二个值就是错误串。
-				local okR, errR = pcall(function() local m = require(pm):GetModule(); local c = m and m:GetControls(); if c and c.GetMoveVector then ctrl = c end end)
+				-- 26.10.15.5.63 真机日志给出了确切错误串: "…:278: attempt to call missing method 'GetModule' of tab"。
+				-- 那个 :278 就是本文件这一行 —— 执行器把 chunk 名换成了乱码, 行号没换。也就是说 require 成功了、
+				-- 拿回来一张表, 是这张表上没有 GetModule。对照官方 PlayerModule 源码, require 出来的表公开方法只有
+				-- GetCameras / GetControls / GetClickToMoveController, 压根没有 GetModule: 上一版凭空多插了一层,
+				-- 于是六版以来每次都在这儿抛错, 每次都退回会冻的 Humanoid.MoveDirection —— 「停不下来」的真正来源。
+				local okR, errR = pcall(function()
+					local t = require(pm)
+					local c = t and t.GetControls and t:GetControls() -- 官方就这一层, 不需要 GetModule
+					local how = "GetControls"
+					if not (c and c.GetMoveVector) then -- roblox-ts 生成的那套才多一层 GetModule, 留作第二路
+						local m = t and t.GetModule and t:GetModule()
+						c = m and m.GetControls and m:GetControls()
+						how = "GetModule"
+					end
+					if c and c.GetMoveVector then ctrl, ctrlPath = c, how end
+				end)
 				if not ctrl then
 					if okR then
-						ctrlWhy = "PlayerModule 在, 但 GetControls 没给 GetMoveVector"
+						ctrlWhy = "PlayerModule 在, 但两条路都没给出 GetMoveVector"
 					else
 						local e = tostring(errR)
 						local nl = e:find("\n", 1, true) -- 错误串常跟一长串 traceback, 只留第一行
@@ -308,14 +322,15 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 	end
 
 	-- ── 游戏自己的输入物件探针 ─────────────────────────────────────────────
-	-- 26.10.15.4.62 的真机日志把「停不下来」的成因摆出来了: #44–#74 连续 31 条, Humanoid.MoveDirection 恒为
-	-- (-0.87,0.00,0.48)|1.00, 位恒 (-2,49,8), 其中 28 条前向速度=0.0 (logint=0.2 ⟹ 约 5.6 秒) —— 人早停了,
-	-- MoveDirection 还冻在满偏上; 而那一段速度功能是关着的, 所以这是游戏自己的行为, 跟脚本无关。
+	-- 26.10.15.5.63 的真机日志(287 条)把成因钉死了: 摇杆模长 287 条全是 1.00, 一条都不例外;
+	-- 其中 #172–#286 连续 115 条(23.0 秒)摇杆恒为 (-0.97,0.00,-0.25), 位只在 x[-132,-130] z[-86,-76] 里挪。
+	-- 人早停了, Humanoid.MoveDirection 还冻在满偏上 ⟹ 它在这个游戏里根本不回零。
+	-- 而 cframe 推的条件是 md.Magnitude > 0, 源永不归零 = 永久推, 这就是「停不下来」。
 	-- 主人说这游戏有自己的跳跃和趴下滑竿(右边上下), 控制不走 Roblox 那套 ⟹ 真值不在 Humanoid 上。
 	-- 前六次修「停不下来」全在改「怎么拦」(松手归零 / 每帧钉速度 / GetState 门 / 换控制模块), 没一次碰过
-	-- 「源本身是陈的」。cframe 推的条件就是 md.Magnitude > 1e-4, 源冻住 = 永久推。
+	-- 「源本身是陈的」。这次是把源换对: 控制模块那条路上一版被一个不存在的 GetModule 挡死了, 见上面。
 	-- 游戏那些物件叫什么名字还不知道, 所以先扫不问: 每秒一次, 认「Position 变过」的子物件当滑块,
-	-- 顺带把右半屏 Active 方块的名字报出来。名字进了日志, 下一版才能直接读它。
+	-- 顺带把右半屏 Active 方块的父名/坐标/尺寸报出来。名字进了日志, 下一版才能直接读它。
 	local uiFound, uiSeen, uiBtn, uiWhy, uiT = {}, {}, "", "还没探过", -1e9
 	local function sbOwn(p) while p do if p == gui or p == FX then return true end; p = p.Parent end; return false end
 	local function halfW() return ((vp and vp.X) or 800) / 2 end
@@ -356,8 +371,15 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 									or p0.Y.Scale ~= p1.Y.Scale or p0.Y.Offset ~= p1.Y.Offset) then uiFound[c] = g; nFound += 1 end
 							end
 						end
-						local ap = g.AbsolutePosition
-						if ap and ap.X >= half and #btns < 6 then btns[#btns + 1] = `{g.Name}:{g.ClassName}` end
+					local ap = g.AbsolutePosition
+					if ap and ap.X >= half and #btns < 6 then
+						-- 26.10.15.5.63 真机报出右半屏 6 个全是 "ImageIcon:ImageButton" —— 名字和类名一模一样,
+						-- 光这一串分不出哪个是跳跃、哪个是趴下滑竿。补上父物件名 + 屏幕坐标 + 尺寸 + 子物件数,
+						-- 下一份日志才认得出谁是谁, 不用再来一轮。
+						local par, nc = g.Parent, 0
+						for _, c in ipairs(g:GetChildren()) do if c:IsA("GuiObject") then nc += 1 end end
+						btns[#btns + 1] = string.format("%s/%s@%d,%d %dx%d 子%d", (par and par.Name) or "?", g.Name, ap.X, ap.Y, sz.X, sz.Y, nc)
+					end
 					end)
 				end
 			end
@@ -448,7 +470,7 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 		local q = r and r.Position or Vector3.zero
 		-- 两个源并排打: 摇杆=Humanoid.MoveDirection(会冻), 模块=ControlModule:GetMoveVector(每帧现算)。
 		-- 再出「停不下来」, 这两个数一对就知道是谁没归零, 不用第五轮猜。源= 标明这次是谁在驱动。
-		local modTxt = stickFrom and string.format("(%.2f,%.2f,%.2f)|%.2f", stickRaw.X, stickRaw.Y, stickRaw.Z, stickRaw.Magnitude) or `无({ctrlWhy})`
+		local modTxt = stickFrom and string.format("(%.2f,%.2f,%.2f)|%.2f 路=%s", stickRaw.X, stickRaw.Y, stickRaw.Z, stickRaw.Magnitude, ctrlPath) or `无({ctrlWhy})`
 		return string.format("摇杆=(%.2f,%.2f,%.2f)|%.2f 模块=%s 源=%s 推=%d/跑=%d 态=%s 位=(%.0f,%.0f,%.0f) 游戏=%s", md.X, md.Y, md.Z, md.Magnitude, modTxt, stickFrom and "模块" or "Humanoid", pushN, tickN, (okS and st and tostring(st.Name)) or "?", q.X, q.Y, q.Z, uiTxt())
 	end }
 	feature{ key = "speed", label = "速度", num = { "spd", 16 }, tick = speedTick, set = function(v) if v then moving = false end end, off = function() stopMove(); restoreSpeed() end }

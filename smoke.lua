@@ -416,25 +416,31 @@ local player = inst("Player", { Name = "Me", DisplayName = "Me", UserId = 1, Cha
 local pgui = inst("PlayerGui", sig())
 pgui.Parent = player
 
--- 官方 PlayerModule: PlayerScripts/PlayerModule → :GetModule():GetControls():GetMoveVector()
--- 默认镜像 Humanoid.MoveDirection(正常游戏就是 摇杆 → 控制模块 → Humanoid:Move, 两边一致)。
--- SBMV.force 不为 nil 时返回它, SBMV.gone 为真时抛错 —— 用来造真机上「MoveDirection 冻住 / 控制模块坏了」这两种分歧。
+-- 官方 PlayerModule: PlayerScripts/PlayerModule → require 出来直接 :GetControls():GetMoveVector()
+-- 照官方源码, require 回来那张表上只有 GetCameras / GetControls / GetClickToMoveController, 没有 GetModule。
+-- 上一版脚本凭空多插了一层 :GetModule(), 真机错误串就是 "attempt to call missing method 'GetModule' of tab";
+-- 而假引擎原来是照着那个错写法建的(见下), 所以这个 bug 一路绿灯混过了六版 —— 假件必须照官方建, 不照脚本建。
+-- SBMV.force 不为 nil 时返回它, SBMV.gone 为真时抛错 —— 造真机上「MoveDirection 冻住 / 控制模块坏了」两种分歧。
 local SBMV = {}
 local pmodule = inst("ModuleScript", { Name = "PlayerModule" })
 pmodule.Parent = inst("PlayerScripts", { Name = "PlayerScripts" })
 pmodule.Parent.Parent = player
-MODULES[pmodule] = { GetModule = function()
-	if SBMV.gone then error("PlayerModule 不可用") end
-	return { GetControls = function() return { GetMoveVector = function()
+local function mkControls()
+	return { GetMoveVector = function()
 		if SBMV.gone then error("控制模块不可用") end
 		if SBMV.force ~= nil then return SBMV.force end
 		local md = humanoid.props.MoveDirection or Vector3.zero -- 世界 → 相机相对(前推 Z=-1)
 		if md.Magnitude < 1e-9 then return Vector3.zero end
 		local cf = camera.CFrame
 		return Vector3.new(md:Dot(cf.RightVector), md:Dot(cf.UpVector), -md:Dot(cf.LookVector))
-	end } end }
-end }
-svc("Players", inst("Players", { LocalPlayer = player, MaxPlayers = 12, GetPlayers = function() return { player } end, GetPlayerFromCharacter = function(_, c) return c == char and player or nil end, PlayerAdded = Signal.new(), PlayerRemoving = Signal.new() }))
+	end }
+end
+-- require 回来就是这张表: 只有 GetControls / GetCameras, 读 GetModule 得到 nil (和真引擎一致),
+-- 脚本里 `t.GetControls and t:GetControls()` 因此直调成功, 而上一版那句 :GetModule() 会在这儿抛错。
+MODULES[pmodule] = {
+	GetControls = function() if SBMV.gone then error("PlayerModule 不可用") end; return mkControls() end,
+	GetCameras = function() return {} end,
+}svc("Players", inst("Players", { LocalPlayer = player, MaxPlayers = 12, GetPlayers = function() return { player } end, GetPlayerFromCharacter = function(_, c) return c == char and player or nil end, PlayerAdded = Signal.new(), PlayerRemoving = Signal.new() }))
 svc("RunService", inst("RunService", { PreSimulation = Signal.new(), PreRender = Signal.new(), Heartbeat = Signal.new() }))
 svc("UserInputService", inst("UserInputService", { InputEnded = Signal.new(), JumpRequest = Signal.new(), TouchEnabled = true, GetMouseLocation = function() return Vector2.new(100, 100) end }))
 svc("Lighting", inst("Lighting", { Ambient = Color3.fromRGB(70, 70, 70), OutdoorAmbient = Color3.fromRGB(70, 70, 70), Brightness = 1, FogEnd = 100000, GlobalShadows = true }))
@@ -1709,7 +1715,9 @@ do -- 「模块=无」必须说清是哪一种"无": 真机两份日志 (367 条
 	step(1 / 60, 130)
 	local dg1 = dumpTxt()
 	ok(dg1:find("没认出滑块", 1, true) ~= nil, "第一次扫认不出滑块: 没有上一次的 Position 可比")
-	ok(dg1:find("SlideStick:Frame", 1, true) ~= nil, "认不出来就把右半屏的 Active 方块名字报出来 (下一版靠这个直接读)")
+	-- 真机 26.10.15.5.63 报出右半屏 6 个全是 "ImageIcon:ImageButton" —— 名字类名一模一样, 分不出跳跃和趴下滑竿,
+	-- 所以光报名字不够, 得带上父名 + 屏幕坐标 + 尺寸 + 子物件数, 下一份日志才认得出谁是谁。
+	ok(dg1:find("GameControls/SlideStick@900,1800 120x120 子1", 1, true) ~= nil, "认不出来就报父名/坐标/尺寸/子物件数 (光报 名字:类名 在真机上六个全一样, 等于没报)")
 	gknob.Position = UDim2.fromOffset(30, 60) -- 往下拨: 真机那个趴下滑竿就是上下动
 	gknob.props.AbsolutePosition = { X = 930, Y = 1860 }
 	step(1 / 60, 130)
@@ -1740,6 +1748,29 @@ do -- 「模块=无」必须说清是哪一种"无": 真机两份日志 (367 条
 	click(spdBtn) -- 复原: 上面为了测「速度关着也探」把它关了, 后面的断言按速度开着走
 	step(1 / 60, 3)
 	ok(spdBtn.Text:find("开", 1, true) ~= nil, "复原: 速度重新是开的")
+end
+
+do -- 控制模块那两条路。真机 26.10.15.5.63 的错误串 ":278: attempt to call missing method 'GetModule' of tab"
+	-- 说的就是脚本凭空插的那层 GetModule —— 官方 require 出来的表上只有 GetControls。这一版改成直调。
+	local function dumpTxt()
+		for _, d in ipairs(all()) do if d:IsA("TextButton") and type(d.Text) == "string" and d.Text:find("诊断打包", 1, true) then d.Activated:Fire() end end
+		step(1 / 60, 2)
+		return VFS["selfblox_dump.txt"] or ""
+	end
+	local function reprobe() SBMV.gone = true; step(1 / 60, 130); SBMV.gone = nil; step(1 / 60, 130) end -- 先打掉 ctrl 缓存, 再跨过每秒重探窗口
+	reprobe()
+	local dp = dumpTxt()
+	ok(dp:find("路=GetControls", 1, true) ~= nil, "官方那层 GetControls 直调就走通了, 并把走的是哪条路打进日志")
+	ok(dp:find("路=GetModule", 1, true) == nil, "官方表上没有 GetModule, 所以走的必须是直调那条 (上一版死在这儿)")
+	-- 第二条路: roblox-ts 生成的那套才多一层 GetModule, 不能因为修官方那条就把它弄丢
+	local stock = MODULES[pmodule]
+	MODULES[pmodule] = { GetModule = function() return { GetControls = mkControls } end }
+	reprobe()
+	local dl = dumpTxt()
+	MODULES[pmodule] = stock
+	ok(dl:find("路=GetModule", 1, true) ~= nil, "只有 GetModule 那套也认得出来, 自动走第二条路")
+	step(1 / 60, 130)
+	ok(dumpTxt():find("路=GetControls", 1, true) ~= nil, "换回官方那张表后回到直调那条路")
 end
 click(modeBtn) -- 回到 root
 humanoid.props.MoveDirection = Vector3.new(0, 0, -1)
