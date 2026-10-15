@@ -126,7 +126,9 @@ MODS[#MODS + 1] = { name = "moc", tab = "动", fn = function(page)
 	local prompts = setmetatable({}, { __mode = "k" }) -- prompt -> 原始属性
 
 	local function baseOf(h) local b = base[h]; if not b then b = { h.WalkSpeed, h.JumpPower, h.JumpHeight }; base[h] = b end; return b end
-	local function restore() local h = hum(); local b = h and base[h]; if b then h.WalkSpeed, h.JumpPower, h.JumpHeight = b[1], b[2], b[3] end end
+	local function restoreSpeed() local h = hum(); local b = h and base[h]; if b then h.WalkSpeed = b[1] end end
+	local function restoreJump() local h = hum(); local b = h and base[h]; if b then h.JumpPower, h.JumpHeight = b[2], b[3] end end
+	local function restore() restoreSpeed(); restoreJump() end
 	local function attach(r) -- 飞行/旋转的约束都挂在这一个 Attachment 下, 删它就全删
 		if not att or att.Parent ~= r then if att then att:Destroy() end; att = mk("Attachment", { Name = "SB_MOC" }, r); flyLV, flyAO, spinAV = nil, nil, nil end
 		return att
@@ -167,7 +169,7 @@ MODS[#MODS + 1] = { name = "moc", tab = "动", fn = function(page)
 	local function stopSpin() if spinAV then spinAV:Destroy(); spinAV = nil end end
 	local function nvOn()
 		local atm = Lighting:FindFirstChildOfClass("Atmosphere")
-		nvSaved = nvSaved or { Lighting.Ambient, Lighting.OutdoorAmbient, Lighting.Brightness, Lighting.FogEnd, Lighting.GlobalShadows, atm and atm.Density }
+		nvSaved = nvSaved or { Lighting.Ambient, Lighting.OutdoorAmbient, Lighting.Brightness, Lighting.FogEnd, Lighting.GlobalShadows, atm and atm.Density, atm }
 		Lighting.Ambient, Lighting.OutdoorAmbient = Color3.fromRGB(160, 160, 160), Color3.fromRGB(160, 160, 160)
 		Lighting.Brightness, Lighting.FogEnd, Lighting.GlobalShadows = math.max(Lighting.Brightness, 2), 1e6, false
 		if atm then atm.Density = 0 end
@@ -178,7 +180,7 @@ MODS[#MODS + 1] = { name = "moc", tab = "动", fn = function(page)
 		if not nvSaved then return end
 		local atm = Lighting:FindFirstChildOfClass("Atmosphere")
 		Lighting.Ambient, Lighting.OutdoorAmbient, Lighting.Brightness, Lighting.FogEnd, Lighting.GlobalShadows = nvSaved[1], nvSaved[2], nvSaved[3], nvSaved[4], nvSaved[5]
-		if atm and nvSaved[6] then atm.Density = nvSaved[6] end
+		if atm and atm == nvSaved[7] and nvSaved[6] ~= nil then atm.Density = nvSaved[6] end
 		nvSaved = nil
 	end
 	local function patch(p) -- 秒互动: 0 长按 / 超远距离 / 不要视线; 强制模式连 Enabled=false 的也打开
@@ -208,15 +210,15 @@ MODS[#MODS + 1] = { name = "moc", tab = "动", fn = function(page)
 	end)
 
 	local r1 = row(page)
-	toggle(r1, "速度", false, function(v) speedOn, moving = v, false; if not v then restore() end end, 0.5)
+	toggle(r1, "速度", false, function(v) speedOn, moving = v, false; if not v then restoreSpeed() end end, 0.5)
 	num(r1, nil, function() return S.spd end, function(v) S.spd = v; save("spd", v) end, 0.5)
 	local MODES = { root = "walk", walk = "cframe", cframe = "root" }
-	btn(page, "模式 " .. S.mode, function(b) restore(); moving = false; S.mode = MODES[S.mode] or "root"; save("spdmode", S.mode); b.Text = "模式 " .. S.mode end)
+	btn(page, "模式 " .. S.mode, function(b) restoreSpeed(); moving = false; S.mode = MODES[S.mode] or "root"; save("spdmode", S.mode); b.Text = "模式 " .. S.mode end)
 	local r2 = row(page)
 	setFly = toggle(r2, "飞行", false, function(v) flyOn = v; if not v then stopFly() end end, 0.5)
 	num(r2, nil, function() return S.fly end, function(v) S.fly = v; save("flyspd", v) end, 0.5)
 	local r3 = row(page)
-	toggle(r3, "高跳", false, function(v) jumpOn = v; if not v then restore() end end, 0.5)
+	toggle(r3, "高跳", false, function(v) jumpOn = v; if not v then restoreJump() end end, 0.5)
 	num(r3, nil, function() return S.jump end, function(v) S.jump = v; save("jump", v) end, 0.5)
 	local r4 = row(page)
 	toggle(r4, "旋转", false, function(v) spinOn = v; if not v then stopSpin() end end, 0.5)
@@ -781,8 +783,10 @@ MODS[#MODS + 1] = { name = "brick", tab = "砖", fn = function(page)
 		end
 		end)
 		conn:Disconnect()
-		if mult and mult0 and mult.Parent then mult.Value = mult0 end
-		if me.Parent then pcall(function() me:SetAttribute("MultiplierUpgradeLevel", lvl0) end) end
+		if generation == runGeneration or not run then
+			if mult and mult0 ~= nil and mult.Parent then pcall(function() mult.Value = mult0 end) end
+			if me.Parent then pcall(function() me:SetAttribute("MultiplierUpgradeLevel", lvl0) end) end
+		end
 		if not ok then
 			warn("[Selfblox] brick loop: " .. tostring(err))
 			if generation == runGeneration then run = false; if setRun then setRun(false, true) end; toast("刷砖循环异常，已停止") end
