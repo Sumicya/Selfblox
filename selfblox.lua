@@ -322,7 +322,12 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 	local function reclip() for d in pairs(col) do if d.Parent then d.CanCollide = true end end; table.clear(col); clipModel = nil end
 	local function noclip(p, m)
 		if m ~= clipModel then reclip(); clipModel = m end
-		if m then for _, d in ipairs(m:GetDescendants()) do if d:IsA("BasePart") and d.CanCollide then col[d] = true; d.CanCollide = false end end end -- ponytail: 每物理步扫全车部件, 几百件无感
+		if not p then return end
+		local function disable(d)
+			if d:IsA("BasePart") and not d.Anchored and d.CanCollide then col[d] = true; d.CanCollide = false end
+		end
+		disable(p)
+		for _, d in ipairs(p:GetConnectedParts(true)) do disable(d) end -- 只处理本车物理装配体, 不扫整个 Model 容器
 	end
 	local function hover(p, m) -- 穿墙时探地: 贴地推起 / 带内止跌, 坠得快探得远
 		rp.FilterDescendantsInstances = { m or p, me.Character }
