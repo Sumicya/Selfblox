@@ -753,6 +753,7 @@ MODS[#MODS + 1] = { name = "brick", tab = "砖", fn = function(page)
 	local S = { batch = opt("bbatch", 4), int = opt("bint", 0.08), drain = opt("bdrain", 0.6), mult = opt("bmult", 99999), lvl = opt("blevel", 9999) }
 	local run, setRun, status = false, nil, nil
 	local runGeneration = 0
+	local sessionOriginal
 	local st = { cycles = 0, earned = 0, sent = 0, got = 0, rate = 0 }
 	local function mine(c) return c:IsA("BasePart") and not c.Anchored and c:GetAttribute("Owner") == me.UserId end
 	local function ingest(b, col) b.CFrame = col.CFrame + Vector3.new(math.random(-3, 3), 1.5, math.random(-3, 3)); b.AssemblyLinearVelocity = Vector3.new(0, -35, 0) end
@@ -761,7 +762,10 @@ MODS[#MODS + 1] = { name = "brick", tab = "砖", fn = function(page)
 		local col, spawnBit = workspace:FindFirstChild("Collector"), RS:FindFirstChild("SpawnBit")
 		local bits, mult = ls and ls:FindFirstChild("Bits"), ls and ls:FindFirstChild("Multiplier")
 		if not (col and bits) then setRun(false); toast("没找到 workspace.Collector / leaderstats.Bits"); return end
-		local mult0, lvl0 = mult and mult.Value, me:GetAttribute("MultiplierUpgradeLevel")
+		if not sessionOriginal then
+			sessionOriginal = { mult = mult and mult.Value, level = me:GetAttribute("MultiplierUpgradeLevel") }
+		end
+		local mult0, lvl0 = sessionOriginal.mult, sessionOriginal.level
 		local last, lastT = bits.Value, os.clock()
 		local conn = workspace.ChildAdded:Connect(function(c) task.defer(function() if run and alive and generation == runGeneration and mine(c) then ingest(c, col); st.got = st.got + 1 end end) end)
 		local function drain() for _, c in ipairs(workspace:GetChildren()) do if mine(c) then ingest(c, col) end end end
@@ -786,6 +790,7 @@ MODS[#MODS + 1] = { name = "brick", tab = "砖", fn = function(page)
 		if generation == runGeneration or not run then
 			if mult and mult0 ~= nil and mult.Parent then pcall(function() mult.Value = mult0 end) end
 			if me.Parent then pcall(function() me:SetAttribute("MultiplierUpgradeLevel", lvl0) end) end
+			sessionOriginal = nil
 		end
 		if not ok then
 			warn("[Selfblox] brick loop: " .. tostring(err))
