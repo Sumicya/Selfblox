@@ -130,4 +130,10 @@ git tag v"$(sed -n 's/^local VERSION = "\([^"]*\)".*/\1/p' selfblox.lua | head -
 
 ## 许可
 
-GPL-3.0，全文见 [LICENSE](LICENSE)。
+Copyright (C) 2026 Sumicya
+
+本程序是自由软件：你可以按自由软件基金会发布的 GNU 通用公共许可证第 3 版（或你选择的更高版本）重新分发和/或修改它。
+
+本程序的发布是希望它有用，但**不含任何担保**；甚至不含对适销性或特定用途适用性的默示担保。详见 GNU 通用公共许可证。
+
+全文见 [LICENSE](LICENSE)。

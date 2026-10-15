@@ -1,10 +1,17 @@
 -- Selfblox · 单文件 · 一次 loadstring · 一个面板 · 七页清单
+--
+-- Copyright (C) 2026 Sumicya
+-- SPDX-License-Identifier: GPL-3.0-or-later
+-- 本程序是自由软件: 你可以按自由软件基金会发布的 GNU 通用公共许可证第 3 版(或你选择的更高版本)重新分发和/或修改它。
+-- 本程序的发布是希望它有用, 但不含任何担保; 甚至不含对适销性或特定用途适用性的默示担保。详见 GNU 通用公共许可证。
+-- 你应当随本程序收到一份 GNU 通用公共许可证副本(仓库里的 LICENSE); 如果没有, 见 <https://www.gnu.org/licenses/>。
+-- 单文件被单独转走时, 这几行是唯一还跟着走的声明, 别删。
 -- 版本: 下面的 VERSION 是唯一来源(五段 yy.m.d.当日序号.总序号; 口径见 README「版本」); 面板标题 / 诊断快照 / 启动打印都读它
 -- 用法:  loadstring(game:HttpGet("https://raw.githubusercontent.com/Sumicya/Selfblox/HEAD/selfblox.lua"))()
 -- 覆盖:  执行前 _G.SB = { spd = 50, flyspd = 80, only = {"moc", "sibs"} }
 -- 优先级: _G.SB > Selfblox.json(面板里改过的值) > 默认值
 -- 卸载:  _G.SB_UNLOAD()   重跑会自动先卸载
--- 自检:  lua5.4 smoke.lua  (离线假引擎, 不跑也行)
+-- 自检:  tools/luau-driver/run_smoke.sh  (离线假引擎, 不跑也行)
 --
 -- 设计约定:
 --   表驱动 —— 一个功能 = 一个顶层函数 + 清单里一行 feature{}; 建页 / 存盘 / 每帧连接 / 卸载 / 诊断都从清单生成,
@@ -13,9 +20,9 @@
 --   面向 Delta 最新版 —— hookmetamethod / newcclosure / UIDragDetector 当它一定有;
 --            gethui / isfile / writefile 缺失时退回 CoreGui 并跳过存盘, 面板照样起得来
 --   语法基线就是 Luau(运行环境就是它): 26.10.5.28 起用了字符串插值(`{}`)、复合赋值(+= 等)与 if 表达式(if c then a else b),
---            Lua 5.4 / fengari 都解析不了; 自检的权威跑法是 CI 里的官方 Luau 0.741 (本地怎么编同版本见 AGENTS.md)
+--            Lua 5.4 / fengari 都解析不了; 自检的权威跑法是官方 Luau 0.741 (本地怎么编见 tools/luau-driver/build.sh)
 
-local VERSION = "26.10.15.4.62" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
+local VERSION = "26.10.15.5.63" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
@@ -266,8 +273,18 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 				for i = 1, math.min(#names, 8) do shown[#shown + 1] = names[i] end
 				ctrlWhy = `PlayerScripts 在, 但没有 PlayerModule; 底下 {#names} 个: {(#shown > 0 and table.concat(shown, " ") or "(空)")}{(#names > 8 and " …" or "")}`
 			elseif not ctrl then
-				local okR = pcall(function() local m = require(pm):GetModule(); local c = m and m:GetControls(); if c and c.GetMoveVector then ctrl = c end end)
-				if not ctrl then ctrlWhy = okR and "PlayerModule 在, 但 GetControls 没给 GetMoveVector" or "PlayerModule 在, 但 require/GetModule/GetControls 抛错" end
+				-- 26.10.15.4.62 真机日志确认走的就是这一支(PlayerModule 在, 但抛错), 所以光报「抛错」还是不够:
+				-- 是 require 被执行器挡了、还是 PlayerModule 脚本自己报错, 修法完全不同。pcall 第二个值就是错误串。
+				local okR, errR = pcall(function() local m = require(pm):GetModule(); local c = m and m:GetControls(); if c and c.GetMoveVector then ctrl = c end end)
+				if not ctrl then
+					if okR then
+						ctrlWhy = "PlayerModule 在, 但 GetControls 没给 GetMoveVector"
+					else
+						local e = tostring(errR)
+						local nl = e:find("\n", 1, true) -- 错误串常跟一长串 traceback, 只留第一行
+						ctrlWhy = `PlayerModule 在, 但抛错: {(nl and e:sub(1, nl - 1) or e):sub(1, 80)}`
+					end
+				end
 			end
 		end
 		if ctrl then
@@ -289,6 +306,77 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 		stickFrom, stickRaw = false, Vector3.zero
 		return (md and md.Magnitude > 1e-4 and md.Unit) or Vector3.zero
 	end
+
+	-- ── 游戏自己的输入物件探针 ─────────────────────────────────────────────
+	-- 26.10.15.4.62 的真机日志把「停不下来」的成因摆出来了: #44–#74 连续 31 条, Humanoid.MoveDirection 恒为
+	-- (-0.87,0.00,0.48)|1.00, 位恒 (-2,49,8), 其中 28 条前向速度=0.0 (logint=0.2 ⟹ 约 5.6 秒) —— 人早停了,
+	-- MoveDirection 还冻在满偏上; 而那一段速度功能是关着的, 所以这是游戏自己的行为, 跟脚本无关。
+	-- 主人说这游戏有自己的跳跃和趴下滑竿(右边上下), 控制不走 Roblox 那套 ⟹ 真值不在 Humanoid 上。
+	-- 前六次修「停不下来」全在改「怎么拦」(松手归零 / 每帧钉速度 / GetState 门 / 换控制模块), 没一次碰过
+	-- 「源本身是陈的」。cframe 推的条件就是 md.Magnitude > 1e-4, 源冻住 = 永久推。
+	-- 游戏那些物件叫什么名字还不知道, 所以先扫不问: 每秒一次, 认「Position 变过」的子物件当滑块,
+	-- 顺带把右半屏 Active 方块的名字报出来。名字进了日志, 下一版才能直接读它。
+	local uiFound, uiSeen, uiBtn, uiWhy, uiT = {}, {}, "", "还没探过", -1e9
+	local function sbOwn(p) while p do if p == gui or p == FX then return true end; p = p.Parent end; return false end
+	local function halfW() return ((vp and vp.X) or 800) / 2 end
+	-- 滑块相对底座几何中心的偏移, 归一到 -1..1。不认「静止位置」: 那得等松手才知道, 而松手正是分不清的时候
+	local function knobVal(base, knob)
+		local bs, bp, ks, kp = base.AbsoluteSize, base.AbsolutePosition, knob.AbsoluteSize, knob.AbsolutePosition
+		if not bs or not bp or not ks or not kp or bs.X < 1 or bs.Y < 1 then return end
+		return ((kp.X + ks.X / 2) - (bp.X + bs.X / 2)) / (bs.X / 2), ((kp.Y + ks.Y / 2) - (bp.Y + bs.Y / 2)) / (bs.Y / 2), bp.X + bs.X / 2
+	end
+	local function uiProbe()
+		if os.clock() - uiT < 1 then return end -- 跟控制模块探针同一节流: 扫全树不便宜, 一秒一次够看
+		uiT = os.clock()
+		local half, btns, cand, nFound = halfW(), {}, 0, 0
+		-- 先清掉已经不存在的: 游戏切场景/换 UI 会销毁重建控件, 死物件留着不光报假数据,
+		-- 在真引擎上读它的 AbsoluteSize 还会抛。pairs 遍历中把已有键置 nil 是 Lua 明确允许的。
+		for c, b in pairs(uiFound) do if not c.Parent or not b.Parent then uiFound[c] = nil end end
+		for _ in pairs(uiFound) do nFound += 1 end
+		local trees = {}
+		local pg = me:FindFirstChildOfClass("PlayerGui")
+		if pg then trees[#trees + 1] = pg end
+		if ROOT and ROOT ~= pg then trees[#trees + 1] = ROOT end
+		for _, tree in ipairs(trees) do
+			local okD, list = pcall(function() return tree:GetDescendants() end)
+			if okD and type(list) == "table" then
+				for _, g in ipairs(list) do
+					-- 逐个包 pcall: 有些物件读 Active/Visible 本身就会抛(不是 GuiObject 却混在树里), 不能因为一个坏物件丢掉整棵树
+					pcall(function()
+						if not g:IsA("GuiObject") or g.Visible == false or g.Active ~= true or sbOwn(g) then return end
+						local sz = g.AbsoluteSize
+						if not sz or sz.X < 40 or sz.X > 320 or sz.Y < 40 or sz.Y > 320 then return end
+						cand += 1
+						for _, c in ipairs(g:GetChildren()) do
+							if c:IsA("GuiObject") then
+								local p0, p1 = uiSeen[c], c.Position
+								uiSeen[c] = p1
+								-- 认出来的滑块永久记住, 不只比相邻两秒: 松手时它不动, 只比相邻就永远认不出来
+								if p0 and nFound < 8 and (p0.X.Scale ~= p1.X.Scale or p0.X.Offset ~= p1.X.Offset
+									or p0.Y.Scale ~= p1.Y.Scale or p0.Y.Offset ~= p1.Y.Offset) then uiFound[c] = g; nFound += 1 end
+							end
+						end
+						local ap = g.AbsolutePosition
+						if ap and ap.X >= half and #btns < 6 then btns[#btns + 1] = `{g.Name}:{g.ClassName}` end
+					end)
+				end
+			end
+		end
+		table.sort(btns) -- pairs/GetDescendants 的顺序不保证, 排一下日志才可复现
+		uiBtn = table.concat(btns, " ")
+		uiWhy = `没认出滑块 (Active 方块 {cand} 个{#btns > 0 and `; 右半屏: {uiBtn}` or ""})`
+	end
+	local function uiTxt()
+		local o = {}
+		for knob, base in pairs(uiFound) do
+			local nx, ny, bcx = knobVal(base, knob)
+			if nx then o[#o + 1] = string.format("%s/%s@%s=(%.2f,%.2f)", base.Name, knob.Name, bcx >= halfW() and "右" or "左", nx, ny) end
+		end
+		if #o == 0 then return uiWhy end
+		table.sort(o)
+		return table.concat(o, " ")
+	end
+
 	local function doSpeed(r, h, dt)
 		local md = stick()
 		tickN += 1
@@ -351,6 +439,9 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 	local function clipTick() local c = body(); if c then noclip(c) end end
 	local function nvTick() if body() and os.clock() - nvT > 0.5 then nvT = os.clock(); nvOn() end end -- 游戏会重置光照, 半秒补一次
 	feature{ kind = "page", id = "moc", tab = "动", info = function() -- 摇杆在这里现读, 不在 doSpeed 里缓存: 速度关着也要能看出摇杆到底回没回中
+		-- stick() 必须在这儿也调一次。上一版 info 只读 doSpeed 留下的 stickFrom/stickRaw, 而 doSpeed 只在速度开着时跑,
+		-- 于是 26.10.15.4.62 那份日志前 90 条全是「模块=无(还没探过)」—— 探针根本没跑, 白等 18 秒才看到真成因。
+		stick(); uiProbe()
 		local h, r = hum(), root()
 		local md = (h and h.MoveDirection) or Vector3.zero
 		local okS, st = pcall(function() return h and h:GetState() end)
@@ -358,7 +449,7 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 		-- 两个源并排打: 摇杆=Humanoid.MoveDirection(会冻), 模块=ControlModule:GetMoveVector(每帧现算)。
 		-- 再出「停不下来」, 这两个数一对就知道是谁没归零, 不用第五轮猜。源= 标明这次是谁在驱动。
 		local modTxt = stickFrom and string.format("(%.2f,%.2f,%.2f)|%.2f", stickRaw.X, stickRaw.Y, stickRaw.Z, stickRaw.Magnitude) or `无({ctrlWhy})`
-		return string.format("摇杆=(%.2f,%.2f,%.2f)|%.2f 模块=%s 源=%s 推=%d/跑=%d 态=%s 位=(%.0f,%.0f,%.0f)", md.X, md.Y, md.Z, md.Magnitude, modTxt, stickFrom and "模块" or "Humanoid", pushN, tickN, (okS and st and tostring(st.Name)) or "?", q.X, q.Y, q.Z)
+		return string.format("摇杆=(%.2f,%.2f,%.2f)|%.2f 模块=%s 源=%s 推=%d/跑=%d 态=%s 位=(%.0f,%.0f,%.0f) 游戏=%s", md.X, md.Y, md.Z, md.Magnitude, modTxt, stickFrom and "模块" or "Humanoid", pushN, tickN, (okS and st and tostring(st.Name)) or "?", q.X, q.Y, q.Z, uiTxt())
 	end }
 	feature{ key = "speed", label = "速度", num = { "spd", 16 }, tick = speedTick, set = function(v) if v then moving = false end end, off = function() stopMove(); restoreSpeed() end }
 	feature{ kind = "cycle", key = "spdmode", save = "spdmode", def = "root", cycle = { "root", "walk", "cframe" }, text = function(v) return "模式 " .. v end, set = function() stopMove(); restoreSpeed() end, w = 1 }

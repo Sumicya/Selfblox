@@ -1676,10 +1676,70 @@ do -- 「模块=无」必须说清是哪一种"无": 真机两份日志 (367 条
 	psInst.Parent = player; pmodule.Parent = psInst
 	SBMV.gone = true
 	step(1 / 60, 130)
-	ok(dumpTxt():find("PlayerModule 在, 但 require/GetModule/GetControls 抛错", 1, true) ~= nil, "PlayerModule 在但取不到控制模块 → 日志说的是这一种")
+	local dm3 = dumpTxt()
+	ok(dm3:find("PlayerModule 在, 但抛错", 1, true) ~= nil, "PlayerModule 在但取不到控制模块 → 日志说的是这一种")
+	ok(dm3:find("不可用", 1, true) ~= nil, "而且把 pcall 拿到的真实错误串打出来 (只说「抛错」还是分不清 require 被挡还是脚本自己报错)")
+	ok(dm3:find("require/GetModule/GetControls 抛错", 1, true) == nil, "不再用那句信息量为零的旧话")
 	SBMV.gone = nil
 	step(1 / 60, 130) -- 恢复: 让它重新拿到控制模块
 	ok(dumpTxt():find("模块=无", 1, true) == nil, "恢复后模块这条路重新走通, 不再是「模块=无」")
+
+	-- 探针必须由 info 自己调: 上一版 info 只读 doSpeed 留下的缓存, 而 doSpeed 只在速度开着时跑,
+	-- 于是 26.10.15.4.62 那份真机日志前 90 条全是「模块=无(还没探过)」, 白等 18 秒才看到真成因。
+	if spdBtn.Text:find("开", 1, true) then click(spdBtn) end -- 速度关掉: doSpeed 一帧都不会跑
+	step(1 / 60, 3)
+	SBMV.gone = true
+	step(1 / 60, 130) -- 跨过每秒一次的重探窗口
+	local dmOff = dumpTxt()
+	SBMV.gone = nil
+	ok(dmOff:find("还没探过", 1, true) == nil, "速度关着也探了控制模块 (上一版这里会一直停在「还没探过」)")
+	ok(dmOff:find("PlayerModule 在, 但抛错", 1, true) ~= nil, "而且探出来的是真实成因")
+	step(1 / 60, 130)
+
+	-- 游戏自己的滑竿: 主人说这游戏有自己的跳跃和趴下滑竿(右边上下), 但物件名未知 ⟹ 先扫不问。
+	-- 认法只有一条不依赖名字: 底座 Active 且方, 子物件的 Position 会变的就是滑块。
+	local gctl = inst("ScreenGui", { Name = "GameControls" }); gctl.Parent = pgui
+	local gbase = inst("Frame", { Name = "SlideStick", Active = true, Visible = true }); gbase.Parent = gctl -- inst 不接父参数, 得赋 .Parent
+	gbase.props.AbsoluteSize = { X = 120, Y = 120 }
+	gbase.props.AbsolutePosition = { X = 900, Y = 1800 } -- 视口 1080 宽, 中线 540 ⟹ 这是右半屏
+	local gknob = inst("Frame", { Name = "Knob", Visible = true }); gknob.Parent = gbase
+	gknob.props.AbsoluteSize = { X = 60, Y = 60 }
+	gknob.props.AbsolutePosition = { X = 930, Y = 1830 }
+	gknob.Position = UDim2.fromOffset(30, 30)
+	step(1 / 60, 130)
+	local dg1 = dumpTxt()
+	ok(dg1:find("没认出滑块", 1, true) ~= nil, "第一次扫认不出滑块: 没有上一次的 Position 可比")
+	ok(dg1:find("SlideStick:Frame", 1, true) ~= nil, "认不出来就把右半屏的 Active 方块名字报出来 (下一版靠这个直接读)")
+	gknob.Position = UDim2.fromOffset(30, 60) -- 往下拨: 真机那个趴下滑竿就是上下动
+	gknob.props.AbsolutePosition = { X = 930, Y = 1860 }
+	step(1 / 60, 130)
+	local dg2 = dumpTxt()
+	ok(dg2:find("SlideStick/Knob@右", 1, true) ~= nil, "Position 变过 → 认定是滑块, 报出名字和它在左还是右")
+	ok(dg2:find("(0.00,0.50)", 1, true) ~= nil, "值按底座几何中心归一: 下偏半个半径 = (0.00,0.50)")
+	-- 自家面板也是 Active 方块, 不能混进来 (转向条本身就长得像滑竿)
+	local myTrack
+	for _, d in ipairs(all()) do if d.Name == "SB_Steer" then myTrack = d end end
+	ok(myTrack ~= nil, "前置: 面板里有自己的转向条")
+	myTrack.Visible = true; myTrack.Active = true
+	myTrack.props.AbsoluteSize = { X = 120, Y = 60 }
+	myTrack.props.AbsolutePosition = { X = 900, Y = 1800 }
+	local myKnob = inst("Frame", { Name = "SB_Knob", Visible = true }); myKnob.Parent = myTrack
+	myKnob.props.AbsoluteSize = { X = 40, Y = 40 }
+	myKnob.Position = UDim2.fromOffset(0, 0)
+	step(1 / 60, 130) -- 必须先跨过 1 秒节流: 上一次探针就在 dg2 里, 不 step 直接打包这次探不到 (实测漏过)
+	dumpTxt() -- 探针只在 info 里跑, step 不触发它 ⟹ 要探两次就得打包两次, 少一次这条断言会假绿(实测过)
+	myKnob.Position = UDim2.fromOffset(40, 0)
+	step(1 / 60, 130) -- 跨过每秒一次节流
+	local dg3 = dumpTxt()
+	ok(dg3:find("SB_Steer", 1, true) == nil and dg3:find("SB_Knob", 1, true) == nil, "自家转向条摆成滑竿的样子也不混进来 (sbOwn 认得自家 gui)")
+	ok(dg3:find("SlideStick/Knob@右", 1, true) ~= nil, "排除自家的同时没把游戏那个弄丢")
+	myKnob:Destroy(); myTrack.Visible = false; myTrack.Active = false
+	gctl:Destroy()
+	step(1 / 60, 130)
+	ok(dumpTxt():find("SlideStick", 1, true) == nil, "游戏那棵树撤了以后, 认出来的滑块也跟着从日志里消失")
+	click(spdBtn) -- 复原: 上面为了测「速度关着也探」把它关了, 后面的断言按速度开着走
+	step(1 / 60, 3)
+	ok(spdBtn.Text:find("开", 1, true) ~= nil, "复原: 速度重新是开的")
 end
 click(modeBtn) -- 回到 root
 humanoid.props.MoveDirection = Vector3.new(0, 0, -1)
