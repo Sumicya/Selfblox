@@ -1,0 +1,8 @@
+# 运行时产物 (脚本会写这些, 不该进仓库)
+Selfblox.json
+Selfblox_log.txt
+selfblox_dump.txt
+plane_debug.txt
+luacheck/
+tools/luau-driver/luau
+tools/luau-driver/luau-src.tar.gz
