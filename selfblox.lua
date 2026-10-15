@@ -15,7 +15,7 @@
 --   语法基线就是 Luau(运行环境就是它): 26.10.5.28 起用了字符串插值(`{}`)、复合赋值(+= 等)与 if 表达式(if c then a else b),
 --            Lua 5.4 / fengari 都解析不了; 自检的权威跑法是 CI 里的官方 Luau 0.741 (本地怎么编同版本见 AGENTS.md)
 
-local VERSION = "26.10.15.2.60" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
+local VERSION = "26.10.15.3.61" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
@@ -36,7 +36,13 @@ local O = type(rawget(_G, "SB")) == "table" and _G.SB or {}
 local FILE, saved = "Selfblox.json", {}
 if isfile and isfile(FILE) then local okf, d = pcall(Http.JSONDecode, Http, readfile(FILE)); if okf and type(d) == "table" then saved = d end end -- 配置文件坏了不能连面板一起死
 local function opt(k, d) local v = O[k]; if v == nil then v = saved[k] end; if v == nil then v = d end; return v end
-local function save(k, v) saved[k] = v; if writefile then writefile(FILE, Http:JSONEncode(saved)) end end
+local function save(k, v)
+	saved[k] = v
+	if writefile then -- 存盘炸了不能连累调用它的那个功能 (改一个数值就整个面板报错)
+		local okw, errw = pcall(function() writefile(FILE, Http:JSONEncode(saved)) end)
+		if not okw then warn(`[Selfblox] 配置保存失败: {tostring(errw)}`) end
+	end
+end
 local CLOCK12 = opt("clock", "12") ~= "24" -- 12 小时制默认; _G.SB = { clock = "24" } 切 24
 local function clock(sec) return os.date(((if CLOCK12 then "%I" else "%H")) .. ((if sec then ":%M:%S" else ":%M"))) end
 
@@ -91,10 +97,15 @@ local function toggle(parent, s, init, fn, w) -- 返回 set(v): 代码里也能�
 	on(b.Activated, function() set(not st) end)
 	return set
 end
+local heldReleases = {} -- 还按着的按住钮; 卸载时逐个松开
 local function hold(parent, s, fn, w) -- 按住 fn(true) 松开 fn(false)
-	local b = ui("TextButton", parent, w, { Text = s, AutoButtonColor = false })
-	on(b.InputBegan, function(i) if tap(i) then lit(b, true); fn(true) end end)
-	on(b.InputEnded, function(i) if tap(i) then lit(b, false); fn(false) end end)
+	-- 按钮自己的 InputEnded 只在指针还在按钮上时才来: 滑出去松手 / 按住途中卸载, fn(false) 永远不会到 = 功能卡在"按着"
+	local b, held = ui("TextButton", parent, w, { Text = s, AutoButtonColor = false }), false
+	local function release() if held then held = false; if b.Parent then lit(b, false) end; pcall(fn, false) end end
+	heldReleases[#heldReleases + 1] = release
+	on(b.InputBegan, function(i) if tap(i) and not held then held = true; lit(b, true); fn(true) end end)
+	on(b.InputEnded, function(i) if tap(i) then release() end end)
+	on(UIS.InputEnded, function(i) if tap(i) then release() end end) -- 全局兜底: 指针在哪儿松手都算
 end
 local function num(parent, s, S, k, w, savek) -- 直接绑 S[k], 改完自动存盘; savek 缺省 = k
 	local f = mk("Frame", { Size = w and UDim2.new(w, 0, 1, 0) or UDim2.new(1, 0, 0, ROW), LayoutOrder = ord(), BackgroundColor3 = OFF, BackgroundTransparency = CLEAR, BorderSizePixel = 0 }, parent) -- 一行分两半: 左半标签, 右半输入框, 文字各在自己那半格里居中 (原来标签靠左 + 前面垫个空格, 和居中的按钮/输入框对不齐)
@@ -103,7 +114,8 @@ local function num(parent, s, S, k, w, savek) -- 直接绑 S[k], 改完自动存
 	on(tb.FocusLost, function() local v = tonumber(tb.Text); if v and v == v and v ~= math.huge and v ~= -math.huge then S[k] = v; save(savek or k, v) end; tb.Text = tostring(S[k]) end) -- nan/inf 存进配置会让 JSONEncode 抛错, 之后每次改设置都失败
 end
 
-local vp = workspace.CurrentCamera.ViewportSize
+local cam0 = workspace.CurrentCamera
+local vp = (cam0 and cam0.ViewportSize) or Vector2.new(800, 600) -- 相机还没就绪时读 ViewportSize 直接抛错, 面板一个都建不出来
 local pos = opt("pos", { vp.X / 2 - W / 2, vp.Y * 0.3 })
 local title = mk("TextLabel", { Name = "SB_Title", Size = UDim2.fromOffset(W, ROW), Position = UDim2.fromOffset(math.clamp(pos[1], 0, math.max(vp.X - W, 0)), math.clamp(pos[2], 0, math.max(vp.Y - ROW, 0))), BackgroundColor3 = BG, BackgroundTransparency = CLEAR, BorderSizePixel = 0, Font = FONT, TextSize = 12, TextColor3 = WHITE, Text = `Selfblox {VERSION}` }, gui) -- 13 → 12: 跟面板里其它文字同号, 也让版本串在窄面板里离折叠钮更远
 local body = mk("Frame", { Name = "SB_Body", Size = UDim2.new(0, W, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Position = title.Position + UDim2.fromOffset(0, ROW), BackgroundColor3 = BG, BackgroundTransparency = CLEAR, BorderSizePixel = 0 }, gui)
@@ -137,7 +149,12 @@ local tabs = row(body)
 local toastL = mk("TextLabel", { Name = "SB_Toast", AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 22), Size = UDim2.fromOffset(0, 24), AutomaticSize = Enum.AutomaticSize.X, BackgroundColor3 = BG, BackgroundTransparency = 0.2, BorderSizePixel = 0, Font = FONT, TextSize = 13, TextColor3 = WHITE, Visible = false }, gui)
 mk("UIPadding", { PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10) }, toastL)
 local toastN = 0
-local function toast(s) toastN = toastN + 1; local n = toastN; toastL.Text, toastL.Visible = s, true; task.delay(2, function() if toastN == n then toastL.Visible = false end end) end
+local function toast(s) -- 卸载后 / 面板已销毁: 直接丢弃, 不往死标签上写字
+	if not alive or not toastL.Parent then return end
+	toastN = toastN + 1; local n = toastN
+	toastL.Text, toastL.Visible = s, true
+	task.delay(2, function() if alive and toastN == n and toastL.Parent then toastL.Visible = false end end)
+end
 local dumpNow -- 启动完再赋值; 模块里的按钮闭包先引用这个局部变量
 
 -- ═════════ 注册表 (表驱动): 一个功能 = 一个顶层函数 + 这里追加一行 feature{...} ═════════
@@ -204,7 +221,9 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 	end
 
 	local function baseOf(h) local b = base[h]; if not b then b = { h.WalkSpeed, h.JumpPower, h.JumpHeight }; base[h] = b end; return b end
-	local function restore() local h = hum(); local b = h and base[h]; if b then h.WalkSpeed, h.JumpPower, h.JumpHeight = b[1], b[2], b[3] end end
+	-- 分开还原: 原来一个 restore() 三样一起写回, 关「高跳」会把速度也重置掉, 关「速度」会把跳跃也重置掉
+	local function restoreSpeed() local h = hum(); local b = h and base[h]; if b then h.WalkSpeed = b[1] end end
+	local function restoreJump() local h = hum(); local b = h and base[h]; if b then h.JumpPower, h.JumpHeight = b[2], b[3] end end
 	local function attach(r) -- 飞行/旋转的约束都挂在这一个 Attachment 下, 删它就全删
 		if not att or att.Parent ~= r then if att then att:Destroy() end; att = mk("Attachment", { Name = "SB_MOC" }, r); flyLV, flyAO, spinAV = nil, nil, nil end
 		return att
@@ -325,10 +344,10 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 		local modTxt = stickFrom and string.format("(%.2f,%.2f,%.2f)|%.2f", stickRaw.X, stickRaw.Y, stickRaw.Z, stickRaw.Magnitude) or "无(退回 Humanoid)"
 		return string.format("摇杆=(%.2f,%.2f,%.2f)|%.2f 模块=%s 源=%s 推=%d/跑=%d 态=%s 位=(%.0f,%.0f,%.0f)", md.X, md.Y, md.Z, md.Magnitude, modTxt, stickFrom and "模块" or "Humanoid", pushN, tickN, (okS and st and tostring(st.Name)) or "?", q.X, q.Y, q.Z)
 	end }
-	feature{ key = "speed", label = "速度", num = { "spd", 16 }, tick = speedTick, set = function(v) if v then moving = false end end, off = function() stopMove(); restore() end }
-	feature{ kind = "cycle", key = "spdmode", save = "spdmode", def = "root", cycle = { "root", "walk", "cframe" }, text = function(v) return "模式 " .. v end, set = function() stopMove(); restore() end, w = 1 }
+	feature{ key = "speed", label = "速度", num = { "spd", 16 }, tick = speedTick, set = function(v) if v then moving = false end end, off = function() stopMove(); restoreSpeed() end }
+	feature{ kind = "cycle", key = "spdmode", save = "spdmode", def = "root", cycle = { "root", "walk", "cframe" }, text = function(v) return "模式 " .. v end, set = function() stopMove(); restoreSpeed() end, w = 1 }
 	feature{ key = "fly", label = "飞行", num = { "flyspd", 50 }, tick = flyTick, off = stopFly }
-	feature{ key = "jump", label = "高跳", num = { "jump", 50 }, tick = jumpTick, off = restore }
+	feature{ key = "jump", label = "高跳", num = { "jump", 50 }, tick = jumpTick, off = restoreJump }
 	feature{ key = "spin", label = "旋转", num = { "spin", 50 }, tick = spinTick, off = stopSpin }
 	feature{ key = "infjump", label = "无限跳", init = function() on(UIS.JumpRequest, function() local h = hum(); if F.infjump and h then h:ChangeState(Enum.HumanoidStateType.Jumping) end end) end }
 	feature{ key = "clip", label = "穿墙", tick = clipTick, off = function() reclipAll(col) end }
@@ -346,6 +365,7 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 	local picked, pickSeat, pickPath, autoPick, curSeat, curMax, att, vf, lv, clipCar, lastCar, lastAnch
 	local target, statT, autoT, swapT = 0, 0, 0, 0
 	local lamps, lampSaved, col = {}, setmetatable({}, { __mode = "k" }), setmetatable({}, { __mode = "k" })
+	local lampGen = 0 -- 「闪 ×3」的代号: 连点两次 / 卸载, 旧的闪灯循环要当场作废, 不然它还在把灯开开关关
 	local rp = RaycastParams.new()
 	rp.FilterType = Enum.RaycastFilterType.Exclude
 	local track, knob, kd, kdk, dragX -- 方向盘控件 (init 里建)
@@ -748,7 +768,18 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 	feature{ key = "cfly", label = "飞车" }
 	feature{ kind = "btn", label = "翻转 180°", fn = flipCar }
 	feature{ key = "lamp", label = "常亮", set = function(v) if v then setLamps(true) else dropLamps() end end }
-	feature{ kind = "btn", label = "闪 ×3", fn = function() task.spawn(function() for _ = 1, 3 do setLamps(true); task.wait(0.12); setLamps(false); task.wait(0.12) end; if F.lamp then setLamps(true) else dropLamps() end end) end }
+	feature{ kind = "btn", label = "闪 ×3", fn = function()
+		lampGen += 1; local gen = lampGen
+		task.spawn(function()
+			for _ = 1, 3 do
+				if not alive or gen ~= lampGen then return end
+				setLamps(true); task.wait(0.12)
+				if not alive or gen ~= lampGen then return end
+				setLamps(false); task.wait(0.12)
+			end
+			if alive and gen == lampGen then if F.lamp then setLamps(true) else dropLamps() end end
+		end)
+	end }
 	feature{ key = "carauto", save = "carauto", def = true, label = "自动绑车", w = 1 }
 	feature{ key = "hornon", label = `常声({S.hornkey})`, set = horn }
 	feature{ kind = "hold", label = "声", set = horn }
@@ -1215,7 +1246,9 @@ end
 _G.SB_DUMP = dumpNow
 
 _G.SB_UNLOAD = function()
+	if not alive then return end -- 重入保护: 连着卸两次, 第二遍会在已经 Destroy 的 gui 上炸
 	alive = false
+	for _, release in ipairs(heldReleases) do pcall(release) end -- 按住途中卸载: 把还按着的功能松开 (闪灯循环自己看 alive, 不用在这里通知)
 	for _, e in ipairs(BUILT) do if e.off then pcall(e.off) end end -- 一个功能清理炸了不能拦住其他的
 	for _, c in ipairs(conns) do c:Disconnect() end
 	gui:Destroy()

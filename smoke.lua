@@ -102,7 +102,7 @@ local VERIFIED = {
 	UIDragDetector = words("BoundingUI DragAxis DragContinue DragEnd DragStart DragStyle"),
 	UIListLayout = words("FillDirection Padding"),
 	UIPadding = words("PaddingLeft PaddingRight"),
-	UserInputService = words("JumpRequest"),
+	UserInputService = words("InputEnded JumpRequest"), -- InputEnded 是真成员: 按住钮的全局松手兜底靠它
 	VectorForce = words("ApplyAtCenterOfMass Attachment0 Force RelativeTo"),
 	VehicleSeat = words("Anchored AssemblyAngularVelocity AssemblyLinearVelocity AssemblyMass AssemblyRootPart CFrame CanCollide GetConnectedParts MaxSpeed Occupant Position Size Steer Throttle Torque"),
 	VirtualInputManager = words("SendKeyEvent"),
@@ -436,7 +436,7 @@ MODULES[pmodule] = { GetModule = function()
 end }
 svc("Players", inst("Players", { LocalPlayer = player, MaxPlayers = 12, GetPlayers = function() return { player } end, GetPlayerFromCharacter = function(_, c) return c == char and player or nil end, PlayerAdded = Signal.new(), PlayerRemoving = Signal.new() }))
 svc("RunService", inst("RunService", { PreSimulation = Signal.new(), PreRender = Signal.new(), Heartbeat = Signal.new() }))
-svc("UserInputService", inst("UserInputService", { JumpRequest = Signal.new(), TouchEnabled = true, GetMouseLocation = function() return Vector2.new(100, 100) end }))
+svc("UserInputService", inst("UserInputService", { InputEnded = Signal.new(), JumpRequest = Signal.new(), TouchEnabled = true, GetMouseLocation = function() return Vector2.new(100, 100) end }))
 svc("Lighting", inst("Lighting", { Ambient = Color3.fromRGB(70, 70, 70), OutdoorAmbient = Color3.fromRGB(70, 70, 70), Brightness = 1, FogEnd = 100000, GlobalShadows = true }))
 svc("Stats", inst("Stats", { GetTotalMemoryUsageMb = function() return 512 end }))
 svc("Teams", inst("Teams", { GetTeams = function() return {} end }))
@@ -1144,6 +1144,19 @@ btnGas.InputEnded:Fire(input("Touch"))
 step(1 / 60, 3)
 ok(btnGas.TextColor3.R == 1 and btnGas.TextColor3.G == 1, "松手后字变回白色")
 
+print("\n[6d3] 按住钮: 指针滑出按钮再松手也要放 (原来只听按钮自己的 InputEnded, 滑出去就永远卡在按着)")
+btnGas.InputBegan:Fire(input("Touch"))
+step(1 / 60, 3)
+ok(btnGas.TextColor3.G > btnGas.TextColor3.R, "前置: 按住了")
+_G.__SVC.UserInputService.props.InputEnded:Fire(input("Touch")) -- 只发全局那条, 按钮自己那条不发 = 指针已经不在按钮上
+step(1 / 60, 3)
+ok(btnGas.TextColor3.R == 1 and btnGas.TextColor3.G == 1, "全局 InputEnded 也放得开")
+btnGas.InputBegan:Fire(input("Touch")) -- 放开了才按得下去第二次: held 标记必须真的清了
+step(1 / 60, 3)
+ok(btnGas.TextColor3.G > btnGas.TextColor3.R, "放开后还能再按 (held 标记清了)")
+btnGas.InputEnded:Fire(input("Touch"))
+step(1 / 60, 3)
+
 print("\n[6f] 载具范围: 街区的 Model 不能当车 (你的游戏就是这种结构)")
 humanoid.props.SeatPart = nil -- 走"准星锁定"这条路(你那台卡车就是这样), 不然 part() 会优先用座位
 step(1 / 60, 3)
@@ -1685,9 +1698,67 @@ ok(LOGTXT == nil or not LOGTXT:find("fps"), "日志里没有 fps/ms 那种备注
 ok(CLIP == nil or true, "剪贴板接口在")
 ok(jsonDecode(VFS["Selfblox.json"]).tab ~= nil, "JSON 里有上次页签")
 
+do -- 包一层: smoke 是一整个顶层 chunk, 局部变量超 200 就编不过
+print("\n[8e] 关「高跳」不能把速度也还原掉 (原来一个 restore() 把 WalkSpeed/JumpPower/JumpHeight 三样一起写回)")
+local jumpBtn = findBtn("高跳")
+local spdBtn2 = findBtn("速度 ") -- spdBtn 是前面 do 块里的局部, 这里够不着
+ok(jumpBtn ~= nil and spdBtn2 ~= nil, `有「高跳」和「速度」开关 (高跳 {tostring(jumpBtn ~= nil)} / 速度 {tostring(spdBtn2 ~= nil)})`)
+local function numOf(tog) -- 跟开关同一行的那个数字框 (feature 的 num= 会紧跟在开关后面, 两个同属一行 Frame)
+	for _, c in ipairs(tog.Parent:GetChildren()) do
+		if c:IsA("Frame") then for _, g in ipairs(c:GetChildren()) do if g:IsA("TextBox") then return g end end end
+	end
+end
+local spdBox2, jmpBox2 = numOf(spdBtn2), numOf(jumpBtn)
+ok(spdBox2 ~= nil and jmpBox2 ~= nil, "前置: 找到速度 / 高跳的数字框")
+local modeBtn = findBtn("模式 ") -- 只有 walk 模式写 WalkSpeed; root/cframe 模式写的是速度向量, 拿它测不出串扰
+for _ = 1, 3 do if modeBtn.Text:find("walk", 1, true) then break end; click(modeBtn); step(1 / 60, 2) end
+ok(modeBtn.Text:find("walk", 1, true) ~= nil, `前置: 切到 walk 模式 (读到 {modeBtn.Text})`)
+spdBox2.Text = "30"; spdBox2.FocusLost:Fire() -- 默认 16 跟基准 WalkSpeed 一样, 不改就看不出"有没有被改过"
+jmpBox2.Text = "90"; jmpBox2.FocusLost:Fire() -- 默认 50 跟基准 JumpPower 一样, 同上
+step(1 / 60, 2)
+local wsRest = humanoid.WalkSpeed
+click(spdBtn2); step(1 / 60, 3)
+local wsOn = humanoid.WalkSpeed
+ok(wsOn == 30, `前置: 开速度把 WalkSpeed 写成 30 (读到 {wsOn}, 基准 {wsRest})`)
+click(jumpBtn); step(1 / 60, 3)
+local jpOn = humanoid.JumpPower
+ok(jpOn == 90, `前置: 开高跳把 JumpPower 写成 90 (读到 {jpOn})`)
+click(jumpBtn) -- 关高跳: off 是同步跑的
+-- 必须在这里断言, 不能先 step: speedTick 每帧把 WalkSpeed 重写回 S.spd, 跑一帧串扰就被盖掉看不见了
+ok(humanoid.WalkSpeed == wsOn, `关高跳不当场动 WalkSpeed (读到 {humanoid.WalkSpeed}, 该还是 {wsOn})`)
+step(1 / 60, 3)
+ok(humanoid.JumpPower == 50, `关高跳 → JumpPower 还原 (读到 {humanoid.JumpPower})`)
+ok(humanoid.WalkSpeed == wsOn, `跑过帧后 WalkSpeed 仍是 {wsOn} (读到 {humanoid.WalkSpeed})`)
+click(spdBtn2); step(1 / 60, 3) -- 关速度
+ok(humanoid.WalkSpeed == wsRest, `关速度 → WalkSpeed 还原 (读到 {humanoid.WalkSpeed})`)
+ok(humanoid.JumpPower == 50, `关速度不动 JumpPower (读到 {humanoid.JumpPower})`)
+
+print("\n[8f] 存盘失败不能连累改它的功能 (原来 writefile/JSONEncode 抛错会顺着调用方一路炸上来)")
+-- writefile 换不动: FROZEN_G 之后 _G 的写入被吞掉 (实测替换后调用 0 次)。JSONEncode 走 _G.__SVC 拿得到, 而且它就在 save() 的 pcall 里面
+local HS8 = _G.__SVC.HttpService
+local oldEnc8 = HS8.props.JSONEncode
+HS8.props.JSONEncode = function() error("序列化炸了(模拟)") end
+local okSv, errSv = pcall(function() jmpBox2.Text = "77"; jmpBox2.FocusLost:Fire(); step(1 / 60, 2) end)
+ok(okSv, `存盘炸了数值照常改, 没炸到调用方 ({tostring(errSv)})`)
+HS8.props.JSONEncode = oldEnc8
+local okSv2, errSv2 = pcall(function() jmpBox2.Text = "90"; jmpBox2.FocusLost:Fire(); step(1 / 60, 2) end)
+ok(okSv2, `序列化恢复后存盘照旧 ({tostring(errSv2)})`)
+
+-- 下面四条只有静态断言: 假引擎里拆掉它们不会变红 (实测过), 所以这里只能钉住"代码还在", 不等于验过行为
+--   · toast 卸载后不写死标签 · 相机没就绪时 vp 有兜底 · SB_UNLOAD 重入保护 · 闪灯代号
+local lampGuards = select(2, SRC:gsub("if not alive or gen ~= lampGen then return end", ""))
+ok(SRC:find("if not alive or not toastL.Parent then return end", 1, true) ~= nil
+	and SRC:find("(cam0 and cam0.ViewportSize) or Vector2.new(800, 600)", 1, true) ~= nil
+	and SRC:find("if not alive then return end -- 重入保护", 1, true) ~= nil
+	and lampGuards == 2,
+	`toast/相机/卸载重入 三处守卫 + 闪灯代号两处都在 (闪灯读到 {lampGuards} 处, 该是 2; 静态: 假引擎拆掉不会变红)`)
+
+end
+
 print("\n[9] 卸载")
 humanoid.props.SeatPart = nil
 local before = newInstancesFrom(SNAP)
+local unloadRef = _G.SB_UNLOAD -- 重入测试要一个卸载后还在手的引用
 _G.SB_UNLOAD()
 step(1 / 60, 10)
 local leaked = 0
@@ -1696,6 +1767,8 @@ ok(tabs() == nil, "面板整个没了")
 ok(leaked == 0, `没漏实例 (漏了 {leaked} 个)`)
 ok(LIVE == 0, `没漏连接 (还剩 {LIVE} 个)`)
 ok(_G.SB_UNLOAD == nil, "SB_UNLOAD 自己清了")
+local okTwice, errTwice = pcall(unloadRef) -- 存着的旧引用再卸一次: 没重入保护就会在已销毁的面板上再走一遍
+ok(okTwice, `拿旧引用再卸一次不炸 ({tostring(errTwice)})`)
 ok(_G.__hook ~= _G.__planeHook, "卸载时 __namecall 钩子还原成原来的")
 
 -- ───────── 第二轮: 只装 moc + _G.SB 覆盖 ─────────
