@@ -248,6 +248,13 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 	local lampFlashGeneration = 0
 	local seatMax = setmetatable({}, { __mode = "k" })
 	local col = setmetatable({}, { __mode = "k" })
+	local function restoreSeatMax(s)
+		local original = s and seatMax[s]
+		if original ~= nil then
+			if s.MaxSpeed == math.huge then pcall(function() s.MaxSpeed = original end) end
+			seatMax[s] = nil
+		end
+	end
 	local rp = RaycastParams.new()
 	rp.FilterType = Enum.RaycastFilterType.Exclude
 
@@ -334,7 +341,7 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 	on(RunService.PreSimulation, function(dt)
 		local s = seat()
 		if s ~= curSeat then -- 换座: 还原旧座限速, 新座解限速, 灯重挂
-			if curSeat and seatMax[curSeat] then curSeat.MaxSpeed = seatMax[curSeat] end
+			restoreSeatMax(curSeat)
 			curSeat = s
 			if s and s:IsA("VehicleSeat") then seatMax[s] = s.MaxSpeed; s.MaxSpeed = math.huge end
 			dropLamps()
@@ -425,7 +432,7 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 	return function()
 		lampFlashGeneration = lampFlashGeneration + 1
 		detach(); reclip(); dropLamps(); horn(false)
-		if curSeat and seatMax[curSeat] then pcall(function() curSeat.MaxSpeed = seatMax[curSeat] end) end
+		restoreSeatMax(curSeat)
 	end
 end }
 
@@ -572,6 +579,7 @@ end }
 MODS[#MODS + 1] = { name = "log", tab = "志", fn = function(page)
 	local S = { int = opt("logint", 2), max = opt("logmax", 512) }
 	local F, run, n, written = "Selfblox_log.txt", false, 0, 0
+	local setRecording
 	if not (appendfile and writefile) then text(page, "执行器没有 appendfile/writefile"); return end
 	local status = text(page, "开 录制 后写 " .. F)
 	local function head() local h = "---- Selfblox " .. os.date("%Y-%m-%d %H:%M:%S") .. " ----\n"; writefile(F, h); written = #h end
@@ -592,6 +600,7 @@ MODS[#MODS + 1] = { name = "log", tab = "志", fn = function(page)
 					if status.Parent then status.Text = "#" .. n .. " · " .. math.floor(written / 1024) .. "KB / " .. S.max .. "KB" end
 				else
 					run = false
+					if setRecording then setRecording(false, true) end
 					if status.Parent then status.Text = "写日志失败，已停止录制" end
 					warn("[Selfblox] 日志写入失败: " .. tostring(err))
 				end
@@ -601,7 +610,7 @@ MODS[#MODS + 1] = { name = "log", tab = "志", fn = function(page)
 	local r1 = row(page)
 	num(r1, "间隔s", function() return S.int end, function(v) S.int = v; save("logint", v) end, 0.5)
 	num(r1, "上限KB", function() return S.max end, function(v) S.max = v; save("logmax", v) end, 0.5)
-	toggle(page, "录制", false, function(v) run = v end)
+	setRecording = toggle(page, "录制", false, function(v) run = v end)
 end }
 
 -- ═════════ plane: 飞机侦察 (找飞机/判队伍/列 Remote/收发侦听/写报告) ═════════
