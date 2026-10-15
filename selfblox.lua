@@ -558,10 +558,18 @@ MODS[#MODS + 1] = { name = "log", tab = "志", fn = function(page)
 				for name, fn in pairs(DBG) do local ok, s = pcall(fn); L[#L + 1] = name .. ": " .. tostring(s) end -- 别的模块 dump 炸了日志照写
 				table.sort(L)
 				local txt = "[" .. os.date("%H:%M:%S") .. "] #" .. n .. "\n" .. table.concat(L, "\n") .. "\n"
-				if written == 0 or written + #txt > S.max * 1024 then head() end -- ponytail: 超限直接重写, 不归档; 要历史自己复制文件
-				appendfile(F, txt)
-				n, written = n + 1, written + #txt
-				status.Text = "#" .. n .. " · " .. math.floor(written / 1024) .. "KB / " .. S.max .. "KB"
+				local ok, err = pcall(function()
+					if written == 0 or written + #txt > S.max * 1024 then head() end -- 超限直接重写，不归档
+					appendfile(F, txt)
+				end)
+				if ok then
+					n, written = n + 1, written + #txt
+					if status.Parent then status.Text = "#" .. n .. " · " .. math.floor(written / 1024) .. "KB / " .. S.max .. "KB" end
+				else
+					run = false
+					if status.Parent then status.Text = "写日志失败，已停止录制" end
+					warn("[Selfblox] 日志写入失败: " .. tostring(err))
+				end"
 			end
 		end
 	end)
@@ -729,8 +737,22 @@ MODS[#MODS + 1] = { name = "plane", tab = "机", fn = function(page)
 	end
 
 	local r1 = row(page)
-	btn(r1, "重扫", scan, 0.5)
-	btn(r1, "写报告", report, 0.5)
+	local function safeScan()
+		local ok, err = pcall(scan)
+		if not ok then
+			warn("[Selfblox] 飞机扫描失败: " .. tostring(err))
+			if status and status.Parent then status.Text = "扫描失败: " .. tostring(err) end
+		end
+	end
+	local function safeReport()
+		local ok, err = pcall(report)
+		if not ok then
+			warn("[Selfblox] 飞机报告失败: " .. tostring(err))
+			if status and status.Parent then status.Text = "报告失败: " .. tostring(err) end
+		end
+	end
+	btn(r1, "重扫", safeScan, 0.5)
+	btn(r1, "写报告", safeReport, 0.5)
 	local r2 = row(page)
 	local spyT
 	spyT = toggle(r2, "发侦听", false, function(v) if not setSpy(v) then spyT(false) end end, 0.5)
@@ -742,7 +764,7 @@ MODS[#MODS + 1] = { name = "plane", tab = "机", fn = function(page)
 	toggle(r4, "全录", all, function(v) all = v; save("pall", v) end, 0.5)
 	btn(r4, "清空记录", function() table.clear(sent); table.clear(got) end, 0.5)
 	status = text(page, "上机 → 发侦听 → 开几枪 → 写报告")
-	task.spawn(function() while alive do task.wait(5); if autoOn and alive then scan() end end end)
+	task.spawn(function() while alive do task.wait(5); if autoOn and alive then safeScan() end end end)
 
 	DBG.plane = function() return "planes=" .. #planes .. " remotes=" .. #remotes .. " sent=" .. #sent .. " got=" .. #got .. " spy=" .. tostring(spyOn) end
 	return function() setWatch(false); hlOn = false; highlight(); if oldNC then hookmetamethod(game, "__namecall", oldNC) end end
