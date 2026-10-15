@@ -280,7 +280,7 @@ end }
 
 -- ═════════ sibs: 载具 (坐着 = 控制座位所在装配体; 没坐 = 准星"换车"锁定) ═════════
 MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
-	local S = { acc = opt("acc", 500), grip = opt("grip", 5), turn = opt("turn", 2.2), turncap = math.max(0, math.min(5, tonumber(opt("turncap", 1)) or 1)), fly = opt("carfly", 60), horn = opt("hornkey", "H") }
+	local S = { acc = opt("acc", 500), grip = opt("grip", 5), turn = opt("turn", 2.2), turncap = math.max(0, math.min(5, tonumber(opt("turncap", 1)) or 1)), carmaxstuds = math.max(1, math.min(10000, tonumber(opt("carmaxstuds", 150)) or 150)), fly = opt("carfly", 60), horn = opt("hornkey", "H") }
 	local picked, pickSeat, curSeat, clipModel, att, vf, lv, status
 	local accel, decel, up, down, cruise, brake, flying, lampOn = false, false, false, false, false, false, false, false
 	local clip, target, statT, setBrake = opt("carclip", false), 0, 0, nil
@@ -347,19 +347,44 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 		for _, l in ipairs(lamps) do l.Enabled = v end
 	end
 	local function horn(v) pcall(function() VIM:SendKeyEvent(v, Enum.KeyCode[S.horn], false, game) end) end -- 执行器可能禁 VIM
+	local function asmDims(r) -- 量装配体而非 Model 容器, 避免把整条街误判成车
+		local span, origin = 0.5 * r.Size.Magnitude, r.Position
+		for _, d in ipairs(r:GetConnectedParts(true)) do
+			local extent = (d.Position - origin).Magnitude + 0.5 * d.Size.Magnitude
+			if extent > span then span = extent end
+		end
+		return span * 2
+	end
 	local function pick()
 		local cam = workspace.CurrentCamera
 		if not cam then toast("相机尚未就绪"); return end
 		rp.FilterDescendantsInstances = { me.Character }
 		local hit = workspace:Raycast(cam.CFrame.Position, cam.CFrame.LookVector * 5000, rp)
-		local m = hit and hit.Instance:FindFirstAncestorOfClass("Model")
-		while m and m.Parent and m.Parent:IsA("Model") do m = m.Parent end
-		local s = m and (m:FindFirstChildWhichIsA("VehicleSeat", true) or m:FindFirstChildWhichIsA("Seat", true))
-		local r = hit and (s or hit.Instance).AssemblyRootPart
-		if not r or r.Anchored or (m and m:FindFirstChildOfClass("Humanoid")) then toast("准星没对准载具"); return end
+		if not hit then toast("准星前面没东西"); return end
+		local inst = hit.Instance
+		local m = inst:FindFirstAncestorOfClass("Model")
+		local node, s, seatModel, isCharacter = m, nil, nil, false
+		while node do
+			if node:FindFirstChildOfClass("Humanoid") then isCharacter = true end
+			if not s then
+				s = node:FindFirstChildWhichIsA("VehicleSeat", true) or node:FindFirstChildWhichIsA("Seat", true)
+				if s then seatModel = node end
+			end
+			node = node:FindFirstAncestorOfClass("Model")
+		end
+		local r = (s or inst).AssemblyRootPart
+		if not r or isCharacter then toast("准星没对准载具"); return end
+		if not s then
+			local ok, span = pcall(asmDims, r)
+			if not ok or span > S.carmaxstuds then
+				toast(ok and ("目标装配体过大，不锁定 (" .. math.floor(span + 0.5) .. " > " .. S.carmaxstuds .. " 格)") or "无法识别目标装配体")
+				return
+			end
+		end
+		if r.Anchored then toast("这个还锁着(锚定), 等游戏解锁"); return end
 		picked, pickSeat = r, s
 		dropLamps()
-		toast("锁定 " .. (m and m.Name or hit.Instance.Name))
+		toast("锁定 " .. (seatModel and seatModel.Name or inst.Name))
 	end
 	local function flip()
 		local p, m = part(), model()
