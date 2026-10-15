@@ -2,6 +2,14 @@
 
 一个文件、一个面板、七个模块。Delta（安卓）为目标，纯触屏。
 
+## 维护记录
+
+- 生命周期修复：卸载时释放长按输入；提示延时回调检查卸载状态；相机初始化允许暂时缺失。
+- 任务清理：刷砖循环使用 generation token 防止开关快速切换造成重入，并在异常后执行清理；旧循环不会覆盖新循环状态。
+- 状态恢复：速度与跳跃独立恢复；夜视只恢复原先记录的 Atmosphere 实例。
+- 侦察与 IO：自动扫描不再每 5 秒自动写报告；Remote 监听按差异更新；配置与报告文件写入增加错误处理。
+- 文档：修正 `carclip` 默认值说明。
+
 ```lua
 loadstring(game:HttpGet("https://raw.githubusercontent.com/Sumicya/Selfblox/main/selfblox.lua"))()
 ```
@@ -22,7 +30,7 @@ _G.SB = { spd = 60, flyspd = 120, hornkey = "H", only = {"moc", "sibs"} }
 | `spd` / `spdmode` | 16 / `"root"` | 速度值 / 模式 `root` `walk` `cframe` |
 | `flyspd` `jump` `spin` `promptdist` | 50 50 50 1000 | 飞行速度 / 跳力 / 转速(负数反向) / 秒互动距离 |
 | `acc` `grip` `turn` `carfly` | 500 5 2.2 60 | 车: 加速度 / 抓地 / 转向速率 / 飞车速度 |
-| `hornkey` `carclip` | `"H"` false | 喇叭键 / 车穿墙默认开 |
+| `hornkey` `carclip` | `"H"` false | 喇叭键 / 车穿墙默认关 |
 | `dacc` `dbrake` `drift` | 5 10 true | 漂移推进: 加速 / 刹车 / 开关 |
 | `stats` `arrow` `esp` | true | 数据条 / 速度箭头 / 玩家 ESP |
 | `logint` `logmax` | 2 512 | 日志间隔秒 / 上限 KB |
