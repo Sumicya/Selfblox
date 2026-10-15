@@ -280,7 +280,7 @@ end }
 
 -- ═════════ sibs: 载具 (坐着 = 控制座位所在装配体; 没坐 = 准星"换车"锁定) ═════════
 MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
-	local S = { acc = opt("acc", 500), grip = opt("grip", 5), turn = opt("turn", 2.2), fly = opt("carfly", 60), horn = opt("hornkey", "H") }
+	local S = { acc = opt("acc", 500), grip = opt("grip", 5), turn = opt("turn", 2.2), turncap = math.max(0, math.min(5, tonumber(opt("turncap", 1)) or 1)), fly = opt("carfly", 60), horn = opt("hornkey", "H") }
 	local picked, pickSeat, curSeat, clipModel, att, vf, lv, status
 	local accel, decel, up, down, cruise, brake, flying, lampOn = false, false, false, false, false, false, false, false
 	local clip, target, statT, setBrake = opt("carclip", false), 0, 0, nil
@@ -408,7 +408,7 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 		elseif lv then lv:Destroy(); lv = nil end
 		-- 转向: 角速度 ∝ 车速(静止不转); 抓地把速度方向拉回车头
 		if math.abs(st) > 0.02 and spd > 0.5 then
-			p.CFrame = CFrame.fromAxisAngle(Vector3.yAxis, -st * S.turn * math.min(spd / 25, 1) * dt) * p.CFrame.Rotation + p.Position
+			p.CFrame = CFrame.fromAxisAngle(Vector3.yAxis, -st * S.turn * math.min(spd / 25, S.turncap) * dt) * p.CFrame.Rotation + p.Position
 			local dir = hv:Dot(fwd) < 0 and -fwd or fwd
 			p.AssemblyLinearVelocity = hv.Unit:Lerp(dir, math.min(dt * S.grip, 1)).Unit * spd + Vector3.yAxis * v.Y
 		end
