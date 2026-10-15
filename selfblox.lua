@@ -23,10 +23,17 @@ local O = type(rawget(_G, "SB")) == "table" and _G.SB or {}
 local FILE, saved = "Selfblox.json", {}
 if isfile and isfile(FILE) then pcall(function() saved = Http:JSONDecode(readfile(FILE)) end) end
 local function opt(k, d) local v = O[k]; if v == nil then v = saved[k] end; if v == nil then v = d end; return v end
-local function save(k, v) saved[k] = v; if writefile then writefile(FILE, Http:JSONEncode(saved)) end end
+local function save(k, v)
+	saved[k] = v
+	if writefile then
+		local ok, err = pcall(function() writefile(FILE, Http:JSONEncode(saved)) end)
+		if not ok then warn("[Selfblox] 配置保存失败: " .. tostring(err)) end
+	end
+end
 
 -- ───────── 公共 ─────────
 local alive, conns, DBG, MODS, stops = true, {}, {}, {}, {}
+local heldReleases = {}
 local function on(sig, fn) local c = sig:Connect(fn); conns[#conns + 1] = c; return c end
 local function mk(cls, props, parent) local i = Instance.new(cls); for k, v in pairs(props) do i[k] = v end; i.Parent = parent; return i end
 local function tap(i) return i.UserInputType == Enum.UserInputType.Touch or i.UserInputType == Enum.UserInputType.MouseButton1 end
@@ -75,13 +82,17 @@ local function num(parent, s, get, set, w) -- 标签 + 数字框; s=nil 只有�
 	local tb = mk("TextBox", { Size = UDim2.new(s and 0.5 or 1, 0, 1, 0), Position = UDim2.new(s and 0.5 or 0, 0, 0, 0), BackgroundTransparency = 1, Font = FONT, TextSize = 12, TextColor3 = Color3.fromRGB(255, 225, 140), Text = tostring(get()), ClearTextOnFocus = false }, f)
 	on(tb.FocusLost, function() local v = tonumber(tb.Text); if v then set(v) end; tb.Text = tostring(get()) end)
 end
-local function hold(parent, s, fn, w) -- 按住 fn(true) 松开 fn(false)
-	local b = ui("TextButton", parent, w, { Text = s, AutoButtonColor = false })
-	on(b.InputBegan, function(i) if tap(i) then b.BackgroundColor3 = ON; fn(true) end end)
-	on(b.InputEnded, function(i) if tap(i) then b.BackgroundColor3 = OFF; fn(false) end end)
+local function hold(parent, s, fn, w) -- 全局 InputEnded 兜底，避免指针移出按钮后卡住
+	local b, held = ui("TextButton", parent, w, { Text = s, AutoButtonColor = false }), false
+	local function release() if held then held = false; if b.Parent then b.BackgroundColor3 = OFF end; pcall(fn, false) end end
+	heldReleases[#heldReleases + 1] = release
+	on(b.InputBegan, function(i) if tap(i) and not held then held = true; b.BackgroundColor3 = ON; fn(true) end end)
+	on(b.InputEnded, function(i) if tap(i) then release() end end)
+	on(UIS.InputEnded, function(i) if tap(i) then release() end end)
 end
 
-local vp = workspace.CurrentCamera.ViewportSize
+local camera = workspace.CurrentCamera
+local vp = camera and camera.ViewportSize or Vector2.new(800, 600)
 local pos = opt("pos", { vp.X / 2 - W / 2, vp.Y * 0.3 })
 local title = mk("TextLabel", { Size = UDim2.fromOffset(W, ROW), Position = UDim2.fromOffset(math.clamp(pos[1], 0, math.max(vp.X - W, 0)), math.clamp(pos[2], 0, math.max(vp.Y - ROW, 0))), BackgroundColor3 = BG, BackgroundTransparency = 0.15, BorderSizePixel = 0, Font = FONT, TextSize = 13, TextColor3 = WHITE, Text = "Selfblox" }, gui)
 local body = mk("Frame", { Size = UDim2.new(0, W, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Position = title.Position + UDim2.fromOffset(0, ROW), BackgroundColor3 = BG, BackgroundTransparency = 0.35, BorderSizePixel = 0 }, gui)
@@ -96,7 +107,13 @@ local tabs = row(body)
 local toastL = mk("TextLabel", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 22), Size = UDim2.fromOffset(0, 24), AutomaticSize = Enum.AutomaticSize.X, BackgroundColor3 = BG, BackgroundTransparency = 0.2, BorderSizePixel = 0, Font = FONT, TextSize = 13, TextColor3 = WHITE, Visible = false }, gui)
 mk("UIPadding", { PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10) }, toastL)
 local toastN = 0
-local function toast(s) toastN = toastN + 1; local n = toastN; toastL.Text, toastL.Visible = s, true; task.delay(2, function() if toastN == n then toastL.Visible = false end end) end
+local function toast(s)
+	if not alive or not toastL.Parent then return end
+	toastN = toastN + 1
+	local n = toastN
+	toastL.Text, toastL.Visible = s, true
+	task.delay(2, function() if alive and toastN == n and toastL.Parent then toastL.Visible = false end end)
+end
 
 -- ═════════ moc: 角色 ═════════
 MODS[#MODS + 1] = { name = "moc", tab = "动", fn = function(page)
@@ -116,13 +133,15 @@ MODS[#MODS + 1] = { name = "moc", tab = "动", fn = function(page)
 	end
 	local function stopFly() if flyLV then flyLV:Destroy(); flyAO:Destroy(); flyLV, flyAO = nil, nil end; local h = hum(); if h then h.PlatformStand = false end end
 	local function doFly(r, h)
+		local cam = workspace.CurrentCamera
+		if not cam then return end
 		local a = attach(r)
 		if not flyLV then
 			flyLV = mk("LinearVelocity", { Attachment0 = a, MaxForce = math.huge, VectorVelocity = Vector3.zero, RelativeTo = Enum.ActuatorRelativeTo.World }, a)
 			flyAO = mk("AlignOrientation", { Attachment0 = a, Mode = Enum.OrientationAlignmentMode.OneAttachment, MaxTorque = math.huge, Responsiveness = 200 }, a)
 			h.PlatformStand = true
 		end
-		local cam, md = workspace.CurrentCamera.CFrame, h.MoveDirection
+		local cam, md = cam.CFrame, h.MoveDirection
 		local look = flat(cam.LookVector) or Vector3.zAxis
 		-- 水平跟摇杆, 前后分量带上相机俯仰, 上升/下降按钮叠加
 		flyLV.VectorVelocity = md * S.fly + Vector3.yAxis * (S.fly * (cam.LookVector.Y * md:Dot(look) + (up and 1 or 0) - (down and 1 or 0)))
@@ -624,13 +643,21 @@ MODS[#MODS + 1] = { name = "plane", tab = "机", fn = function(page)
 	end
 	local function setWatch(v)
 		watchOn = v
-		for _, c in ipairs(watch) do c:Disconnect() end
-		table.clear(watch)
-		if not v then return end
-		for _, r in ipairs(remotes) do
-			if r:IsA("RemoteEvent") or r:IsA("UnreliableRemoteEvent") then
-				watch[#watch + 1] = r.OnClientEvent:Connect(function(...) push(got, r:GetFullName() .. " <- " .. args(table.pack(...))) end)
+		local wanted = {}
+		if v then
+			for _, r in ipairs(remotes) do
+				if r.Parent and (r:IsA("RemoteEvent") or r:IsA("UnreliableRemoteEvent")) then
+					wanted[r] = true
+					if not watch[r] then
+						watch[r] = r.OnClientEvent:Connect(function(...)
+							if watchOn and r.Parent then push(got, r:GetFullName() .. " <- " .. args(table.pack(...))) end
+						end)
+					end
+				end
 			end
+		end
+		for r, c in pairs(watch) do
+			if not v or not wanted[r] or not r.Parent then c:Disconnect(); watch[r] = nil end
 		end
 	end
 	local function setSpy(v)
@@ -686,9 +713,17 @@ MODS[#MODS + 1] = { name = "plane", tab = "机", fn = function(page)
 		L[#L + 1] = "-- 收 " .. #got
 		for _, s in ipairs(got) do L[#L + 1] = "  " .. s end
 		local txt = table.concat(L, "\n")
-		if writefile then writefile("plane_debug.txt", txt) end
-		if setclipboard then setclipboard(txt) end
-		toast("报告 " .. #L .. " 行 → plane_debug.txt / 剪贴板")
+		local savedOk = false
+		if writefile then
+			local ok, err = pcall(function() writefile("plane_debug.txt", txt) end)
+			savedOk = ok
+			if not ok then warn("[Selfblox] 飞机报告写入失败: " .. tostring(err)) end
+		end
+		if setclipboard then
+			local ok, err = pcall(function() setclipboard(txt) end)
+			if not ok then warn("[Selfblox] 剪贴板写入失败: " .. tostring(err)) end
+		end
+		toast("报告 " .. #L .. " 行" .. (savedOk and " → plane_debug.txt" or "（文件写入失败）"))
 	end
 
 	local r1 = row(page)
@@ -705,7 +740,7 @@ MODS[#MODS + 1] = { name = "plane", tab = "机", fn = function(page)
 	toggle(r4, "全录", all, function(v) all = v; save("pall", v) end, 0.5)
 	btn(r4, "清空记录", function() table.clear(sent); table.clear(got) end, 0.5)
 	status = text(page, "上机 → 发侦听 → 开几枪 → 写报告")
-	task.spawn(function() while alive do task.wait(5); if autoOn and alive then scan(); report() end end end)
+	task.spawn(function() while alive do task.wait(5); if autoOn and alive then scan() end end end)
 
 	DBG.plane = function() return "planes=" .. #planes .. " remotes=" .. #remotes .. " sent=" .. #sent .. " got=" .. #got .. " spy=" .. tostring(spyOn) end
 	return function() setWatch(false); hlOn = false; highlight(); if oldNC then hookmetamethod(game, "__namecall", oldNC) end end
@@ -715,19 +750,21 @@ end }
 MODS[#MODS + 1] = { name = "brick", tab = "砖", fn = function(page)
 	local S = { batch = opt("bbatch", 4), int = opt("bint", 0.08), drain = opt("bdrain", 0.6), mult = opt("bmult", 99999), lvl = opt("blevel", 9999) }
 	local run, setRun, status = false, nil, nil
+	local runGeneration = 0
 	local st = { cycles = 0, earned = 0, sent = 0, got = 0, rate = 0 }
 	local function mine(c) return c:IsA("BasePart") and not c.Anchored and c:GetAttribute("Owner") == me.UserId end
 	local function ingest(b, col) b.CFrame = col.CFrame + Vector3.new(math.random(-3, 3), 1.5, math.random(-3, 3)); b.AssemblyLinearVelocity = Vector3.new(0, -35, 0) end
-	local function loop()
+	local function loop(generation)
 		local ls = me:FindFirstChild("leaderstats")
 		local col, spawnBit = workspace:FindFirstChild("Collector"), RS:FindFirstChild("SpawnBit")
 		local bits, mult = ls and ls:FindFirstChild("Bits"), ls and ls:FindFirstChild("Multiplier")
 		if not (col and bits) then setRun(false); toast("没找到 workspace.Collector / leaderstats.Bits"); return end
 		local mult0, lvl0 = mult and mult.Value, me:GetAttribute("MultiplierUpgradeLevel")
 		local last, lastT = bits.Value, os.clock()
-		local conn = workspace.ChildAdded:Connect(function(c) task.defer(function() if run and mine(c) then ingest(c, col); st.got = st.got + 1 end end) end)
+		local conn = workspace.ChildAdded:Connect(function(c) task.defer(function() if run and alive and generation == runGeneration and mine(c) then ingest(c, col); st.got = st.got + 1 end end) end)
 		local function drain() for _, c in ipairs(workspace:GetChildren()) do if mine(c) then ingest(c, col) end end end
-		while run and alive do
+		local ok, err = pcall(function()
+		while run and alive and generation == runGeneration do
 			st.cycles = st.cycles + 1
 			local before = bits.Value
 			drain()
@@ -742,11 +779,20 @@ MODS[#MODS + 1] = { name = "brick", tab = "砖", fn = function(page)
 			status.Text = string.format("周期 %d · +%.0f · %.1f/s · 发 %d 收 %d", st.cycles, st.earned, st.rate, st.sent, st.got)
 			task.wait(0.15)
 		end
+		end)
 		conn:Disconnect()
-		if mult and mult0 then mult.Value = mult0 end
-		me:SetAttribute("MultiplierUpgradeLevel", lvl0)
+		if mult and mult0 and mult.Parent then mult.Value = mult0 end
+		if me.Parent then pcall(function() me:SetAttribute("MultiplierUpgradeLevel", lvl0) end) end
+		if not ok then
+			warn("[Selfblox] brick loop: " .. tostring(err))
+			if generation == runGeneration then run = false; if setRun then setRun(false, true) end; toast("刷砖循环异常，已停止") end
+		end
 	end
-	setRun = toggle(page, "刷砖", false, function(v) run = v; if v then task.spawn(loop) end end)
+	setRun = toggle(page, "刷砖", false, function(v)
+		runGeneration = runGeneration + 1
+		run = v
+		if v then local generation = runGeneration; task.spawn(function() loop(generation) end) end
+	end)
 	local r1 = row(page)
 	num(r1, "批次", function() return S.batch end, function(v) S.batch = v; save("bbatch", v) end, 0.5)
 	num(r1, "间隔", function() return S.int end, function(v) S.int = v; save("bint", v) end, 0.5)
@@ -774,7 +820,9 @@ end
 if #active > 0 then show(pages[opt("tab", "moc")] and opt("tab", "moc") or active[1].name) end
 
 _G.SB_UNLOAD = function()
+	if not alive then return end
 	alive = false
+	for _, release in ipairs(heldReleases) do pcall(release) end
 	for _, s in ipairs(stops) do pcall(s) end -- 一个模块清理炸了不能拦住其他的
 	for _, c in ipairs(conns) do c:Disconnect() end
 	gui:Destroy()
