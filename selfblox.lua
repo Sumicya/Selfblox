@@ -15,7 +15,7 @@
 --   语法基线就是 Luau(运行环境就是它): 26.10.5.28 起用了字符串插值(`{}`)、复合赋值(+= 等)与 if 表达式(if c then a else b),
 --            Lua 5.4 / fengari 都解析不了; 自检的权威跑法是 CI 里的官方 Luau 0.741 (本地怎么编同版本见 AGENTS.md)
 
-local VERSION = "26.10.14.5.58" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
+local VERSION = "26.10.15.2.60" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
@@ -57,7 +57,8 @@ local FONT, WHITE = Enum.Font.GothamBold, Color3.new(1, 1, 1)
 local BG, ON, OFF = Color3.fromRGB(20, 22, 28), Color3.fromRGB(38, 125, 85), Color3.fromRGB(48, 50, 60)
 local LIT, CLEAR = Color3.fromRGB(150, 235, 170), 0.9 -- CLEAR = 面板底色透明度
 local function lit(b, on) b.BackgroundColor3 = on and ON or OFF; b.TextColor3 = on and LIT or WHITE end -- 开着/按着/当前页: 底色只剩 10%, 看不出颜色了, 状态靠字色
-local W, ROW = 200, 26
+local W, ROW = 184, 26 -- 面板宽 200 → 184: 半行按钮 100 → 92, 一行两个左右更靠近
+local FOLDW = 18 -- 折叠钮占宽 (原 26): 标题栏 "Selfblox <五段版本>" 按最保守 7px/字符 @12 号约 154px, 加折叠钮 18 = 172, 所以面板下限在 184 附近; 再窄就得动标题
 local gui = mk("ScreenGui", { Name = "Selfblox", ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = 99999 }, ROOT)
 local FX = mk("Folder", { Name = "Selfblox_FX" }, ROOT) -- Highlight / BillboardGui 放这里, 卸载一起删
 
@@ -104,11 +105,11 @@ end
 
 local vp = workspace.CurrentCamera.ViewportSize
 local pos = opt("pos", { vp.X / 2 - W / 2, vp.Y * 0.3 })
-local title = mk("TextLabel", { Name = "SB_Title", Size = UDim2.fromOffset(W, ROW), Position = UDim2.fromOffset(math.clamp(pos[1], 0, math.max(vp.X - W, 0)), math.clamp(pos[2], 0, math.max(vp.Y - ROW, 0))), BackgroundColor3 = BG, BackgroundTransparency = CLEAR, BorderSizePixel = 0, Font = FONT, TextSize = 13, TextColor3 = WHITE, Text = `Selfblox {VERSION}` }, gui)
+local title = mk("TextLabel", { Name = "SB_Title", Size = UDim2.fromOffset(W, ROW), Position = UDim2.fromOffset(math.clamp(pos[1], 0, math.max(vp.X - W, 0)), math.clamp(pos[2], 0, math.max(vp.Y - ROW, 0))), BackgroundColor3 = BG, BackgroundTransparency = CLEAR, BorderSizePixel = 0, Font = FONT, TextSize = 12, TextColor3 = WHITE, Text = `Selfblox {VERSION}` }, gui) -- 13 → 12: 跟面板里其它文字同号, 也让版本串在窄面板里离折叠钮更远
 local body = mk("Frame", { Name = "SB_Body", Size = UDim2.new(0, W, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Position = title.Position + UDim2.fromOffset(0, ROW), BackgroundColor3 = BG, BackgroundTransparency = CLEAR, BorderSizePixel = 0 }, gui)
 mk("UIListLayout", { Padding = UDim.new(0, 0) }, body)
 on(title:GetPropertyChangedSignal("Position"), function() body.Position = title.Position + UDim2.fromOffset(0, ROW) end)
-local fold = mk("TextButton", { Size = UDim2.fromOffset(ROW, ROW), Position = UDim2.new(1, -ROW, 0, 0), BackgroundTransparency = 1, Font = FONT, TextSize = 16, TextColor3 = WHITE, Text = "–" }, title)
+local fold = mk("TextButton", { Size = UDim2.fromOffset(FOLDW, ROW), Position = UDim2.new(1, -FOLDW, 0, 0), BackgroundTransparency = 1, Font = FONT, TextSize = 16, TextColor3 = WHITE, Text = "–" }, title)
 local foldHooks = {} -- 想知道"面板是折着还是开着"的模块挂这里
 local function setFold(v) body.Visible = v; fold.Text = (if v then "–" else "+"); for _, f in ipairs(foldHooks) do f(v) end end
 local drag = mk("UIDragDetector", { BoundingUI = gui }, title)
@@ -868,7 +869,7 @@ do -- ═════════ 志: 周期记录 / 诊断打包 ════�
 	end
 	feature{ kind = "page", id = "log", tab = "志" }
 	feature{ kind = "text", key = "log_status", label = `开 录制 后写 {LOGFILE}` }
-	feature{ kind = "btn", label = "诊断打包 (整机快照 → 剪贴板)", w = 1, fn = function() if dumpNow then dumpNow() end end }
+	feature{ kind = "btn", label = "诊断打包 (快照→剪贴板)", w = 1, fn = function() if dumpNow then dumpNow() end end }
 	feature{ kind = "num", key = "logint", def = 2, label = "间隔s" }
 	feature{ kind = "num", key = "logmax", def = 512, label = "上限KB" }
 	feature{ key = "rec", label = "录制", w = 1, loop = logTick, every = function() return S.logint end,

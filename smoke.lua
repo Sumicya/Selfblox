@@ -655,6 +655,26 @@ ok(vy ~= nil and tonumber(vm) >= 1 and tonumber(vm) <= 12 and tonumber(vd) >= 1 
 ok(VER ~= nil and VER:sub(1, 1) ~= "v" and select(2, SRC:gsub(`"{VER:gsub("%.", "%%.")}"`, "")) == 1, "展示版本不带 v, 版本号只在 VERSION 一行写死")
 local title0 = tabs():FindFirstChild("SB_Title")
 ok(title0 ~= nil and title0.Text == "Selfblox " .. tostring(VER), `面板标题读 VERSION (读到 {tostring(title0 and title0.Text)})`)
+-- 面板宽度: 一行两个按钮各占一半, 面板窄了它们才真的左右靠近 (26.10.15 起 200 → 160, 半行按钮 100 → 80)
+ok(title0 ~= nil and title0.Size.X.Offset == 184, `面板宽 184, 半行按钮 = {title0 and title0.Size.X.Offset / 2}px (读到 {title0 and title0.Size.X.Offset})`)
+ok(tabs():FindFirstChild("SB_Body") ~= nil and tabs():FindFirstChild("SB_Body").Size.X.Offset == 184, "面板体和标题一样宽")
+-- 折叠钮原来是直接压在标题文字上的 (26×26 贴右边): 200px 时刚好不撞, 面板一窄就会盖住版本号末位
+-- 不变量 = 标题用 UIPadding 让出的宽度必须等于折叠钮占的宽度, 两边一起动才不会重新叠上
+local foldB
+for _, c in ipairs(title0:GetChildren()) do if c.ClassName == "TextButton" and c.Text == "–" then foldB = c end end
+ok(foldB ~= nil, "标题条上有折叠钮")
+ok(foldB ~= nil and foldB.Size.X.Offset == 18, `折叠钮占宽 18 (原 26) (读到 {foldB and foldB.Size.X.Offset})`)
+ok(foldB ~= nil and foldB.Position.X.Offset == -foldB.Size.X.Offset, "折叠钮贴右边, 不越界")
+ok(title0 ~= nil and title0.TextSize == 12, `标题字号跟面板其它文字一致 = 12 (读到 {title0 and title0.TextSize})`)
+-- 面板宽度的真正下限是标题栏: 折叠钮压在标题上, 标题又是居中的, 所以 "标题文字宽 + 折叠钮宽" 必须塞得进面板
+-- 宽度只能估(假引擎没有字体度量): CJK 按 12px, 其它按 7px @ 12 号 —— 这是偏保守的上界
+local function estPx(str)
+	local wide, narrow = 0, 0
+	for i = 1, #str do local b = str:byte(i); if b >= 0xE0 then wide += 1 elseif b < 0x80 then narrow += 1 end end
+	return wide * 12 + narrow * 7 -- 3 字节字符的续字节 0x80..0xBF 两个分支都不进, 不会重复计
+end
+local need = estPx(title0 and title0.Text or "") + (foldB and foldB.Size.X.Offset or 0)
+ok(title0 ~= nil and foldB ~= nil and need <= title0.Size.X.Offset, `标题文字(估 {estPx(title0 and title0.Text or "")}px) + 折叠钮({foldB and foldB.Size.X.Offset}px) 塞得进面板 {title0 and title0.Size.X.Offset}px (需要 {need}px)`)
 -- 启动打印改成了 Luau 插值写法(26.10 起 selfblox.lua 以 Luau 为基线), 断言跟着认新写法
 ok(SRC:find('print(`[Selfblox] {VERSION}', 1, true) ~= nil, "启动打印读 VERSION, 不另写一份")
 
