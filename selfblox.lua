@@ -245,6 +245,7 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 	local accel, decel, up, down, cruise, brake, flying, lampOn = false, false, false, false, false, false, false, false
 	local clip, target, statT, setBrake = opt("carclip", false), 0, 0, nil
 	local lamps, lampSaved = {}, setmetatable({}, { __mode = "k" })
+	local lampFlashGeneration = 0
 	local seatMax = setmetatable({}, { __mode = "k" })
 	local col = setmetatable({}, { __mode = "k" })
 	local rp = RaycastParams.new()
@@ -301,6 +302,7 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 	local function horn(v) pcall(function() VIM:SendKeyEvent(v, Enum.KeyCode[S.horn], false, game) end) end -- 执行器可能禁 VIM
 	local function pick()
 		local cam = workspace.CurrentCamera
+		if not cam then toast("相机尚未就绪"); return end
 		rp.FilterDescendantsInstances = { me.Character }
 		local hit = workspace:Raycast(cam.CFrame.Position, cam.CFrame.LookVector * 5000, rp)
 		local m = hit and hit.Instance:FindFirstAncestorOfClass("Model")
@@ -393,7 +395,21 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 	setBrake = toggle(r5, "急刹", false, function(v) brake = v end, 0.5)
 	local r6 = row(page)
 	toggle(r6, "常亮", false, function(v) lampOn = v; if v then setLamps(true) else dropLamps() end end, 0.5)
-	btn(r6, "闪 ×3", function() task.spawn(function() for _ = 1, 3 do setLamps(true); task.wait(0.12); setLamps(false); task.wait(0.12) end; if lampOn then setLamps(true) else dropLamps() end end) end, 0.5)
+	btn(r6, "闪 ×3", function()
+		lampFlashGeneration = lampFlashGeneration + 1
+		local generation = lampFlashGeneration
+		task.spawn(function()
+			for _ = 1, 3 do
+				if not alive or generation ~= lampFlashGeneration then return end
+				setLamps(true); task.wait(0.12)
+				if not alive or generation ~= lampFlashGeneration then return end
+				setLamps(false); task.wait(0.12)
+			end
+			if alive and generation == lampFlashGeneration then
+				if lampOn then setLamps(true) else dropLamps() end
+			end
+		end)
+	end, 0.5)
 	local r7 = row(page)
 	toggle(r7, "常声(" .. S.horn .. ")", false, horn, 0.5)
 	hold(r7, "声", horn, 0.5)
@@ -406,7 +422,11 @@ MODS[#MODS + 1] = { name = "sibs", tab = "车", fn = function(page)
 	status = text(page, "上车即控; 没车就对准它按 换车")
 
 	DBG.sibs = function() local p = part(); return "part=" .. (p and p:GetFullName() or "-") .. " cruise=" .. tostring(cruise) .. "@" .. math.floor(target) .. " fly=" .. tostring(flying) .. " clip=" .. tostring(clip) .. " brake=" .. tostring(brake) end
-	return function() detach(); reclip(); dropLamps(); horn(false); if curSeat and seatMax[curSeat] then curSeat.MaxSpeed = seatMax[curSeat] end end
+	return function()
+		lampFlashGeneration = lampFlashGeneration + 1
+		detach(); reclip(); dropLamps(); horn(false)
+		if curSeat and seatMax[curSeat] then pcall(function() curSeat.MaxSpeed = seatMax[curSeat] end) end
+	end
 end }
 
 -- ═════════ drift: 人物推进 (MobilePedals 自动绑; 没有就用面板按钮) ═════════
@@ -415,6 +435,7 @@ MODS[#MODS + 1] = { name = "drift", tab = "漂", fn = function(page)
 	local enabled, w, s, att, vf, status = opt("drift", true), false, false, nil, nil, nil
 	local pedalConns = {}
 	local function bindPedals()
+		if not alive then return end
 		for _, c in ipairs(pedalConns) do c:Disconnect() end
 		table.clear(pedalConns)
 		local pg = me:FindFirstChild("PlayerGui")
@@ -431,7 +452,7 @@ MODS[#MODS + 1] = { name = "drift", tab = "漂", fn = function(page)
 		end
 		bind(b[1], function(v) s = v end)
 		bind(b[2], function(v) w = v end)
-		pedalConns[#pedalConns + 1] = f.ChildAdded:Connect(function() task.delay(0.2, bindPedals) end)
+		pedalConns[#pedalConns + 1] = f.ChildAdded:Connect(function() task.delay(0.2, function() if alive then bindPedals() end end) end)
 		status.Text = "踏板已绑定 (" .. #b .. " 个)"
 	end
 
@@ -464,9 +485,13 @@ MODS[#MODS + 1] = { name = "drift", tab = "漂", fn = function(page)
 	hold(r3, "▼ 刹车", function(v) s = v end, 0.5)
 	status = text(page, "…")
 	task.spawn(function()
-		local pg = me:WaitForChild("PlayerGui")
-		on(pg.ChildAdded, function(c) if c.Name == "MobilePedals" then task.delay(0.2, bindPedals) end end)
-		bindPedals()
+		local pg = me:FindFirstChild("PlayerGui")
+		while alive and not pg do task.wait(0.1); pg = me:FindFirstChild("PlayerGui") end
+		if not alive or not pg then return end
+		on(pg.ChildAdded, function(c)
+			if alive and c.Name == "MobilePedals" then task.delay(0.2, function() if alive then bindPedals() end end) end
+		end)
+		if alive then bindPedals() end
 	end)
 
 	DBG.drift = function() return "on=" .. tostring(enabled) .. " w=" .. tostring(w) .. " s=" .. tostring(s) .. " pedals=" .. #pedalConns end
