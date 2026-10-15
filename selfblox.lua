@@ -15,7 +15,7 @@
 --   语法基线就是 Luau(运行环境就是它): 26.10.5.28 起用了字符串插值(`{}`)、复合赋值(+= 等)与 if 表达式(if c then a else b),
 --            Lua 5.4 / fengari 都解析不了; 自检的权威跑法是 CI 里的官方 Luau 0.741 (本地怎么编同版本见 AGENTS.md)
 
-local VERSION = "26.10.15.3.61" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
+local VERSION = "26.10.15.4.62" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
@@ -243,6 +243,7 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 		flyAO.CFrame = CFrame.lookAt(Vector3.zero, look)
 	end
 	local ctrl, ctrlT, stickFrom, stickRaw = nil, -1e9, false, Vector3.zero
+	local ctrlWhy = "还没探过" -- 探不到控制模块时记下"为什么", 打进日志; 只报「模块=无」等于没报
 	-- 摇杆真值。前四版修「停不下来」全在改怎么拦(松手归零一次 / 每帧钉死水平速度 / GetState 门), 方向错了:
 	-- 主人 26.10.13.5.46 的日志里水平速度已经钉到 1 而人还在动, 而这个模式只在 md 非零时才推 ⟹ 动只能来自
 	-- 那个一直非零的 h.MoveDirection。所以这版换源: PlayerModule.ControlModule:GetMoveVector() 是控制模块
@@ -252,7 +253,22 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 			ctrlT = os.clock()
 			local ps = me:FindFirstChildOfClass("PlayerScripts")
 			local pm = ps and ps:FindFirstChild("PlayerModule")
-			if pm then pcall(function() local m = require(pm):GetModule(); local c = m and m:GetControls(); if c and c.GetMoveVector then ctrl = c end end) end
+			-- 真机两份日志 (26.10.14.5.58 的 367 条 + 26.10.15.3.61 的 140 条) 全是「模块=无」,
+			-- 但"没找到"分不清是 PlayerScripts 整个不在, 还是它在、里头换了名字 —— 两种的修法完全不同。
+			-- 所以把底下实际有什么打出来, 让下一份日志自己给答案, 不再猜第七次。
+			if not ps then
+				ctrlWhy = "角色下没有 PlayerScripts"
+			elseif not pm then
+				local names = {}
+				for _, c in ipairs(ps:GetChildren()) do names[#names + 1] = `{c.Name}:{c.ClassName}` end
+				table.sort(names)
+				local shown = {}
+				for i = 1, math.min(#names, 8) do shown[#shown + 1] = names[i] end
+				ctrlWhy = `PlayerScripts 在, 但没有 PlayerModule; 底下 {#names} 个: {(#shown > 0 and table.concat(shown, " ") or "(空)")}{(#names > 8 and " …" or "")}`
+			elseif not ctrl then
+				local okR = pcall(function() local m = require(pm):GetModule(); local c = m and m:GetControls(); if c and c.GetMoveVector then ctrl = c end end)
+				if not ctrl then ctrlWhy = okR and "PlayerModule 在, 但 GetControls 没给 GetMoveVector" or "PlayerModule 在, 但 require/GetModule/GetControls 抛错" end
+			end
 		end
 		if ctrl then
 			local okM, mv = pcall(function() return ctrl:GetMoveVector() end)
@@ -341,7 +357,7 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 		local q = r and r.Position or Vector3.zero
 		-- 两个源并排打: 摇杆=Humanoid.MoveDirection(会冻), 模块=ControlModule:GetMoveVector(每帧现算)。
 		-- 再出「停不下来」, 这两个数一对就知道是谁没归零, 不用第五轮猜。源= 标明这次是谁在驱动。
-		local modTxt = stickFrom and string.format("(%.2f,%.2f,%.2f)|%.2f", stickRaw.X, stickRaw.Y, stickRaw.Z, stickRaw.Magnitude) or "无(退回 Humanoid)"
+		local modTxt = stickFrom and string.format("(%.2f,%.2f,%.2f)|%.2f", stickRaw.X, stickRaw.Y, stickRaw.Z, stickRaw.Magnitude) or `无({ctrlWhy})`
 		return string.format("摇杆=(%.2f,%.2f,%.2f)|%.2f 模块=%s 源=%s 推=%d/跑=%d 态=%s 位=(%.0f,%.0f,%.0f)", md.X, md.Y, md.Z, md.Magnitude, modTxt, stickFrom and "模块" or "Humanoid", pushN, tickN, (okS and st and tostring(st.Name)) or "?", q.X, q.Y, q.Z)
 	end }
 	feature{ key = "speed", label = "速度", num = { "spd", 16 }, tick = speedTick, set = function(v) if v then moving = false end end, off = function() stopMove(); restoreSpeed() end }

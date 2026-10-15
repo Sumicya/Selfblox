@@ -1647,6 +1647,40 @@ step(1 / 60, 6)
 ok(hrp.props.CFrame.Position.Z < zFb, "控制模块抛错 → 退回 Humanoid.MoveDirection, 速度照常能用")
 SBMV.gone = nil
 step(1 / 60, 130) -- 让它重新拿到控制模块, 后面的断言按原路走
+
+do -- 「模块=无」必须说清是哪一种"无": 真机两份日志 (367 条 + 140 条) 全是这句, 但三种成因的修法完全不同
+	local psInst = pmodule.Parent
+	local function dumpTxt()
+		for _, d in ipairs(all()) do if d:IsA("TextButton") and type(d.Text) == "string" and d.Text:find("诊断打包", 1, true) then d.Activated:Fire() end end
+		step(1 / 60, 2)
+		return VFS["selfblox_dump.txt"] or ""
+	end
+	-- 探针是 `if not ctrl and os.clock()-ctrlT > 1`, ctrl 缓存着就永远不进 ⟹ 先用 gone 把缓存打掉
+	SBMV.gone = true
+	step(1 / 60, 130)
+	SBMV.gone = nil
+	-- 情况一: PlayerScripts 在, 但里头没有叫 PlayerModule 的 (改名 / 自制控制模块)
+	local decoyA = inst("ModuleScript", { Name = "ClientPlayerModule" }); decoyA.Parent = psInst
+	local decoyB = inst("LocalScript", { Name = "CustomControls" }); decoyB.Parent = psInst
+	pmodule.Parent = nil
+	step(1 / 60, 130) -- 跨过每秒一次的重探窗口
+	local dm1 = dumpTxt()
+	ok(dm1:find("PlayerScripts 在, 但没有 PlayerModule", 1, true) ~= nil, "PlayerScripts 在但没 PlayerModule → 日志明说是这种情况")
+	ok(dm1:find("ClientPlayerModule:ModuleScript", 1, true) ~= nil and dm1:find("CustomControls:LocalScript", 1, true) ~= nil, "把 PlayerScripts 底下实际有什么列出来 (改名过的控制模块靠这个认)")
+	-- 情况二: 整个 PlayerScripts 都不在
+	decoyA:Destroy(); decoyB:Destroy()
+	psInst.Parent = nil
+	step(1 / 60, 130)
+	ok(dumpTxt():find("角色下没有 PlayerScripts", 1, true) ~= nil, "PlayerScripts 整个不在 → 日志说的是这一种, 不和上一种混")
+	-- 情况三: PlayerModule 在但取控制模块时抛错
+	psInst.Parent = player; pmodule.Parent = psInst
+	SBMV.gone = true
+	step(1 / 60, 130)
+	ok(dumpTxt():find("PlayerModule 在, 但 require/GetModule/GetControls 抛错", 1, true) ~= nil, "PlayerModule 在但取不到控制模块 → 日志说的是这一种")
+	SBMV.gone = nil
+	step(1 / 60, 130) -- 恢复: 让它重新拿到控制模块
+	ok(dumpTxt():find("模块=无", 1, true) == nil, "恢复后模块这条路重新走通, 不再是「模块=无」")
+end
 click(modeBtn) -- 回到 root
 humanoid.props.MoveDirection = Vector3.new(0, 0, -1)
 step(1 / 60, 3)
