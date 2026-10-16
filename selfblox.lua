@@ -22,7 +22,7 @@
 --   语法基线就是 Luau(运行环境就是它): 26.10.5.28 起用了字符串插值(`{}`)、复合赋值(+= 等)与 if 表达式(if c then a else b),
 --            Lua 5.4 / fengari 都解析不了; 自检的权威跑法是官方 Luau 0.741 (本地怎么编见 tools/luau-driver/build.sh)
 
-local VERSION = "26.10.16.5.95" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
+local VERSION = "26.10.16.6.96" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
@@ -1264,54 +1264,127 @@ do -- ═════════ 机: 飞机侦察 (找飞机 / 判队伍 / 列
 	feature{ kind = "tick", off = function() if oldNC then hookmetamethod(game, "__namecall", oldNC) end end } -- 只在卸载时: 发侦听装的钩子还原 (关开关只停记录, 钩子留着照常放行)
 end
 
-do -- ═════════ 砖: BitFarmer 刷砖 (单游戏专用) ═════════
-	local st = { cycles = 0, earned = 0, sent = 0, got = 0, rate = 0 }
-	S.bmult, S.blevel = opt("bmult", 99999), opt("blevel", 9999) -- 只读配置 (没有面板控件)
-	local function ownBrick(c) return c:IsA("BasePart") and not c.Anchored and c:GetAttribute("Owner") == me.UserId end
-	local function ingest(b, col) b.CFrame = col.CFrame + Vector3.new(math.random(-3, 3), 1.5, math.random(-3, 3)); b.AssemblyLinearVelocity = Vector3.new(0, -35, 0) end
-	local function loop()
-		local ls = me:FindFirstChild("leaderstats")
-		local col, spawnBit = workspace:FindFirstChild("Collector"), RS:FindFirstChild("SpawnBit")
-		local bits, mult = ls and ls:FindFirstChild("Bits"), ls and ls:FindFirstChild("Multiplier")
-		if not (col and bits) then W.brick(false); toast("没找到 workspace.Collector / leaderstats.Bits"); return end
-		local mult0, lvl0 = mult and mult.Value, me:GetAttribute("MultiplierUpgradeLevel")
-		local last, lastT, seen = bits.Value, os.clock(), bits.Value -- seen = 上次记账时的 Bits: 按它算增量, 周期之间到账的也不丢
-		local conn = workspace.ChildAdded:Connect(function(c) task.defer(function() if F.brick and ownBrick(c) then ingest(c, col); st.got = st.got + 1 end end) end)
-		local function drain() for _, c in ipairs(workspace:GetChildren()) do if ownBrick(c) then ingest(c, col) end end end
-		local okw, errw = pcall(function()
-		while F.brick and alive do
-			st.cycles += 1
-			drain()
-			if spawnBit then for _ = 1, S.bbatch do if not F.brick then break end; spawnBit:FireServer(); st.sent = st.sent + 1; task.wait(S.bint) end end
-			task.wait(S.bdrain)
-			drain()
-			st.earned, seen = st.earned + math.max(bits.Value - seen, 0), bits.Value
-			local t = os.clock()
-			if t - lastT >= 1 then st.rate = (bits.Value - last) / (t - lastT); last, lastT = bits.Value, t end
-			if mult and mult.Value < S.bmult then mult.Value = S.bmult end
-			me:SetAttribute("MultiplierUpgradeLevel", S.blevel)
-			say("brick_status", string.format("周期 %d · +%.0f · %.1f/s · 发 %d 收 %d", st.cycles, st.earned, st.rate, st.sent, st.got))
-			task.wait(0.15)
-		end
-		end)
-		conn:Disconnect() -- 清理必须在 pcall 外面: 循环里任何一句抛错, 死连接就会一直搬砖、倍率也回不来
-		if mult and mult0 then mult.Value = mult0 end
-		me:SetAttribute("MultiplierUpgradeLevel", lvl0)
-		if not okw then error(errw, 0) end -- 照旧让 brickSet 那层 pcall 报错并弹提示
+do -- ═════════ 抓: 抓散件 + 现场清单 (物件名未知, 先量后抓) ═════════
+	-- 原来这页是 BitFarmer 专用: workspace.Collector / leaderstats.Bits / RS.SpawnBit / Owner 属性,
+	-- 换游戏整套都不成立。这一版一个名字都不认: 散件 = 半径内没锚定、又不属于谁人物的部件, 抓住就往人身上拉。
+	-- 收纳槽叫什么、推进去怎么算数, 现在全不知道 ⟹ 不猜。用「诊断打包」把现场全列出来, 下一份日志再对准。
+	local st = { n = 0, pulled = 0 }
+	local function attrTxt(o) -- 属性常常是 Owner / ItemId / Value 这类关键信息, 一个不漏地带上
+		local ok, a = pcall(function() return o:GetAttributes() end)
+		if not ok or type(a) ~= "table" then return "" end
+		local t = {}
+		for k, v in pairs(a) do t[#t + 1] = `{k}={tostring(v)}` end
+		table.sort(t) -- pairs 顺序不保证, 排一下日志才可复现
+		return #t > 0 and (" 属:" .. table.concat(t, ",")) or ""
 	end
-	local looping = false -- 关了立刻又开时旧循环还没退出: 只认一条, 不然两条同时跑 (请求翻倍, 还原值也乱)
-	local function brickSet(v)
-		if v and not looping then
-			looping = true
-			task.spawn(function() local ok, err = pcall(loop); looping = false; if not ok then W.brick(false); toast(`刷砖出错: {tostring(err)}`) end end)
+	local function chars() local o = {}; for _, pl in ipairs(Players:GetPlayers()) do local c = pl.Character; if c then o[#o + 1] = c end end; return o end
+	local function someones(p, cs) -- 别人身上的零件也是没锚定的部件, 不排掉就会把玩家拽过来
+		for _, c in ipairs(cs) do if p:IsDescendantOf(c) then return true end end
+		return false
+	end
+	local function inRadius(radius)
+		local r = root()
+		if not r then return {}, nil, {} end
+		local ok, hit = pcall(function() return workspace:GetPartBoundsInRadius(r.Position, radius) end)
+		if not ok or type(hit) ~= "table" then return {}, r, {} end
+		local cs, o = chars(), {}
+		for _, p in ipairs(hit) do
+			pcall(function() if p:IsA("BasePart") then o[#o + 1] = { p = p, mine = mine(p), who = someones(p, cs) } end end)
+		end
+		return o, r, cs
+	end
+	local function loose(radius) -- 散件: 没锚定 + 不是我人物 + 不是谁人物
+		local all, r, _ = inRadius(radius)
+		local o = {}
+		for _, x in ipairs(all) do if not x.p.Anchored and not x.mine and not x.who then o[#o + 1] = x.p end end
+		return o, r
+	end
+	local function pull() -- 只写水平速度, Y 留给引擎: 三个分量全写死会把地上的东西顶上天
+		local list, r = loose(S.gradius)
+		st.n = #list
+		if not r then return end
+		for _, p in ipairs(list) do
+			pcall(function()
+				local d = Vector3.new(r.Position.X - p.Position.X, 0, r.Position.Z - p.Position.Z)
+				if d.Magnitude < 1 then return end -- 已经到手边, 再推就从人身上穿过去了
+				local v = p.AssemblyLinearVelocity
+				p.AssemblyLinearVelocity = Vector3.new(d.Unit.X * S.gspeed, v.Y, d.Unit.Z * S.gspeed)
+				st.pulled += 1
+			end)
 		end
 	end
-	feature{ kind = "page", id = "brick", tab = "砖", info = function() return string.format("刷=%s 周期=%d 已刷=%.0f 速率=%.1f/s", tostring(F.brick), st.cycles, st.earned, st.rate) end }
-	feature{ key = "brick", label = "刷砖", w = 1, set = brickSet, off = function() F.brick = false end }
-	feature{ kind = "num", key = "bbatch", def = 4, label = "批次" }
-	feature{ kind = "num", key = "bint", def = 0.08, label = "间隔" }
-	feature{ kind = "num", key = "bdrain", def = 0.6, label = "排空间隔", w = 1 }
-	feature{ kind = "text", key = "brick_status", label = "BitFarmer 专用" }
+	local function grabLines() -- 现场清单: 不筛、不猜、不设名额, 按距离从近到远排, 截断只砍最远的
+		local r = root()
+		local L = { `==== GRAB {os.date("%Y-%m-%d ")}{clock(true)} place={game.PlaceId} 地图={tostring(game.Name)} ====` }
+		if not r then L[#L + 1] = "没有角色 (进游戏再点诊断打包)"; return L end
+		L[#L + 1] = string.format("角色位置=(%.0f,%.0f,%.0f) 抓取半径=%s 拉力=%s 扫描半径=%s", r.Position.X, r.Position.Y, r.Position.Z, tostring(S.gradius), tostring(S.gspeed), tostring(S.gscan))
+		local all = inRadius(S.gscan)
+		local rows = {}
+		for _, x in ipairs(all) do
+			pcall(function()
+				local p = x.p
+				rows[#rows + 1] = { d = (p.Position - r.Position).Magnitude, s = string.format("%s/%s 锚%s (%.0f,%.0f,%.0f) 尺寸(%.0f,%.0f,%.0f) 速%.1f%s%s",
+					p.Name, p.ClassName, p.Anchored and "A" or "a", p.Position.X, p.Position.Y, p.Position.Z,
+					p.Size.X, p.Size.Y, p.Size.Z, p.AssemblyLinearVelocity.Magnitude,
+					(if x.mine then " 我" elseif x.who then " 人" else ""), attrTxt(p)) }
+			end)
+		end
+		table.sort(rows, function(a, b) return a.d < b.d end) -- 近的排前面: 32KB 砍掉的是最远的地图件, 手边一个不丢
+		L[#L + 1] = `-- 扫描半径内部件 {#rows} 个 (近 → 远, 全列)`
+		local used, cut = 0, 0
+		for i, x in ipairs(rows) do
+			local line = string.format("  %6.1f %s", x.d, x.s)
+			if used + #line > 32768 then cut = #rows - i + 1 break end
+			L[#L + 1] = line
+			used += #line
+		end
+		if cut > 0 then L[#L + 1] = `  …还有 {cut} 个没列(超32KB)` end
+		-- 收纳槽要么是 ProximityPrompt, 要么是某个名字的触发块; Remote 是「推进去怎么算数」的另一条路。两样都全列。
+		local pr = {}
+		local okD, list = pcall(function() return workspace:GetDescendants() end)
+		local nAll = 0
+		if okD and type(list) == "table" then
+			for _, d in ipairs(list) do
+				pcall(function()
+					nAll += 1
+					if d:IsA("ProximityPrompt") then
+						local par = d.Parent
+						pr[#pr + 1] = string.format("  提示 %s 长按=%.1f 距离=%.0f 视线=%s 开=%s 离角色=%.0f", (par and par:GetFullName()) or "?",
+							d.HoldDuration, d.MaxActivationDistance, tostring(d.RequiresLineOfSight), tostring(d.Enabled),
+							(par and par:IsA("BasePart")) and (par.Position - r.Position).Magnitude or -1)
+					end
+				end)
+			end
+		end
+		table.sort(pr)
+		L[#L + 1] = `-- workspace 共 {nAll} 个物件, 其中 ProximityPrompt {#pr} 个 (全列)`
+		for _, x in ipairs(pr) do L[#L + 1] = x end
+		local rem = {}
+		for _, tree in ipairs({ RS, workspace }) do
+			local okR, rl = pcall(function() return tree:GetDescendants() end)
+			if okR and type(rl) == "table" then
+				for _, d in ipairs(rl) do pcall(function() if d:IsA("RemoteEvent") or d:IsA("RemoteFunction") then rem[#rem + 1] = `  {d.ClassName} {d:GetFullName()}` end end) end
+			end
+		end
+		table.sort(rem)
+		L[#L + 1] = `-- Remote {#rem} 个 (全列)`
+		for _, x in ipairs(rem) do L[#L + 1] = x end
+		return L
+	end
+	feature{ kind = "page", id = "grab", tab = "抓", info = function()
+		-- info 里只数不推: 关着也报半径内有几个, 才知道是半径小了还是这游戏根本没散件; 推的动作只在开关/按住时发生
+		local list = loose(S.gradius)
+		st.n = #list
+		return string.format("按住=%s 自动=%s 半径内=%d 累计=%d 半径=%s 拉力=%s", tostring(F.pull), tostring(F.autopull), st.n, st.pulled, tostring(S.gradius), tostring(S.gspeed))
+	end }
+	feature{ kind = "hold", key = "pull", label = "抓取", h = 36 } -- 页签已经叫「抓」, 同名会让 findBtn 抓错按钮
+	feature{ key = "autopull", label = "自动抓" }
+	feature{ kind = "num", key = "gradius", def = 40, label = "抓取半径" }
+	feature{ kind = "num", key = "gspeed", def = 60, label = "拉力" }
+	feature{ kind = "num", key = "gscan", def = 300, label = "扫描半径", w = 1 }
+	feature{ kind = "tick", tick = function() if F.pull or F.autopull then pull() end end }
+	feature{ kind = "dump", key = "grab", dump = grabLines }
+	feature{ kind = "text", key = "grab_status", label = "物件名未知: 先点诊断打包" }
 end
 
 -- ───────── 启动: 按清单建页 / 控件 / 每帧连接; 一个功能装不上不拖累别的 (记下来, 页里写一行) ─────────

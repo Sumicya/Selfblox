@@ -226,7 +226,8 @@ function methods.GetConnectedParts(self) -- 假装配体: 同 Model 里 Assembly
 end
 function methods.GetState(self) return rawget(self, "sbstate") or { Name = "Running" } end -- 默认 Running: 状态门在旧断言里应当是空操作
 function methods.SetNetworkOwner() error("SetNetworkOwner 客户端不让调 (上一版就是这一句把车搞成完全绑不上)") end
-function methods.GetPartBoundsInRadius() _G.__radiusCalls = (_G.__radiusCalls or 0) + 1; return _G.__radius or {} end -- 记次数: 好验绑车的空间查询有没有节流
+function methods.GetPartBoundsInRadius(self, pos, radius) _G.__radiusCalls = (_G.__radiusCalls or 0) + 1; _G.__radiusArgs = { r = radius } -- 记次数验节流, 记入参验半径真的传下去了
+	return _G.__radius or {} end
 
 local mt = {
 	__index = function(t, k)
@@ -651,7 +652,7 @@ ok(type(_G.SB_UNLOAD) == "function", "_G.SB_UNLOAD 有了")
 ok(tabs() ~= nil, "面板建在 gethui() 里")
 local names = {}
 for _, b in ipairs(buttons()) do if #b.Text <= 3 and b.Text ~= "" then names[b.Text] = true end end
-ok(names["动"] and names["车"] and names["漂"] and names["显"] and names["志"] and names["机"] and names["砖"], "七个页签都在")
+ok(names["动"] and names["车"] and names["漂"] and names["显"] and names["志"] and names["机"] and names["抓"], "七个页签都在")
 ok(#newInstancesFrom(SNAP) > 60, `控件建了 {#newInstancesFrom(SNAP)} 个实例`)
 local errs = 0 -- 模块构造时 pcall 兜住了错误会写成一行"出错: ...", 这里要当成失败抓出来
 for _, d in ipairs(all()) do if d.ClassName == "TextLabel" and type(d.Text) == "string" and d.Text:sub(1, 6) == "出错: " then errs = errs + 1; print(`       → {d.Text}`) end end
@@ -692,7 +693,7 @@ step(1 / 60, 30)
 ok(true, "空转没炸")
 
 print("\n[3] 页签逐个点")
-for _, t in ipairs({ "动", "车", "漂", "显", "志", "机", "砖" }) do
+for _, t in ipairs({ "动", "车", "漂", "显", "志", "机", "抓" }) do
 	local b = findBtn(t)
 	click(b)
 	local on = 0
@@ -824,7 +825,7 @@ ok(esp.TextColor3.R == 1 and esp.TextColor3.G == 1, `开关关着 → 字是白�
 click(esp)
 ok(esp.TextColor3.G > esp.TextColor3.R, `开关开着 → 字变亮绿 (底色只剩 10%, 开/关靠字色) ({esp.Text})`)
 local lit = 0
-for _, t in ipairs({ "动", "车", "漂", "显", "志", "机", "砖" }) do local b = findBtn(t); if b and b.TextColor3.G > b.TextColor3.R then lit = lit + 1 end end
+for _, t in ipairs({ "动", "车", "漂", "显", "志", "机", "抓" }) do local b = findBtn(t); if b and b.TextColor3.G > b.TextColor3.R then lit = lit + 1 end end
 ok(lit == 1, `页签里正好一个是亮的 = 当前页 ({lit} 个)`)
 -- 原生居中就行: 文字不加 UIPadding 补偿, 也不加描边 / 阴影 (0.9 透明底 + 原色字)
 local texts, decorated = 1, 0
@@ -1296,10 +1297,10 @@ ok(dm and dm:find("CAr", 1, true) == nil and dm:find("=== CAR", 1, true) ~= nil,
 ok(CLIP ~= nil and CLIP:find("Selfblox 诊断", 1, true) ~= nil, "快照同时进了剪贴板")
 ok(type(_G.SB_DUMP) == "function", "也可以用 _G.SB_DUMP() 手动打")
 
--- ───────── 其余模块的覆盖补齐: hud-ESP / plane / brick / log / moc / sibs 角落 ─────────
--- 这些模块原来几乎没被自检跑到 (plane 33% / brick 48% / log 67% / hud 78%): "真引擎会抛错、假引擎放行"的错最容易藏在没跑到的代码里
+-- ───────── 其余模块的覆盖补齐: hud-ESP / plane / grab / log / moc / sibs 角落 ─────────
+-- 这些模块原来几乎没被自检跑到 (plane 33% / grab / log 67% / hud 78%): "真引擎会抛错、假引擎放行"的错最容易藏在没跑到的代码里
 do local function section7c() -- 包进函数: 主函数的局部变量已经快到 200 个上限了
-print("\n[7c] 其余模块: ESP / 飞机侦察 / 刷砖 / 日志 / 旋转·秒互动·速度三模式 / 翻转")
+print("\n[7c] 其余模块: ESP / 飞机侦察 / 抓散件 / 日志 / 旋转·秒互动·速度三模式 / 翻转")
 local TMP = {}
 local function T(i) TMP[#TMP + 1] = i; return i end
 local function mkPart(name, size, pos, extra)
@@ -1482,53 +1483,104 @@ ok(VFS["plane_debug.txt"] ~= nil and VFS["plane_debug.txt"]:find("Jet_new", 1, t
 click(findBtn("自动 5s"))
 -- 发侦听 / 收侦听 故意留着开, 让卸载去验证"钩子还原 + 连接断干净"
 
--- ── brick: BitFarmer 刷砖 ──
-local brickBtn = btnExact("刷砖 关")
-click(brickBtn)
+-- ── grab: 抓散件 + 现场清单 ──
+-- 新游戏的物件名一个都不知道 (主人只说「一堆乱七八糟的东西可以推进岛周围的收纳槽」), 所以断言只认行为不认名字:
+-- 没锚定的散件被拉向人, 锚定的地图件不碰, 别人身上的零件不碰, 关着一个都不动, 半径和清单都得对得上。
+local hp0 = hrp.props.Position
+local function mkLoose(name, dx, dz, anchored)
+	local q = mkPart(name, Vector3.new(2, 2, 2), Vector3.new(hp0.X + dx, hp0.Y, hp0.Z + dz), { Anchored = anchored or false })
+	q.Parent = workspace
+	return q
+end
+local g1, g2 = mkLoose("Crate", 10, 0), mkLoose("Barrel", -8, 6)
+local g3, g4 = mkLoose("Island", 3, 3, true), mkLoose("Rock", -4, -4, true)
+-- 别人的零件也是没锚定的部件: 前面的 ESP 测试已经留了一个 bob (bobChar 里有 bobRoot), 正好拿来当"别人"
+local matePart = mkPart("mateArm", Vector3.new(1, 2, 1), Vector3.new(hp0.X + 3, hp0.Y, hp0.Z))
+matePart.Parent = bobChar
+_G.__radius = { g1, g2, g3, g4, matePart, bobRoot, hrp }
+click(findBtn("自动抓"))
+step(1 / 60, 4)
+ok(g1.AssemblyLinearVelocity.X < -1, `散件被拉向人: 件在 +X 10 格, 速度该往 -X (实际 {g1.AssemblyLinearVelocity.X})`)
+ok(g2.AssemblyLinearVelocity.X > 1 and g2.AssemblyLinearVelocity.Z < -1, `斜后方那个方向也对 (实际 {g2.AssemblyLinearVelocity.X},{g2.AssemblyLinearVelocity.Z})`)
+ok(g3.AssemblyLinearVelocity.Magnitude == 0 and g4.AssemblyLinearVelocity.Magnitude == 0, "锚定的不碰 (整座岛的地板就是锚定件)")
+ok(matePart.AssemblyLinearVelocity.Magnitude == 0 and bobRoot.AssemblyLinearVelocity.Magnitude == 0, "别人身上的零件不碰 (不排掉就会把玩家拽过来)")
+-- 自己身上的零件同样是没锚定的部件: 不排掉就会把自己的手拽到脚边
+local selfPart = mkPart("selfArm", Vector3.new(1, 2, 1), Vector3.new(hp0.X + 2, hp0.Y, hp0.Z))
+selfPart.Parent = char
+_G.__radius = { g1, g2, g3, g4, matePart, bobRoot, hrp, selfPart }
+step(1 / 60, 3)
+ok(selfPart.AssemblyLinearVelocity.Magnitude == 0, "自己身上的零件也不碰")
+selfPart:Destroy()
+_G.__radius = { g1, g2, g3, g4, matePart, bobRoot, hrp }
+ok(g1.AssemblyLinearVelocity.Y == 0, `只写水平速度, Y 留给引擎 (实际 Y={g1.AssemblyLinearVelocity.Y}, 三个分量全写死会把地上的东西顶上天)`)
+ok(_G.__radiusArgs ~= nil and _G.__radiusArgs.r == 40, `半径真的传给了引擎 (传的 {tostring(_G.__radiusArgs and _G.__radiusArgs.r)}, 默认 40)`)
+-- 页状态不是标签, 是 pageInfos() 写进日志/诊断的一行 ⟹ 从打包结果里读
+for _, d in ipairs(all()) do if d:IsA("TextButton") and type(d.Text) == "string" and d.Text:find("诊断打包", 1, true) then d.Activated:Fire() end end
 step(1 / 60, 2)
-ok(toastText():find("没找到", 1, true) ~= nil and brickBtn.Text == "刷砖 关", `没有 Collector / leaderstats → 提示并自己关回去 ({toastText()})`)
-local ls = T(inst("Folder", { Name = "leaderstats" })); ls.Parent = player
-local bits = T(inst("IntValue", { Name = "Bits", Value = 100 })); bits.Parent = ls
-local mult = T(inst("IntValue", { Name = "Multiplier", Value = 2 })); mult.Parent = ls
-local collector = mkPart("Collector", Vector3.new(10, 1, 10), Vector3.new(80, 3, 0), { Anchored = true }); collector.Parent = workspace
-local fires = 0
-local spawnBit = T(inst("RemoteEvent", { Name = "SpawnBit", FireServer = function() fires = fires + 1 end })); spawnBit.Parent = RSv
-local function mkBrick(owner, anchored) local b = mkPart("Brick", Vector3.new(1, 1, 1), Vector3.new(0, 20, 0), { Anchored = anchored or false }); b:SetAttribute("Owner", owner); b.Parent = workspace; return b end
-local b1, b2, b3, b4 = mkBrick(1), mkBrick(1), mkBrick(99), mkBrick(1, true)
-click(btnExact("刷砖 关"))
-step(1 / 60, 60)
-bits.Value = bits.Value + 50 -- 游戏给的分
-local b5 = mkBrick(1)
-workspace.props.ChildAdded:Fire(b5) -- 新掉出来的砖: ChildAdded → defer → 吸走
-step(1 / 60, 90)
-ok(fires >= 4, `每个周期按批次发 SpawnBit (发了 {fires} 次)`)
-ok(mult.Value == 99999 and player:GetAttribute("MultiplierUpgradeLevel") == 9999, "倍率和等级被顶上去")
-local function nearCollector(b) local pz = b.CFrame.Position; return math.abs(pz.X - 80) <= 3 and math.abs(pz.Y - 4.5) < 0.01 and math.abs(pz.Z) <= 3 end
-ok(nearCollector(b1) and nearCollector(b2) and b1.AssemblyLinearVelocity.Y == -35, "自己的砖被吸到 Collector 上方并往下砸")
-ok(nearCollector(b5), "新掉出来的砖也被吸走 (ChildAdded)")
-ok(b3.CFrame.Position.Y == 20 and b4.CFrame.Position.Y == 20, "别人的砖 / 自己锚定的砖不碰")
-local brickTxt = labelHas("周期 ")
-ok(brickTxt ~= nil and brickTxt:find("+50", 1, true), `状态行有周期和累计收益 ({tostring(brickTxt)})`)
--- 关了立刻又开: 不能同时跑两条循环
-click(btnExact("刷砖 开"))
-click(btnExact("刷砖 关"))
-local f0 = fires
-step(1 / 60, 192)
-ok(fires - f0 <= 16, `关了立刻又开: 只有一条循环在跑 (3.2 秒发了 {(fires - f0)} 次, 两条循环会翻倍)`)
-click(btnExact("刷砖 开"))
-step(1 / 60, 150)
-ok(mult.Value == 2 and player:GetAttribute("MultiplierUpgradeLevel") == nil, "关掉 → 倍率和等级还原 (原来的 2 / 没有)")
--- 循环里抛错也得把清理跑完: 倍率要还原 (死连接泄漏由「没漏连接」那几条覆盖)
-local fireOk, nfire = spawnBit.props.FireServer, 0
-spawnBit.props.FireServer = function() nfire = nfire + 1; fires = fires + 1; if nfire > 4 then error("故意炸") end end -- 批次=4: 让第一轮跑完(倍率已顶上去), 第二轮才炸
-click(btnExact("刷砖 关"))
-step(1 / 60, 150)
-ok(mult.Value == 2, `循环抛错 → 倍率照样还原 (还是 {mult.Value})`)
-ok(toastText():find("刷砖出错", 1, true) ~= nil, `循环抛错 → 自己关回去并提示 ({toastText()})`)
-spawnBit.props.FireServer = fireOk
-local f1 = fires
-step(1 / 60, 120)
-ok(fires == f1, "关掉以后循环真的停了")
+local gTxt = (VFS["selfblox_dump.txt"] or ""):match("\n  grab [^\n]*")
+ok(gTxt ~= nil and gTxt:find("半径内=2", 1, true) ~= nil, `页状态只数散件: 7 个里锚定 2 个、自己 1 个、别人 2 个都不算 ({tostring(gTxt)})`)
+ok(gTxt ~= nil and gTxt:find("INFO 报错", 1, true) == nil, "页状态这一行没抛错 (抛错的话整行会变成 INFO 报错)")
+-- 关掉就一个都不动 (速度归零后再跑, 还被动就说明开关没管住)
+click(findBtn("自动抓"))
+g1.props.AssemblyLinearVelocity = Vector3.zero
+g2.props.AssemblyLinearVelocity = Vector3.zero
+step(1 / 60, 10)
+ok(g1.AssemblyLinearVelocity.Magnitude == 0 and g2.AssemblyLinearVelocity.Magnitude == 0, "关掉 → 一个都不再推")
+-- 页状态只许数不许推: 打包会跑 info(), info 里要是也推, 关着的时候一打包东西就飞
+g1.props.AssemblyLinearVelocity = Vector3.zero
+for _, d in ipairs(all()) do if d:IsA("TextButton") and type(d.Text) == "string" and d.Text:find("诊断打包", 1, true) then d.Activated:Fire() end end
+step(1 / 60, 3)
+ok(g1.AssemblyLinearVelocity.Magnitude == 0, "关掉以后打包也不推 (info 只数不推)")
+-- 按住钮: 按着才拉, 松手就停 (松手不停这一类的毛病在 cframe 上翻过六次车)
+local grabBtn = btnExact("抓取") -- 页签也叫「抓」, 用 btnExact 加全名才不会抓到页签
+ok(grabBtn ~= nil, "有「抓取」这个按住钮")
+grabBtn.InputBegan:Fire(input("Touch"))
+g1.props.AssemblyLinearVelocity = Vector3.zero
+step(1 / 60, 4)
+ok(g1.AssemblyLinearVelocity.X < -1, `按住「抓取」→ 拉 (实际 {g1.AssemblyLinearVelocity.X})`)
+grabBtn.InputEnded:Fire(input("Touch"))
+g1.props.AssemblyLinearVelocity = Vector3.zero
+step(1 / 60, 4)
+ok(g1.AssemblyLinearVelocity.Magnitude == 0, "松手 → 停")
+-- 现场清单: 物件名未知 ⟹ 诊断打包必须把半径内的东西全列出来, 下一份日志才认得出哪个是散件、哪个是收纳槽
+local function grabDump()
+	for _, d in ipairs(all()) do if d:IsA("TextButton") and type(d.Text) == "string" and d.Text:find("诊断打包", 1, true) then d.Activated:Fire() end end
+	step(1 / 60, 2)
+	return VFS["selfblox_dump.txt"] or ""
+end
+local slot = mkPart("StorageSlot", Vector3.new(4, 4, 4), Vector3.new(hp0.X + 20, hp0.Y, hp0.Z + 20), { Anchored = true })
+slot:SetAttribute("ItemId", 42)
+slot.Parent = workspace
+_G.__radius = { g1, g2, g3, g4, matePart, bobRoot, hrp, slot }
+local gd = grabDump()
+ok(gd:find("==== GRAB ", 1, true) ~= nil, "诊断打包里有抓这页的现场清单")
+ok(gd:find("Crate/Part", 1, true) ~= nil and gd:find("StorageSlot/Part", 1, true) ~= nil, "散件和锚定的都列 (不筛: 哪个是收纳槽由人看着判, 不由代码猜)")
+ok(gd:find("属:ItemId=42", 1, true) ~= nil, "属性一起打出来 (Owner / ItemId 这类关键信息常常只在属性里)")
+ok(gd:find(" 锚A ", 1, true) ~= nil and gd:find(" 锚a ", 1, true) ~= nil, "锚没锚标出来, 岛上锚定的和地上散的一眼分开")
+ok(gd:find("扫描半径内部件 8 个", 1, true) ~= nil, "数出来的个数和放进去的一样 (8 个)")
+ok(gd:find("其中 ProximityPrompt ", 1, true) ~= nil, "ProximityPrompt 全列 (收纳槽很可能就是个长按交互块)")
+ok(gd:find("-- Remote ", 1, true) ~= nil and gd:find("SpawnPlane", 1, true) ~= nil, "Remote 全列 (推进去怎么算数, 另一条路就是发包)")
+-- 近 → 远排序 + 32KB 护栏: 整岛几千个部件会顶爆写盘, 砍掉的只能是最远的, 而且得说明砍了几个
+local bulk = {}
+for i = 1, 900 do bulk[i] = mkPart(`Debris{i}`, Vector3.new(1, 1, 1), Vector3.new(hp0.X + i, hp0.Y, hp0.Z)) end
+-- 倒着放: 引擎回来的顺序不保证按距离, 正着放的话排序是白排一遍, 删掉排序自检也发现不了
+for i = 1, 450 do bulk[i], bulk[901 - i] = bulk[901 - i], bulk[i] end
+_G.__radius = bulk
+local gdBig = grabDump()
+ok(gdBig:find("Debris1/Part", 1, true) ~= nil, "最近的排在最前面 (Debris1 只隔 1 格)")
+ok(gdBig:find("没列(超32KB)", 1, true) ~= nil and gdBig:find("还有 %d+ 个没列") ~= nil, "超 32KB 才截断, 而且把砍了几个写在清单里")
+ok(gdBig:find("Debris900/Part", 1, true) == nil, "被砍掉的是最远的那头 (Debris900 隔 900 格, 不在清单里)")
+for _, b in ipairs(bulk) do b:Destroy() end
+_G.__radius = nil
+_G.__radiusArgs = nil
+grabDump()
+ok(grabDump():find("没列(超32KB)", 1, true) == nil, "部件撤了以后护栏跟着消失, 清单恢复完整")
+matePart:Destroy()
+slot:Destroy()
+g1:Destroy()
+g2:Destroy()
+g3:Destroy()
+g4:Destroy()
 
 -- ── log: 录制 / 超限重写 / 循环里抛错不能死 ──
 VFS["Selfblox_log.txt"] = nil
@@ -2010,7 +2062,7 @@ step(1 / 60, 20) -- 先把帧喂够: 数据条 0.2s 才刷一次, 页签/数值�
 local n = 0
 for _, d in ipairs(all()) do if d:IsA("TextButton") and d.Text == "动" then n = n + 1 end end
 ok(n == 1, "only={moc,hud} 只留了「动」「显」两个页签")
-ok(findBtn("车") == nil and findBtn("漂") == nil and findBtn("志") == nil and findBtn("机") == nil and findBtn("砖") == nil, "only 过滤掉的页 (车/漂/志/机/砖) 根本没建")
+ok(findBtn("车") == nil and findBtn("漂") == nil and findBtn("志") == nil and findBtn("机") == nil and findBtn("抓") == nil, "only 过滤掉的页 (车/漂/志/机/砖) 根本没建")
 local box = nil
 for _, d in ipairs(all()) do if d:IsA("TextBox") then box = d; break end end
 ok(box and box.Text == "99", "_G.SB.spd=99 顶掉了默认 16")
