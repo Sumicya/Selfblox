@@ -1637,10 +1637,22 @@ step(1 / 60, 1) -- 开门第一帧只记位置基准, 不推
 local z0 = hrp.props.CFrame.Position.Z
 step(1 / 60, 5)
 local per = (z0 - hrp.props.CFrame.Position.Z) / 5 * 60
-ok(math.abs(per - 38) < 1e-6, `速度·cframe: 游戏自己在挪人 → 在它自己那一步之上再加 spd*dt, 净速度 = 22 + 16 = 38 (量到 {per} 格/秒)`)
+ok(math.abs(per - 16) < 1e-6, `速度·cframe: 游戏自己在挪人 → 把这一步换成 spd*dt, 净速度就是 spd 而不是 22 + 16 (量到 {per} 格/秒, 设的是 16; 加法语义下滑杆低于 22 就完全不起作用, 想慢下来没门)`)
 hrp.props.AssemblyLinearVelocity = Vector3.new(0, 0, -999) -- 引擎从 CFrame 位移里攒出来的动量
 step(1 / 60, 3)
 ok(hrp.props.AssemblyLinearVelocity.Z == 0, `速度·cframe: 推着走的时候水平速度也每帧钉死, 攒不出动量 (实际 {hrp.props.AssemblyLinearVelocity.Z})`)
+
+-- 方向必须跟着实测位移走, 不能跟着 MoveDirection 走: 真机 26.10.15.5.63 的 287 条里摇杆那一路
+-- 恒为 (-0.97,0.00,-0.25) 冻了 23 秒, 而人早转向了。拿 md 当方向就会把人往冻住的那个方向推。
+_G.__gameMove = Vector3.new(22 / 60, 0, 0) -- 游戏把人往 +X 挪
+humanoid.props.MoveDirection = Vector3.new(0, 0, -1) -- 摇杆那一路还冻在 -Z
+step(1 / 60, 1) -- 重新对位基准
+local x0, z0b = hrp.props.CFrame.Position.X, hrp.props.CFrame.Position.Z
+step(1 / 60, 5)
+local dx, dz = hrp.props.CFrame.Position.X - x0, hrp.props.CFrame.Position.Z - z0b
+ok(math.abs(dx - 16 * 5 / 60) < 1e-6 and math.abs(dz) < 1e-9, `推力方向取实测位移不取 MoveDirection: 游戏往 +X 挪而摇杆冻在 -Z, 人就该沿 +X 走 (实走 dx={dx} dz={dz}, 该是 {16 * 5 / 60} 和 0)`)
+_G.__gameMove = Vector3.new(0, 0, -22 / 60)
+step(1 / 60, 2)
 
 -- 松手 = 游戏不再挪人。两个源这时候都还满偏着, 一帧都不许推 —— 26.10.15.5.63 的 #172–#286 就是这个场面
 -- (连续 115 条、23.0 秒人不动而摇杆恒为 (-0.97,0.00,-0.25))。前六版都在改怎么拦, 这版把判据换成了游戏本身。
@@ -1649,7 +1661,7 @@ SBMV.force = Vector3.new(0, 0, -1) -- 连控制模块都跟着喊满偏
 local zStop = hrp.props.CFrame.Position.Z
 step(1 / 60, 6)
 local extra = hrp.props.CFrame.Position.Z - zStop
-ok(extra <= 1e-9 and extra > -16 / 60 - 1e-9, `游戏不挪人了 → 判据是上一帧那一步, 晚一帧才知道, 所以顶多多推一帧 (多走了 {-extra} 格, 一帧的量是 {16 / 60} 格)`)
+ok(extra >= -1e-9 and extra < 16 / 60, `游戏不挪人了 → 判据是上一帧那一步, 晚一帧才知道, 顶多把那一步补完 (多走了 {extra} 格, 一帧的量是 {16 / 60} 格)`)
 local zEnd = hrp.props.CFrame.Position.Z
 step(1 / 60, 6)
 ok(hrp.props.CFrame.Position.Z == zEnd, "停下之后就一步都不动了, 两个源还满偏也不动 (这就是「停不下来」的出口)")
@@ -1857,7 +1869,7 @@ do -- cframe 的门必须自己打进日志: 26.10.15.6.89 那份日志只有「
 	step(1 / 60, 4)
 	local dOn = dumpTxt()
 	ok(dOn:find("门=开", 1, true) ~= nil, "游戏在挪人 → 日志里门是开的")
-	ok(dOn:find("游=22.0 净=38.0格/秒", 1, true) ~= nil, `游戏自己那一步和加完的净速度都打出来, 真机好对账 (实际 {tostring(dOn:match("游=[^ ]* [^ ]*"))})`)
+	ok(dOn:find("游=22.0 净=16.0格/秒", 1, true) ~= nil, `游戏自己那一步和换完的净速度并排打, 真机好对账 (实际 {tostring(dOn:match("游=[^ ]* [^ ]*"))})`)
 	_G.__gameMove = nil
 	step(1 / 60, 4)
 	ok(dumpTxt():find("门=关", 1, true) ~= nil, "游戏不挪人了 → 门是关的 (下一份日志一眼就能看出门开没开)")

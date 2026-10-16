@@ -22,7 +22,7 @@
 --   语法基线就是 Luau(运行环境就是它): 26.10.5.28 起用了字符串插值(`{}`)、复合赋值(+= 等)与 if 表达式(if c then a else b),
 --            Lua 5.4 / fengari 都解析不了; 自检的权威跑法是官方 Luau 0.741 (本地怎么编见 tools/luau-driver/build.sh)
 
-local VERSION = "26.10.16.2.92" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
+local VERSION = "26.10.16.3.93" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
@@ -428,22 +428,21 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 			local v = r.AssemblyLinearVelocity
 			r.AssemblyLinearVelocity = Vector3.new(0, v.Y, 0)
 			-- "什么时候推"不看输入源了, 改成量游戏自己挪了多少: lastPos 记的是上一帧我们推完的位置, 到这一帧
-			-- 开始, 中间那段水平位移只有游戏/物理能造成。没挪 = 手已经离开摇杆 = 一帧都不推; 挪了就沿着这一步
-			-- 的方向再加 spd*dt。游戏是靠速度挪人还是靠写位置挪人都一样, 也不用挑输入源。
+			-- 开始, 中间那段水平位移只有游戏/物理能造成。没挪 = 手已经离开摇杆 = 一帧都不推; 挪了就把这一步
+			-- 换成 spd*dt。出来的速度就是 spd, 游戏是靠速度挪人还是靠写位置挪人都一样, 也不用挑输入源。
 			local p = r.CFrame.Position
 			local d = lastPos and Vector3.new(p.X - lastPos.X, 0, p.Z - lastPos.Z) or nil
 			if d then
 				gateSpd = d.Magnitude / math.max(dt, 1e-6)
 				-- 下限: 水平不到 1 格/秒当没动 (阈值跟 dt 走, 掉帧不误判)。
-				-- 上限: 传送/重生那种一步几十格不算走路, 这种帧只重新对位, 不往上加速。
+				-- 上限: 传送/重生那种一步几十格不算走路。这种帧要是当走路, 那个 -d 会照着原路把人拽回去, 所以只重新对位。
 				gateOpen = d.Magnitude > dt and d.Magnitude < 60 * dt
-				-- spd 是「在游戏自己那一步之上再加多少」, 不是「把游戏那一步换成多少」。26.10.16.1.91 写成了
-				-- 替换(尾巴上那个 - d 把游戏自己挪的整段抵掉), 结果这游戏自己就跑 22 格/秒, 主人原来 16 够用
-				-- 的档只剩 16, 得把滑杆推到 30 才找回手感 —— 那是把「速度改不动」修成了「速度能改但基准错了」。
-				-- 改回 26.10.15.5.63 的相加写法, 只把方向从冻住的 md 换成量出来的 d.Unit: 净速度 = 游戏自己 + spd,
-				-- 16 还是原来那个 16; 松手时游戏那一步为 0, 门关, 一帧都不加, 照样停得住。
+				-- spd 是绝对速度, 不是加成: 尾巴那个 -d 把游戏自己挪的那一步抵掉, 再按 d 的方向补 spd*dt,
+				-- 净出来就是 spd。26.10.16.2.92 一度改成相加(净 = 游戏自己 + spd), 主人当场否了: 加法语义下
+				-- 滑杆低于游戏自身速度就一点作用都没有, 想慢下来没有任何办法。这游戏自己跑 22 格/秒, 所以
+				-- 16 档会比原版慢 —— 那正是要的, 慢速档本来就该能要。方向用 d.Unit 不用 md: md 在这游戏冻住不归零。
 				netSpd = 0
-				if gateOpen then r.CFrame = r.CFrame + d.Unit * (S.spd * dt); pushN += 1; netSpd = gateSpd + S.spd end
+				if gateOpen then r.CFrame = r.CFrame + d.Unit * (S.spd * dt) - d; pushN += 1; netSpd = S.spd end
 			end
 			-- 基准必须记推完之后的位置: 记推之前的话, 下一帧量到的差里会混进自己刚才那一下, 推一帧停一帧地摆。
 			lastPos = r.CFrame.Position
@@ -513,7 +512,7 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 		-- 源已经不再决定推不推了, 所以不打"谁在驱动", 打门开没开 —— 下一份日志一眼就能对账。
 		local modTxt = stickFrom and string.format("(%.2f,%.2f,%.2f)|%.2f 路=%s", stickRaw.X, stickRaw.Y, stickRaw.Z, stickRaw.Magnitude, ctrlPath) or `无({ctrlWhy})`
 		local gateTxt = (F.spdmode == "cframe") and (gateOpen and "开" or "关") or "—"
-		-- 净=游戏自己 + spd, 这一帧实际该有的速度。以前只打 spd, 看不出主人真正跑多快。
+		-- 游=游戏自己这一步, 净=换成 spd 之后实际该有的速度。两个并排打, 真机上一眼看得出换没换成。
 		return string.format("摇杆=(%.2f,%.2f,%.2f)|%.2f 模块=%s 门=%s 游=%.1f 净=%.1f格/秒 推=%d/跑=%d 态=%s 位=(%.0f,%.0f,%.0f) 游戏=%s", md.X, md.Y, md.Z, md.Magnitude, modTxt, gateTxt, gateSpd, netSpd, pushN, tickN, (okS and st and tostring(st.Name)) or "?", q.X, q.Y, q.Z, uiTxt())
 	end }
 	feature{ key = "speed", label = "速度", num = { "spd", 16 }, tick = speedTick, set = function(v) if v then moving, lastPos = false, nil end end, off = function() stopMove(); restoreSpeed() end }
