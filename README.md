@@ -65,7 +65,7 @@ rm -f /storage/emulated/0/Delta/workspace/Selfblox-*.lua
 | 显 | `hud` | 顶部数据条（延迟、帧率、内存、时间、人数、坐标）、速度箭头、玩家 ESP（原生 `Highlight` 加名牌距离） |
 | 志 | `log` | 配置与各模块状态定时追加 `Selfblox_log.txt`，超过上限重写；「诊断打包」把整机快照写进 `selfblox_dump.txt` 并复制到剪贴板 |
 | 机 | `plane` | 查找飞机（有座位的、以及只认到机翼名的都算，没座位的残留机也列得出来）、判定队伍、列出 Remote、收发侦听（`__namecall` 钩子）、高亮；报告写 `plane_debug.txt` 并复制到剪贴板，没重扫过就点「写报告」会自动先扫一遍，没过门槛的候选列进「疑似」名单 |
-| 抓 | `grab` | 抓取：按住「抓取」或开「自动抓」，把半径内没锚定的散件按水平速度拉向人物（锚定件、自己人物和别人人物的零件都不碰）；诊断打包附一份现场清单：扫描半径内全部部件（含属性）、全部 `ProximityPrompt`、全部 `Remote`。游戏里的物件名一个都不认，先量再抓 |
+| 抓 | `grab` | 抓取：按住「抓取」或开「自动抓」，把半径内的部件拉向人物。范围三档——`散件`（未锚定）/ `带属性`（这游戏可卖件都带 `SellToken`，地图装饰件一个属性都没有）/ `全部`（连锚定的一起搬，只能直接写 CFrame）；任何一档都不碰人物身上的零件。界面也能抓：诊断打包全列可点按钮（全路径、坐标、尺寸、可见、`Active`、按钮上或子物件里的文字），「按钮名」填一段字再按「点按钮」就让执行器发一次真鼠标点击 |
 
 配置键与默认值：
 
@@ -85,7 +85,8 @@ rm -f /storage/emulated/0/Delta/workspace/Selfblox-*.lua
 | `clock` | `12` | 时钟制式，填 `24` 切 24 小时制，数据条和日志都受影响 |
 | `logint` `logmax` | 2 512 | 日志间隔秒 / 上限 KB |
 | `pall` | false | 飞机侦察全录 Remote |
-| `gradius` `gspeed` `gscan` | 40 60 300 | 抓取半径 / 拉力（写进 `AssemblyLinearVelocity` 的水平速度，格/秒）/ 诊断清单的扫描半径 |
+| `gradius` `gspeed` `gscan` | 40 60 300 | 抓取半径 / 拉力（未锚定件写进 `AssemblyLinearVelocity` 的水平速度，锚定件按它折算每帧搬多远，格/秒）/ 诊断清单的扫描半径 |
+| `grange` / `gkey` | `loose` / 空 | 抓取范围 `loose` 散件 / `attr` 带属性 / `all` 全部；`gkey` 是「点按钮」的名字关键字，空着不点 |
 
 ## 开发
 

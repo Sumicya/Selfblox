@@ -22,7 +22,7 @@
 --   语法基线就是 Luau(运行环境就是它): 26.10.5.28 起用了字符串插值(`{}`)、复合赋值(+= 等)与 if 表达式(if c then a else b),
 --            Lua 5.4 / fengari 都解析不了; 自检的权威跑法是官方 Luau 0.741 (本地怎么编见 tools/luau-driver/build.sh)
 
-local VERSION = "26.10.16.6.96" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
+local VERSION = "26.10.16.7.97" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
@@ -179,7 +179,7 @@ local function feature(e)
 		if e.save then v = opt(e.save, e.def) end
 		if v == nil then if k == "toggle" then v = false else v = e.cycle[1] end end
 		F[e.key] = v
-	elseif k == "num" then S[e.key] = opt(e.key, e.def) end
+	elseif k == "num" or k == "str" then S[e.key] = opt(e.key, e.def) end -- str 是文本框 (num 只收数字)
 	local n = e.num
 	e.num = nil
 	FEATURES[#FEATURES + 1] = e
@@ -209,6 +209,13 @@ local KIND = {
 		end, w)
 	end,
 	num = function(e, p, w) num(p, e.label, S, e.key, w, e.key) end,
+	str = function(e, p, w) -- 文本输入框 (num 只收数字): 存进 S[k], 空串就是没填, 不做数字校验
+		local f = mk("Frame", { Size = w and UDim2.new(w, 0, 1, 0) or UDim2.new(1, 0, 0, ROW), LayoutOrder = ord(), BackgroundColor3 = OFF, BackgroundTransparency = CLEAR, BorderSizePixel = 0 }, p)
+		ui("TextLabel", f, nil, { Text = e.label, BackgroundTransparency = 1, Size = UDim2.fromScale(0.5, 1) })
+		local tb = mk("TextBox", { Size = UDim2.fromScale(0.5, 1), Position = UDim2.fromScale(0.5, 0), BackgroundTransparency = 1, Font = FONT, TextSize = 12, TextColor3 = Color3.fromRGB(255, 225, 140), Text = tostring(S[e.key] or ""), TextXAlignment = Enum.TextXAlignment.Center, TextYAlignment = Enum.TextYAlignment.Center, ClearTextOnFocus = false }, f)
+		on(tb.FocusLost, function() S[e.key] = tb.Text; save(e.key, tb.Text) end) -- 文本不做数字校验, 空串照存
+		W[e.key] = tb
+	end,
 	text = function(e, p, w) W[e.key] = text(p, e.label, w) end,
 	custom = function(e, p) e.build(p) end,
 	tick = function() end, dump = function() end, -- 没有控件的行: 只挂每帧 / 诊断
@@ -1264,12 +1271,24 @@ do -- ═════════ 机: 飞机侦察 (找飞机 / 判队伍 / 列
 	feature{ kind = "tick", off = function() if oldNC then hookmetamethod(game, "__namecall", oldNC) end end } -- 只在卸载时: 发侦听装的钩子还原 (关开关只停记录, 钩子留着照常放行)
 end
 
-do -- ═════════ 抓: 抓散件 + 现场清单 (物件名未知, 先量后抓) ═════════
-	-- 原来这页是 BitFarmer 专用: workspace.Collector / leaderstats.Bits / RS.SpawnBit / Owner 属性,
-	-- 换游戏整套都不成立。这一版一个名字都不认: 散件 = 半径内没锚定、又不属于谁人物的部件, 抓住就往人身上拉。
-	-- 收纳槽叫什么、推进去怎么算数, 现在全不知道 ⟹ 不猜。用「诊断打包」把现场全列出来, 下一份日志再对准。
-	local st = { n = 0, pulled = 0 }
-	local function attrTxt(o) -- 属性常常是 Owner / ItemId / Value 这类关键信息, 一个不漏地带上
+do -- ═════════ 抓: 抓部件 + 抓界面 (物件名一个都不认) ═════════
+	-- 真机 26.10.16.6.96 那份日志 (place=133363783004873 地图=Ugc) 给的事实:
+	--   · 能卖的东西是未锚定部件, 身上带 SellReadyAt + SellToken 两个属性 (JellyFish / Revolver / Gem …);
+	--     地图上的 Metal / Body / Black 这类装饰件同样未锚定, 但一个属性都没有。
+	--     ⟹ 分得开的那条线是「有没有属性」, 不是名字。
+	--   · 半径 40 内 84 个, 扫描半径 300 内 936 个 —— 东西不缺, 缺的是挑。
+	--   · 界面 3693 个物件, 上一版 16KB 护栏砍掉 3375 个, 报出来的 318 个几乎全是 Label, 按钮反而没露头。
+	-- 所以这版: 抓取分三档 (散 / 属 / 全), 锚定的改成直接搬 CFrame; 界面单独一段, 只列可点的, 且能按名字点。
+	local st = { n = 0, pulled = 0, moved = 0, clicked = 0, btns = 0 }
+
+	local function attrCnt(o) -- 属性个数: 「属」这一档就靠它挑, 这游戏的可卖件全带 SellReadyAt/SellToken
+		local ok, a = pcall(function() return o:GetAttributes() end)
+		if not ok or type(a) ~= "table" then return 0 end
+		local n = 0
+		for _ in pairs(a) do n += 1 end
+		return n
+	end
+	local function attrTxt(o) -- 属性常常是 Owner / ItemId / SellToken 这类关键信息, 一个不漏地带上
 		local ok, a = pcall(function() return o:GetAttributes() end)
 		if not ok or type(a) ~= "table" then return "" end
 		local t = {}
@@ -1284,43 +1303,131 @@ do -- ═════════ 抓: 抓散件 + 现场清单 (物件名未知
 	end
 	local function inRadius(radius)
 		local r = root()
-		if not r then return {}, nil, {} end
+		if not r then return {}, nil end
 		local ok, hit = pcall(function() return workspace:GetPartBoundsInRadius(r.Position, radius) end)
-		if not ok or type(hit) ~= "table" then return {}, r, {} end
+		if not ok or type(hit) ~= "table" then return {}, r end
 		local cs, o = chars(), {}
 		for _, p in ipairs(hit) do
-			pcall(function() if p:IsA("BasePart") then o[#o + 1] = { p = p, mine = mine(p), who = someones(p, cs) } end end)
+			pcall(function()
+				if p:IsA("BasePart") then o[#o + 1] = { p = p, mine = mine(p), who = someones(p, cs), na = attrCnt(p) } end
+			end)
 		end
-		return o, r, cs
-	end
-	local function loose(radius) -- 散件: 没锚定 + 不是我人物 + 不是谁人物
-		local all, r, _ = inRadius(radius)
-		local o = {}
-		for _, x in ipairs(all) do if not x.p.Anchored and not x.mine and not x.who then o[#o + 1] = x.p end end
 		return o, r
 	end
-	local function pull() -- 只写水平速度, Y 留给引擎: 三个分量全写死会把地上的东西顶上天
-		local list, r = loose(S.gradius)
+	-- 三档范围。「人物身上的」哪一档都不抓 —— 那是把玩家拽过来, 不是抓东西。
+	local RANGE = {
+		loose = function(x) return not x.p.Anchored end, -- 散: 没锚定的 (默认; 这游戏的可卖件都在这一档里)
+		attr = function(x) return x.na > 0 end,          -- 属: 带属性的 (可卖件带 SellToken, 地图装饰件一个属性都没有)
+		all = function() return true end,                -- 全: 连锚定的一起搬 (会把地图件也拖过来, 自己掂量)
+	}
+	local function targets(radius)
+		local all, r = inRadius(radius)
+		local keep = RANGE[F.grange] or RANGE.loose -- cycle 存的是 F 不是 S (读错表就永远停在第一档)
+		local o = {}
+		for _, x in ipairs(all) do if not x.mine and not x.who and keep(x) then o[#o + 1] = x.p end end
+		return o, r
+	end
+	local function pull(dt)
+		local list, r = targets(S.gradius)
 		st.n = #list
 		if not r then return end
 		for _, p in ipairs(list) do
 			pcall(function()
 				local d = Vector3.new(r.Position.X - p.Position.X, 0, r.Position.Z - p.Position.Z)
 				if d.Magnitude < 1 then return end -- 已经到手边, 再推就从人身上穿过去了
-				local v = p.AssemblyLinearVelocity
-				p.AssemblyLinearVelocity = Vector3.new(d.Unit.X * S.gspeed, v.Y, d.Unit.Z * S.gspeed)
-				st.pulled += 1
+				if p.Anchored then
+					-- 锚定件不吃速度, 只能直接搬 CFrame。客户端搬锚定件服务器认不认未验证 ——
+					-- 认不认都要能试, 所以这档留着, 但默认不开。
+					local step = math.min(S.gspeed * math.max(dt or 1 / 60, 1 / 240), d.Magnitude - 0.5)
+					p.CFrame = p.CFrame + d.Unit * step
+					st.moved += 1
+				else
+					-- 只写水平速度, Y 留给引擎: 三个分量全写死会把地上的东西顶上天
+					local v = p.AssemblyLinearVelocity
+					p.AssemblyLinearVelocity = Vector3.new(d.Unit.X * S.gspeed, v.Y, d.Unit.Z * S.gspeed)
+					st.pulled += 1
+				end
 			end)
 		end
 	end
+
+	-- ── 界面: 3693 个物件里绝大多数是 Label, 真正点得着的是 GuiButton ──
+	local function ownGui(g) local p = g; while p do if p == gui or p == FX then return true end; p = p.Parent end; return false end
+	local function btnText(b) -- ImageButton 自己没有文字, 名字常常是无意义的图, 得去子物件里找一行字
+		local ok, t = pcall(function()
+			if b:IsA("TextButton") and type(b.Text) == "string" and b.Text ~= "" then return b.Text end
+			for _, c in ipairs(b:GetDescendants()) do
+				if c:IsA("TextLabel") and type(c.Text) == "string" and c.Text ~= "" then return c.Text end
+			end
+		end)
+		return (ok and t) or ""
+	end
+	local function guiBtns() -- 全部可点按钮: 不筛可见、不筛尺寸、不设名额 (上一版按可见性筛, 隐着的按钮整个漏掉)
+		local o, trees = {}, {}
+		local pg = me:FindFirstChildOfClass("PlayerGui")
+		if pg then trees[#trees + 1] = pg end
+		if ROOT and ROOT ~= pg then trees[#trees + 1] = ROOT end
+		for _, tree in ipairs(trees) do
+			local okD, list = pcall(function() return tree:GetDescendants() end)
+			if okD and type(list) == "table" then
+				for _, g in ipairs(list) do
+					pcall(function()
+						if not g:IsA("GuiButton") or ownGui(g) then return end
+						local sz, ap = g.AbsoluteSize, g.AbsolutePosition
+						o[#o + 1] = { g = g, s = string.format("%s:%s@%s,%s %sx%s %s%s 「%s」",
+							g:GetFullName(), g.ClassName,
+							(ap and tostring(math.floor(ap.X))) or "?", (ap and tostring(math.floor(ap.Y))) or "?",
+							(sz and tostring(math.floor(sz.X))) or "?", (sz and tostring(math.floor(sz.Y))) or "?",
+							g.Visible ~= false and "V" or "v", g.Active == true and "A" or "-", btnText(g)) }
+					end)
+				end
+			end
+		end
+		table.sort(o, function(a, b) return a.s < b.s end) -- 按全路径排: 同一个菜单的按钮挨在一起, 好扫
+		st.btns = #o
+		return o
+	end
+	local function clickAt(b) -- 客户端点不了别人的 Activated, 只能让执行器发一次真鼠标事件
+		local sz, ap = b.AbsoluteSize, b.AbsolutePosition
+		if not sz or not ap then return false end
+		local cx, cy = ap.X + sz.X / 2, ap.Y + sz.Y / 2
+		local ok = pcall(function()
+			VIM:SendMouseButtonEvent(cx, cy, 0, true, game, 0)
+			VIM:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+		end)
+		return ok
+	end
+	local function clickMatched()
+		local k = tostring(S.gkey or "")
+		if k == "" then toast("先在「按钮名」里填一段字, 空着不点"); return end
+		local hit = 0
+		for _, x in ipairs(guiBtns()) do
+			pcall(function()
+				local nm, tx = x.g.Name, btnText(x.g)
+				if nm:lower():find(k:lower(), 1, true) or tx:lower():find(k:lower(), 1, true) then
+					if clickAt(x.g) then hit += 1 end
+				end
+			end)
+		end
+		st.clicked = hit
+		toast(`按钮名「{k}」: 点了 {hit} 个`)
+	end
+
 	local function grabLines() -- 现场清单: 不筛、不猜、不设名额, 按距离从近到远排, 截断只砍最远的
 		local r = root()
 		local L = { `==== GRAB {os.date("%Y-%m-%d ")}{clock(true)} place={game.PlaceId} 地图={tostring(game.Name)} ====` }
 		if not r then L[#L + 1] = "没有角色 (进游戏再点诊断打包)"; return L end
-		L[#L + 1] = string.format("角色位置=(%.0f,%.0f,%.0f) 抓取半径=%s 拉力=%s 扫描半径=%s", r.Position.X, r.Position.Y, r.Position.Z, tostring(S.gradius), tostring(S.gspeed), tostring(S.gscan))
+		L[#L + 1] = string.format("角色位置=(%.0f,%.0f,%.0f) 范围=%s 抓取半径=%s 拉力=%s 扫描半径=%s 按钮名=%s",
+			r.Position.X, r.Position.Y, r.Position.Z, tostring(F.grange), tostring(S.gradius), tostring(S.gspeed), tostring(S.gscan), tostring(S.gkey))
 		local all = inRadius(S.gscan)
+		local nA, nL, nAt = 0, 0, 0
 		local rows = {}
 		for _, x in ipairs(all) do
+			nA += 1
+			if not x.mine and not x.who then
+				if not x.p.Anchored then nL += 1 end
+				if x.na > 0 then nAt += 1 end
+			end
 			pcall(function()
 				local p = x.p
 				rows[#rows + 1] = { d = (p.Position - r.Position).Magnitude, s = string.format("%s/%s 锚%s (%.0f,%.0f,%.0f) 尺寸(%.0f,%.0f,%.0f) 速%.1f%s%s",
@@ -1330,7 +1437,7 @@ do -- ═════════ 抓: 抓散件 + 现场清单 (物件名未知
 			end)
 		end
 		table.sort(rows, function(a, b) return a.d < b.d end) -- 近的排前面: 32KB 砍掉的是最远的地图件, 手边一个不丢
-		L[#L + 1] = `-- 扫描半径内部件 {#rows} 个 (近 → 远, 全列)`
+		L[#L + 1] = `-- 扫描半径内部件 {nA} 个, 其中 未锚定非人物 {nL} 个 / 带属性非人物 {nAt} 个 (近 → 远, 全列)`
 		local used, cut = 0, 0
 		for i, x in ipairs(rows) do
 			local line = string.format("  %6.1f %s", x.d, x.s)
@@ -1369,22 +1476,39 @@ do -- ═════════ 抓: 抓散件 + 现场清单 (物件名未知
 		table.sort(rem)
 		L[#L + 1] = `-- Remote {#rem} 个 (全列)`
 		for _, x in ipairs(rem) do L[#L + 1] = x end
+		-- 界面: 整棵树几万个物件, 全列会把上面三段全冲掉, 所以这一段只收可点的 ——
+		-- 但「可点」不是筛选出来的猜测, 是 GuiButton 这个类; 隐着的、Active=false 的一个不落。
+		local gb = guiBtns()
+		L[#L + 1] = `-- 界面可点按钮 {#gb} 个 (全列, 按全路径排; 「」里是它自己或子物件上的文字)`
+		local u2, cut2 = 0, 0
+		for i, x in ipairs(gb) do
+			local line = "  " .. x.s
+			if u2 + #line > 32768 then cut2 = #gb - i + 1 break end
+			L[#L + 1] = line
+			u2 += #line
+		end
+		if cut2 > 0 then L[#L + 1] = `  …还有 {cut2} 个没列(超32KB)` end
 		return L
 	end
 	feature{ kind = "page", id = "grab", tab = "抓", info = function()
 		-- info 里只数不推: 关着也报半径内有几个, 才知道是半径小了还是这游戏根本没散件; 推的动作只在开关/按住时发生
-		local list = loose(S.gradius)
+		local list = targets(S.gradius)
 		st.n = #list
-		return string.format("按住=%s 自动=%s 半径内=%d 累计=%d 半径=%s 拉力=%s", tostring(F.pull), tostring(F.autopull), st.n, st.pulled, tostring(S.gradius), tostring(S.gspeed))
+		return string.format("按住=%s 自动=%s 范围=%s 半径内=%d 拉=%d 搬=%d 累计=%d 界面按钮=%d",
+			tostring(F.pull == true), tostring(F.autopull), tostring(F.grange), st.n, st.pulled, st.moved, st.pulled + st.moved, st.btns)
 	end }
 	feature{ kind = "hold", key = "pull", label = "抓取", h = 36 } -- 页签已经叫「抓」, 同名会让 findBtn 抓错按钮
 	feature{ key = "autopull", label = "自动抓" }
+	feature{ kind = "cycle", key = "grange", save = "grange", def = "loose", cycle = { "loose", "attr", "all" },
+		text = { loose = "范围 散件", attr = "范围 带属性", all = "范围 全部" }, lit = true }
 	feature{ kind = "num", key = "gradius", def = 40, label = "抓取半径" }
 	feature{ kind = "num", key = "gspeed", def = 60, label = "拉力" }
 	feature{ kind = "num", key = "gscan", def = 300, label = "扫描半径", w = 1 }
-	feature{ kind = "tick", tick = function() if F.pull or F.autopull then pull() end end }
+	feature{ kind = "str", key = "gkey", def = "", label = "按钮名" }
+	feature{ kind = "btn", label = "点按钮", fn = clickMatched, w = 1 }
+	feature{ kind = "tick", tick = function(dt) if F.pull or F.autopull then pull(dt) end end }
 	feature{ kind = "dump", key = "grab", dump = grabLines }
-	feature{ kind = "text", key = "grab_status", label = "物件名未知: 先点诊断打包" }
+	feature{ kind = "text", key = "grab_status", label = "散=未锚定 属=带属性 全=连锚定搬" }
 end
 
 -- ───────── 启动: 按清单建页 / 控件 / 每帧连接; 一个功能装不上不拖累别的 (记下来, 页里写一行) ─────────

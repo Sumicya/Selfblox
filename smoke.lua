@@ -96,7 +96,7 @@ local VERIFIED = {
 	Team = words("TeamColor"),
 	Teams = words("GetTeams"),
 	TextBox = words("BackgroundTransparency ClearTextOnFocus FocusLost Font Position Size Text TextColor3 TextSize TextXAlignment TextYAlignment"),
-	TextButton = words("Activated AutoButtonColor BackgroundColor3 BackgroundTransparency BorderSizePixel Font InputBegan InputEnded LayoutOrder Position Size Text TextColor3 TextSize TextXAlignment TextYAlignment"),
+	TextButton = words("AbsolutePosition AbsoluteSize Active Activated AutoButtonColor BackgroundColor3 BackgroundTransparency BorderSizePixel Font InputBegan InputEnded LayoutOrder Position Size Text TextColor3 TextSize TextXAlignment TextYAlignment Visible"),
 	TextLabel = words("AbsolutePosition AnchorPoint AutomaticSize BackgroundColor3 BackgroundTransparency BorderSizePixel Font InputBegan InputEnded LayoutOrder Position RichText Size Text TextColor3 TextSize TextStrokeTransparency TextWrapped TextXAlignment TextYAlignment Visible"),
 	UICorner = words("CornerRadius"),
 	UIDragDetector = words("BoundingUI DragAxis DragContinue DragEnd DragStart DragStyle"),
@@ -105,7 +105,7 @@ local VERIFIED = {
 	UserInputService = words("InputEnded JumpRequest"), -- InputEnded 是真成员: 按住钮的全局松手兜底靠它
 	VectorForce = words("ApplyAtCenterOfMass Attachment0 Force RelativeTo"),
 	VehicleSeat = words("Anchored AssemblyAngularVelocity AssemblyLinearVelocity AssemblyMass AssemblyRootPart CFrame CanCollide GetConnectedParts MaxSpeed Occupant Position Size Steer Throttle Torque"),
-	VirtualInputManager = words("SendKeyEvent"),
+	VirtualInputManager = words("SendKeyEvent SendMouseButtonEvent"),
 	Workspace = words("CurrentCamera GetPartBoundsInRadius Raycast"),
 }
 local ENUM_OK = { -- 枚举字面量 (KeyCode 是按配置字符串动态取的, 不检查)
@@ -212,6 +212,11 @@ function methods.WorldToViewportPoint(self, v) return Vector3.new(100, 200, 10),
 function methods.ChangeState() end
 -- VirtualInputManager 官方没有文档, 签名取自 API 清单 (robloxapi.github.io/ref/class/VirtualInputManager): 参数类型不对, 真引擎抛错, 假引擎也抛. 现在只剩喇叭用 SendKeyEvent
 local function vimArgs(name, ok_, spec) if not ok_ then error(`{name} 参数类型不对, 应为 {spec}`, 3) end end
+function methods.SendMouseButtonEvent(self, x, y, btn, down, g, rep) -- 签名同上出处: (x: number, y: number, mouseButton: number, isPressed: bool, game: any, replayCount: number)
+	vimArgs("SendMouseButtonEvent", type(x) == "number" and x == x and type(y) == "number" and y == y and type(btn) == "number" and type(down) == "boolean" and type(g) == "table" and type(rep) == "number", "(x: number, y: number, mouseButton: number, isPressed: bool, game: any, replayCount: number)")
+	self.props.clicks = self.props.clicks or {}
+	self.props.clicks[#self.props.clicks + 1] = { x = x, y = y, btn = btn, down = down }
+end
 function methods.SendKeyEvent(self, down, key, rep, layer)
 	vimArgs("SendKeyEvent", type(down) == "boolean" and type(key) == "table" and key.EnumType == "KeyCode" and type(rep) == "boolean" and type(layer) == "table", "(isPressed: bool, keyCode: KeyCode, isRepeatedKey: bool, layerCollector: Instance)")
 	self.props.keys = (self.props.keys or 0) + 1
@@ -1582,6 +1587,117 @@ g2:Destroy()
 g3:Destroy()
 g4:Destroy()
 
+
+-- ── grab: 三档范围 + 界面 ──
+-- 真机 26.10.16.6.96 那份日志 (place=133363783004873 地图=Ugc) 说清了这游戏的分法: 可卖件是未锚定部件,
+-- 身上带 SellReadyAt / SellToken 两个属性; 地图装饰件 (Metal / Body / Black) 同样未锚定, 一个属性都没有。
+local hi0 = hrp.props.Position
+local function mkThing(name, dx, dz, anchored, attr)
+	local q = mkPart(name, Vector3.new(2, 2, 2), Vector3.new(hi0.X + dx, hi0.Y, hi0.Z + dz), { Anchored = anchored or false })
+	if attr then for k, v in pairs(attr) do q:SetAttribute(k, v) end end
+	q.Parent = workspace
+	return q
+end
+local it1 = mkThing("JellyFish", 12, 0, false, { SellReadyAt = 3527.35, SellToken = "001f7120" })
+local it2 = mkThing("Revolver", -9, 4, false, { SellReadyAt = 3527.07, SellToken = "f979cd13" })
+local deco = mkThing("Metal", 6, 6) -- 地图装饰件: 未锚定, 没属性
+local wall = mkThing("ItemBlock", 15, 15, true) -- 锚定的地图件
+_G.__radius = { it1, it2, deco, wall, hrp }
+click(findBtn("自动抓"))
+step(1 / 60, 4)
+ok(it1.AssemblyLinearVelocity.X < -1 and it2.AssemblyLinearVelocity.X > 1, "范围 散件: 未锚定的都拉")
+ok(deco.AssemblyLinearVelocity.Magnitude > 0, "范围 散件: 没属性的装饰件也拉 (主人要「能抓的都抓」, 不按属性挑)")
+ok(wall.CFrame.Position.X == hi0.X + 15, "范围 散件: 锚定的一个不动 (客户端搬锚定件能不能同步没验过, 默认不碰)")
+click(findBtn("自动抓"))
+-- 属档: 只抓带属性的
+click(btnExact("范围 散件"))
+step(1 / 60, 1)
+ok(btnExact("范围 带属性") ~= nil, "范围切一档 → 「带属性」")
+it1.props.AssemblyLinearVelocity = Vector3.zero
+it2.props.AssemblyLinearVelocity = Vector3.zero
+deco.props.AssemblyLinearVelocity = Vector3.zero
+click(findBtn("自动抓"))
+step(1 / 60, 4)
+ok(it1.AssemblyLinearVelocity.Magnitude > 0 and it2.AssemblyLinearVelocity.Magnitude > 0, "范围 带属性: 带 SellToken 的照拉")
+ok(deco.AssemblyLinearVelocity.Magnitude == 0, "范围 带属性: 没属性的装饰件不碰 (真机 936 个部件里大半是这种)")
+click(findBtn("自动抓"))
+-- 全档: 连锚定的一起搬, 锚定件不吃速度, 只能直接写 CFrame
+click(btnExact("范围 带属性"))
+step(1 / 60, 1)
+ok(btnExact("范围 全部") ~= nil, "范围再切一档 → 「全部」")
+local wx0 = wall.CFrame.Position.X
+click(findBtn("自动抓"))
+step(1 / 60, 10)
+ok(wall.CFrame.Position.X < wx0, `范围 全部: 锚定的直接搬 CFrame 往人这边挪 ({wx0} → {wall.CFrame.Position.X})`)
+click(findBtn("自动抓"))
+click(btnExact("范围 全部"))
+step(1 / 60, 1)
+ok(btnExact("范围 散件") ~= nil, "范围转一圈回到「散件」")
+local gq0 = grabDump()
+ok(gq0:find("范围=loose", 1, true) ~= nil, "诊断里报当前是哪一档")
+ok(gq0:find("未锚定非人物 %d+ 个 / 带属性非人物 %d+ 个") ~= nil, "诊断里分别数出两档各有多少 (真机报的是 84 和 936 混在一起, 分不出)")
+
+-- ── 界面: 可点按钮全列 + 按名字点 ──
+local ggui = inst("ScreenGui", { Name = "ShopGui" })
+ggui.Parent = pgui
+local gbtn = inst("TextButton", { Name = "BuyButton", Text = "Buy", Visible = true, Active = true })
+gbtn.Parent = ggui
+gbtn.props.AbsoluteSize = { X = 72, Y = 29 }
+gbtn.props.AbsolutePosition = { X = 577, Y = 378 } -- 真机日志里 AllOGUpgrade/BuyButton 就在这个位置这个尺寸
+-- ImageButton 自己没有文字, 真机 AbilityFrame 那一排全是图, 文字在子物件上
+local gico = inst("ImageButton", { Name = "AbilityBtn", Visible = true, Active = true }) -- 名字里故意不带 Black: 只按名字匹配的变异才拦得住
+gico.Parent = ggui
+gico.props.AbsoluteSize = { X = 60, Y = 51 }
+gico.props.AbsolutePosition = { X = 769, Y = 88 }
+local gtxt = inst("TextLabel", { Name = "Text", Text = "Black Hole", Visible = true })
+gtxt.Parent = gico
+-- 隐着的按钮也照列: 只收可见的会把还没打开的菜单整个漏掉
+local ghid = inst("TextButton", { Name = "SecretBtn", Text = "Secret", Visible = false, Active = true })
+ghid.Parent = ggui
+ghid.props.AbsoluteSize = { X = 40, Y = 20 }
+ghid.props.AbsolutePosition = { X = 10, Y = 10 }
+step(1 / 60, 2)
+local gq = grabDump()
+ok(gq:find("界面可点按钮 3 个", 1, true) ~= nil, "界面按钮全列: 3 个都数到")
+ok(gq:find("ShopGui.BuyButton:TextButton@577,378 72x29 VA 「Buy」", 1, true) ~= nil, "按钮报全路径/类名/坐标/尺寸/可见/Active/文字")
+ok(gq:find("「Black Hole」", 1, true) ~= nil, "ImageButton 自己没文字 → 去子物件里找一行 (真机那排技能钮全是图)")
+ok(gq:find("SecretBtn:TextButton@10,10 40x20 vA 「Secret」", 1, true) ~= nil, "隐着的按钮也列, 不按可见性筛")
+ok(gq:find("SB_Title", 1, true) == nil and gq:find("SB_Body", 1, true) == nil, "自家面板的按钮不进清单")
+ok(gq:find("AbilityBtn", 1, true) < gq:find("BuyButton", 1, true), "清单按全路径排, 不按树的先后 (32KB 截断砍的是排在后头的, 顺序乱了就说不清砍了谁)")
+-- 按名字点: 客户端点不动别人的 Activated, 只能让执行器发一次真鼠标事件
+local VIMi = _G.__SVC.VirtualInputManager
+local keyBox, nEmpty = nil, 0
+for _, d in ipairs(all()) do if d:IsA("TextBox") and d.Text == "" then nEmpty += 1 keyBox = d end end
+ok(nEmpty == 1, `找到唯一的空文本框当「按钮名」(空文本框 {nEmpty} 个; 以后多出一个, 这条就得换认法)`)
+VIMi.props.clicks = nil
+click(btnExact("点按钮"))
+step(1 / 60, 2)
+ok(VIMi.props.clicks == nil and toastText():find("空着不点", 1, true) ~= nil, `「按钮名」空着 → 一个都不点 ({toastText()})`)
+keyBox.Text = "Buy"
+keyBox.FocusLost:Fire()
+click(btnExact("点按钮"))
+step(1 / 60, 2)
+local cl = VIMi.props.clicks or {}
+ok(#cl == 2, `点「Buy」→ 按下加抬起两次事件 (实际 {#cl} 次)`)
+ok(cl[1] ~= nil and cl[1].x == 577 + 36 and cl[1].y == 378 + 14.5 and cl[1].down == true, `点在按钮正中 ({cl[1] and cl[1].x},{cl[1] and cl[1].y}; 该是 613,392.5)`)
+ok(cl[2] ~= nil and cl[2].down == false, "第二次是抬起 (只按不放, 游戏那边不算一次点击)")
+ok(toastText():find("点了 1 个", 1, true) ~= nil, `提示说清点了几个, 不闷着 ({toastText()})`)
+VIMi.props.clicks = nil
+keyBox.Text = "Black"
+keyBox.FocusLost:Fire()
+click(btnExact("点按钮"))
+step(1 / 60, 2)
+ok(#(VIMi.props.clicks or {}) == 2, "按子物件上的文字也认得 (按钮名字叫 AbilityBtn, 里头没有 Black)")
+keyBox.Text = ""
+keyBox.FocusLost:Fire()
+ggui:Destroy()
+it1:Destroy()
+it2:Destroy()
+deco:Destroy()
+wall:Destroy()
+_G.__radius = nil
+step(1 / 60, 2)
+ok(grabDump():find("界面可点按钮 0 个", 1, true) ~= nil, "界面撤了以后按钮清单跟着归零")
 -- ── log: 录制 / 超限重写 / 循环里抛错不能死 ──
 VFS["Selfblox_log.txt"] = nil
 click(findBtn("录制 "))
