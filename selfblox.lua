@@ -22,7 +22,7 @@
 --   语法基线就是 Luau(运行环境就是它): 26.10.5.28 起用了字符串插值(`{}`)、复合赋值(+= 等)与 if 表达式(if c then a else b),
 --            Lua 5.4 / fengari 都解析不了; 自检的权威跑法是官方 Luau 0.741 (本地怎么编见 tools/luau-driver/build.sh)
 
-local VERSION = "26.10.16.7.97" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
+local VERSION = "26.10.16.8.98" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
@@ -346,6 +346,7 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 	-- 6 个全一样, 只有坐标能分 —— #0–#139 排成一行 y=109 60x60 (x 329/421/514/606/698/791, 间距 ~92),
 	-- #140 起同一排变成 y=183 63x63 (x 1121…1611, 间距 98), Active 方块 54 → 64。是横排的一排图标, 还没认出来。
 	local uiFound, uiSeen, uiInv, uiInvN, uiSent, uiDone, uiT = {}, {}, "", 0, nil, false, -1e9
+	local uiFull = {} -- 没截断的那份: 日志行有字节护栏, 诊断打包里没有, 全清单在打包里
 	local function sbOwn(p) while p do if p == gui or p == FX then return true end; p = p.Parent end; return false end
 	local function halfW() return ((vp and vp.X) or 800) / 2 end
 	-- 滑块相对底座几何中心的偏移, 归一到 -1..1。不认「静止位置」: 那得等松手才知道, 而松手正是分不清的时候
@@ -408,7 +409,8 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 			used += #s + 1
 		end
 		uiInvN = #inv
-		uiInv = table.concat(parts, " ") .. (cut > 0 and `…还有 {cut} 个没列(超16KB)` or "")
+		uiFull = inv
+		uiInv = table.concat(parts, " ") .. (cut > 0 and `…还有 {cut} 个没列(超16KB, 全清单在「诊断打包」里)` or "")
 		uiDone = true
 	end
 	local function uiTxt()
@@ -536,6 +538,13 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 	feature{ kind = "hold", key = "down", label = "▼ 下降", h = 36 }
 	feature{ kind = "num", key = "promptdist", def = 1000, label = "秒互动距离", w = 1 }
 	feature{ kind = "tick", off = function() if att then att:Destroy(); att = nil end end } -- 只在卸载时: 飞行 / 旋转共用的 Attachment
+	feature{ kind = "dump", key = "ui", dump = function()
+		-- 日志行 16KB 护栏砍掉的那部分在这里补全: 3699 个物件砍掉 3381 个, 等于没列。
+		if #uiFull == 0 then return { "还没扫过界面 (先让「动」页跑一轮再点诊断打包)" } end
+		local L = { `-- 界面物件全清单 {#uiFull} 个 (一个不筛、一个不砍, 按字符串排)` }
+		for _, x in ipairs(uiFull) do L[#L + 1] = "  " .. x end
+		return L
+	end }
 end
 
 do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配体; 没坐 = 准星"换车"锁定 / 自动绑最近的空座位) ═════════
@@ -1279,7 +1288,9 @@ do -- ═════════ 抓: 抓部件 + 抓界面 (物件名一个都
 	--   · 半径 40 内 84 个, 扫描半径 300 内 936 个 —— 东西不缺, 缺的是挑。
 	--   · 界面 3693 个物件, 上一版 16KB 护栏砍掉 3375 个, 报出来的 318 个几乎全是 Label, 按钮反而没露头。
 	-- 所以这版: 抓取分三档 (散 / 属 / 全), 锚定的改成直接搬 CFrame; 界面单独一段, 只列可点的, 且能按名字点。
-	local st = { n = 0, pulled = 0, moved = 0, clicked = 0, btns = 0 }
+	-- dead = 「速度写进去了但读回来没吃」的件数; pp/btns 为 nil 表示还没清过点 (0 和 没数过 不能混成一个 0)
+	local st = { n = 0, pulled = 0, moved = 0, dead = 0, clicked = 0, btns = nil, pp = nil }
+	local ppAcc = 0 -- 自动触发的节流: 半秒一轮, 每帧遍历 workspace 一遍不值当
 
 	local function attrCnt(o) -- 属性个数: 「属」这一档就靠它挑, 这游戏的可卖件全带 SellReadyAt/SellToken
 		local ok, a = pcall(function() return o:GetAttributes() end)
@@ -1327,25 +1338,41 @@ do -- ═════════ 抓: 抓部件 + 抓界面 (物件名一个都
 		for _, x in ipairs(all) do if not x.mine and not x.who and keep(x) then o[#o + 1] = x.p end end
 		return o, r
 	end
+	-- 「速度写进去有没有被吃」这件事只能在机器上问出来, 所以写完当场读回来对一遍。
+	-- 26.10.16.7.97 真机 641 条: 散件档每帧写 65 个; 半径 400 那 49 条里 272 个件每帧都在写,
+	-- 却没有一个进过 1 格以内 (写入/在半径内 = 1.00) —— 客户端写的速度一个都没生效的味儿很足
+	-- (所有权在服务端 / 装配体根是锚定的)。所以推法留三档: 自动 = 先写速度, 读回来发现没吃就改搬
+	-- CFrame; 只写速度 / 只搬位 是把这两条路分开验的开关, 别再靠猜。
+	local function nudge(p, d, dt) -- 直接搬 CFrame: 锚定不锚定、谁握着所有权, 客户端这一侧都认
+		local step = math.min(S.gspeed * math.max(dt or 1 / 60, 1 / 240), d.Magnitude - 0.5)
+		p.CFrame = p.CFrame + d.Unit * step
+		st.moved += 1
+	end
 	local function pull(dt)
 		local list, r = targets(S.gradius)
 		st.n = #list
 		if not r then return end
+		local mode = F.gmode or "auto"
 		for _, p in ipairs(list) do
 			pcall(function()
 				local d = Vector3.new(r.Position.X - p.Position.X, 0, r.Position.Z - p.Position.Z)
 				if d.Magnitude < 1 then return end -- 已经到手边, 再推就从人身上穿过去了
-				if p.Anchored then
-					-- 锚定件不吃速度, 只能直接搬 CFrame。客户端搬锚定件服务器认不认未验证 ——
-					-- 认不认都要能试, 所以这档留着, 但默认不开。
-					local step = math.min(S.gspeed * math.max(dt or 1 / 60, 1 / 240), d.Magnitude - 0.5)
-					p.CFrame = p.CFrame + d.Unit * step
-					st.moved += 1
-				else
+				if mode ~= "frame" and not p.Anchored then
 					-- 只写水平速度, Y 留给引擎: 三个分量全写死会把地上的东西顶上天
 					local v = p.AssemblyLinearVelocity
-					p.AssemblyLinearVelocity = Vector3.new(d.Unit.X * S.gspeed, v.Y, d.Unit.Z * S.gspeed)
+					local want = Vector3.new(d.Unit.X * S.gspeed, v.Y, d.Unit.Z * S.gspeed)
+					p.AssemblyLinearVelocity = want
 					st.pulled += 1
+					if mode == "auto" then
+						local got = p.AssemblyLinearVelocity
+						-- 读回来的水平分量对不上 = 这个件不认客户端写的速度, 改搬位置
+						if (Vector3.new(got.X, 0, got.Z) - Vector3.new(want.X, 0, want.Z)).Magnitude > S.gspeed * 0.5 then
+							st.dead += 1
+							nudge(p, d, dt)
+						end
+					end
+				else
+					nudge(p, d, dt)
 				end
 			end)
 		end
@@ -1411,6 +1438,43 @@ do -- ═════════ 抓: 抓部件 + 抓界面 (物件名一个都
 		end
 		st.clicked = hit
 		toast(`按钮名「{k}」: 点了 {hit} 个`)
+	end
+
+	-- ── 收纳槽: 抓到手边只是第一步, 还得替主人按下去 ──
+	-- 26.10.16.7.97 真机清单: 全场只有 4 个 ProximityPrompt (Workspace.1.Prompt / MailPart /
+	-- Portal.EventInteract / VIPModel.Handle.Prompt), 「秒互动」已经把长按时长改 0、距离拉到 1000,
+	-- 剩下的就是发一次触发。键不猜 E —— 问提示自己要 KeyboardKeyCode, 跟不猜物件名一个道理。
+	local function firePrompt(pp)
+		if type(fireproximityprompt) == "function" then -- 执行器直发 (Delta 有): 不挑键、不挑距离、不挑朝向
+			if pcall(fireproximityprompt, pp) then return true end
+		end
+		return pcall(function() -- 退回发一次真键盘 (按下 + 抬起, 只按不抬下一次就不认了)
+			local k = pp.KeyboardKeyCode
+			VIM:SendKeyEvent(true, k, false, game)
+			VIM:SendKeyEvent(false, k, false, game)
+		end)
+	end
+	local function promptsNear()
+		local r = root()
+		local o = {}
+		local okD, list = pcall(function() return workspace:GetDescendants() end)
+		if not okD or type(list) ~= "table" then return o end
+		for _, d in ipairs(list) do
+			pcall(function()
+				if not d:IsA("ProximityPrompt") or not d.Enabled then return end
+				local par = d.Parent
+				if not par or not par:IsA("BasePart") then return end
+				if r and (par.Position - r.Position).Magnitude > S.promptdist then return end
+				o[#o + 1] = d
+			end)
+		end
+		return o
+	end
+	local function firePrompts(quiet)
+		local o, sent = promptsNear(), 0
+		for _, pp in ipairs(o) do if firePrompt(pp) then sent += 1 end end
+		st.pp = #o
+		if not quiet then toast(`提示: 范围内 {#o} 个, 发出去 {sent} 个`) end
 	end
 
 	local function grabLines() -- 现场清单: 不筛、不猜、不设名额, 按距离从近到远排, 截断只砍最远的
@@ -1494,19 +1558,33 @@ do -- ═════════ 抓: 抓部件 + 抓界面 (物件名一个都
 		-- info 里只数不推: 关着也报半径内有几个, 才知道是半径小了还是这游戏根本没散件; 推的动作只在开关/按住时发生
 		local list = targets(S.gradius)
 		st.n = #list
-		return string.format("按住=%s 自动=%s 范围=%s 半径内=%d 拉=%d 搬=%d 累计=%d 界面按钮=%d",
-			tostring(F.pull == true), tostring(F.autopull), tostring(F.grange), st.n, st.pulled, st.moved, st.pulled + st.moved, st.btns)
+		-- 「没吃」是这次真机最缺的那个数: 速度写进去但读回来对不上, 说明这个件不认客户端写的速度。
+		-- 界面按钮/提示 没清点过就写「未清点」, 不写 0 —— 0 和 没数过 混成一个 0 会当成「这游戏没按钮」。
+		return string.format("按住=%s 自动=%s 范围=%s 推法=%s 半径内=%d 速度写=%d 没吃=%d 搬位=%d 累计=%d 提示=%s 界面按钮=%s",
+			tostring(F.pull == true), tostring(F.autopull), tostring(F.grange), tostring(F.gmode or "auto"), st.n,
+			st.pulled, st.dead, st.moved, st.pulled + st.moved,
+			tostring(st.pp or "未清点"), tostring(st.btns or "未清点"))
 	end }
 	feature{ kind = "hold", key = "pull", label = "抓取", h = 36 } -- 页签已经叫「抓」, 同名会让 findBtn 抓错按钮
 	feature{ key = "autopull", label = "自动抓" }
 	feature{ kind = "cycle", key = "grange", save = "grange", def = "loose", cycle = { "loose", "attr", "all" },
 		text = { loose = "范围 散件", attr = "范围 带属性", all = "范围 全部" }, lit = true }
+	feature{ kind = "cycle", key = "gmode", save = "gmode", def = "auto", cycle = { "auto", "vel", "frame" },
+		text = { auto = "推法 自动", vel = "推法 只写速度", frame = "推法 只搬位" }, lit = true }
 	feature{ kind = "num", key = "gradius", def = 40, label = "抓取半径" }
 	feature{ kind = "num", key = "gspeed", def = 60, label = "拉力" }
 	feature{ kind = "num", key = "gscan", def = 300, label = "扫描半径", w = 1 }
 	feature{ kind = "str", key = "gkey", def = "", label = "按钮名" }
 	feature{ kind = "btn", label = "点按钮", fn = clickMatched, w = 1 }
-	feature{ kind = "tick", tick = function(dt) if F.pull or F.autopull then pull(dt) end end }
+	feature{ kind = "btn", label = "触发提示", fn = function() firePrompts(false) end, w = 1 }
+	feature{ key = "autoprompt", label = "自动触发" } -- 默认关: 半秒发一次全场提示, 主人没要求就别自己按
+	feature{ kind = "tick", tick = function(dt)
+		if F.pull or F.autopull then pull(dt) end
+		if F.autoprompt then
+			ppAcc += dt or 1 / 60
+			if ppAcc >= 0.5 then ppAcc = 0; firePrompts(true) end -- 自动的不出提示音, 不然半秒一条把日志冲掉
+		end
+	end }
 	feature{ kind = "dump", key = "grab", dump = grabLines }
 	feature{ kind = "text", key = "grab_status", label = "散=未锚定 属=带属性 全=连锚定搬" }
 end

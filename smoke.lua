@@ -83,7 +83,7 @@ local VERIFIED = {
 	Player = words("Character DisplayName GetNetworkPing Team TeamColor UserId"),
 	PlayerGui = words(""),
 	Players = words("GetPlayerFromCharacter GetPlayers LocalPlayer MaxPlayers PlayerAdded PlayerRemoving"),
-	ProximityPrompt = words("Enabled HoldDuration MaxActivationDistance RequiresLineOfSight"),
+	ProximityPrompt = words("Enabled HoldDuration MaxActivationDistance RequiresLineOfSight KeyboardKeyCode"),
 	RemoteEvent = words("FireServer OnClientEvent"),
 	RemoteFunction = words(""),
 	ReplicatedStorage = words(""),
@@ -220,6 +220,9 @@ end
 function methods.SendKeyEvent(self, down, key, rep, layer)
 	vimArgs("SendKeyEvent", type(down) == "boolean" and type(key) == "table" and key.EnumType == "KeyCode" and type(rep) == "boolean" and type(layer) == "table", "(isPressed: bool, keyCode: KeyCode, isRepeatedKey: bool, layerCollector: Instance)")
 	self.props.keys = (self.props.keys or 0) + 1
+	-- 只记个数验不出「按下加抬起」和「键对不对」: 只按不抬, 游戏那边下一次就不认了 (点按钮那条已经吃过这个亏)
+	self.props.keySeq = self.props.keySeq or {}
+	self.props.keySeq[#self.props.keySeq + 1] = { down = down, name = key.Name }
 end
 function methods.GetConnectedParts(self) -- 假装配体: 同 Model 里 AssemblyRootPart 相同的 BasePart (真引擎只返回焊在一起的, 锚定的停车台/另一个装配体不算)
 	local o, seen = {}, {}
@@ -1698,6 +1701,110 @@ wall:Destroy()
 _G.__radius = nil
 step(1 / 60, 2)
 ok(grabDump():find("界面可点按钮 0 个", 1, true) ~= nil, "界面撤了以后按钮清单跟着归零")
+-- ── grab: 推法三档 + 触发提示 ──
+-- 真机 26.10.16.7.97 那 641 条: 散件档每帧写 65 个速度; 半径 400 那 49 条里 272 个件每帧都在写,
+-- 写入/在半径内 = 1.00, 没有一个进过 1 格以内 —— 客户端写的速度很可能一个都没被吃。所以推法留三档,
+-- 写完当场读回来对一遍, 「没吃」这个数就是让机器自己招供的, 别再靠猜。
+do
+	local function grabInfo() return grabDump():match("\n  grab [^\n]*") or "" end
+	local function num1(s, k) return tonumber(s:match(k .. "=(%-?%d+)")) end
+	local hi = hrp.props.Position
+	local soft = mkThing("Gem", 10, 0, false, { SellToken = "aa" }) -- 速度吃得进去的
+	local hard = mkThing("TNT", -8, 0, false, { SellToken = "bb" }) -- 速度写进去就丢的
+	-- 模拟「这个件不认客户端写的速度」(所有权在服务端 / 装配体根锚定): 写进去直接吞掉, 读回来还是旧值
+	local real = hard.props
+	hard.props = setmetatable({}, { __index = real,
+		__newindex = function(_, k, v) if k ~= "AssemblyLinearVelocity" then rawset(real, k, v) end end })
+	real.AssemblyLinearVelocity = Vector3.zero
+	_G.__radius = { soft, hard, hrp }
+
+	local gi0 = grabInfo()
+	ok(gi0:find("推法=auto", 1, true) ~= nil, `默认推法是「自动」({gi0})`)
+	-- 「未清点」那一档在这套自检里跑不到: 前面「把所有开关翻一遍」那条已经把 自动触发 打开过一次,
+	-- st.pp 当时就被写成 0 了。所以这里只钉「数过以后报的是数」, 别假装验了没验的东西。
+	ok(gi0:find("提示=%d+") ~= nil or gi0:find("提示=未清点", 1, true) ~= nil, `提示这项要么报数要么报「未清点」, 不会是空 ({gi0})`)
+	click(findBtn("自动抓"))
+	step(1 / 60, 6)
+	local hardX0 = hard.CFrame.Position.X
+	step(1 / 60, 6)
+	ok(soft.AssemblyLinearVelocity.Magnitude > 0, "自动档: 速度吃得进去的照写速度")
+	ok(hard.CFrame.Position.X > hardX0, `自动档: 写不进去的改搬 CFrame ({hardX0} → {hard.CFrame.Position.X})`)
+	local gi1 = grabInfo()
+	ok((num1(gi1, "没吃") or 0) > 0, `「没吃」把不认速度的件数报出来 ({gi1})`)
+	click(findBtn("自动抓"))
+
+	-- 只写速度: 不读回、不改搬 —— 两条路得能分开验, 混在一起就永远说不清是哪条不通
+	click(btnExact("推法 自动"))
+	step(1 / 60, 1)
+	ok(btnExact("推法 只写速度") ~= nil, "推法切一档 → 「只写速度」")
+	soft.props.AssemblyLinearVelocity = Vector3.zero
+	local hx1, d0 = hard.CFrame.Position.X, num1(grabInfo(), "没吃")
+	click(findBtn("自动抓"))
+	step(1 / 60, 6)
+	ok(soft.AssemblyLinearVelocity.Magnitude > 0, "只写速度: 还是写速度")
+	ok(hard.CFrame.Position.X == hx1, "只写速度: 写不进去也不偷偷改搬")
+	ok(num1(grabInfo(), "没吃") == d0, `只写速度档不记「没吃」, 这个数才只来自自动档 ({tostring(d0)})`)
+	click(findBtn("自动抓"))
+
+	-- 只搬位: 整条速度路都不走
+	click(btnExact("推法 只写速度"))
+	step(1 / 60, 1)
+	ok(btnExact("推法 只搬位") ~= nil, "推法再切一档 → 「只搬位」")
+	soft.props.AssemblyLinearVelocity = Vector3.zero
+	local gi3 = grabInfo()
+	local sx0, p0, m0 = soft.CFrame.Position.X, num1(gi3, "速度写"), num1(gi3, "搬位")
+	click(findBtn("自动抓"))
+	step(1 / 60, 6)
+	ok(soft.AssemblyLinearVelocity.Magnitude == 0, "只搬位: 未锚定的也不写速度")
+	ok((num1(grabInfo(), "搬位") or 0) > (m0 or 0), `只搬位档真的在搬, 不是白切一档 (搬位 {tostring(m0)} → {tostring(num1(grabInfo(), "搬位"))})`)
+	ok(soft.CFrame.Position.X < sx0, `只搬位: 直接搬 CFrame 往人这边挪 ({sx0} → {soft.CFrame.Position.X})`)
+	ok(num1(grabInfo(), "速度写") == p0, `只搬位档不记「速度写」({tostring(p0)})`)
+	click(findBtn("自动抓"))
+	click(btnExact("推法 只搬位"))
+	step(1 / 60, 1)
+	ok(btnExact("推法 自动") ~= nil, "推法转一圈回到「自动」")
+
+	-- 自动触发默认关: 半秒发一次全场提示, 主人没要求就不该自己按
+	local apOff = false
+	for _, b in ipairs(buttons()) do if starts(b.Text, "自动触发") and ends(b.Text, " 关") then apOff = true end end
+	ok(apOff, "自动触发默认是关的")
+
+	-- 触发提示: 收纳槽就是个 ProximityPrompt (真机全场 4 个), 抓到手边还得替主人按下去
+	local ppHost = mkPart("Prompt", Vector3.new(1, 1, 1), Vector3.new(hi.X - 3, hi.Y, hi.Z), { Anchored = true })
+	ppHost.Parent = workspace
+	local pr = inst("ProximityPrompt", { Name = "Prompt", Enabled = true, HoldDuration = 0,
+		MaxActivationDistance = 1000, RequiresLineOfSight = false, KeyboardKeyCode = Enum.KeyCode.F })
+	pr.Parent = ppHost
+	local prOff = inst("ProximityPrompt", { Name = "PromptOff2", Enabled = false, HoldDuration = 0,
+		MaxActivationDistance = 1000, RequiresLineOfSight = false, KeyboardKeyCode = Enum.KeyCode.G })
+	prOff.Parent = ppHost -- 关着的不能替他按: 游戏关掉一个交互是有原因的
+	VIMi.props.keySeq = nil
+	click(btnExact("触发提示"))
+	step(1 / 60, 2)
+	local ks = VIMi.props.keySeq or {}
+	ok(#ks == 2, `触发提示 → 按下加抬起两次 (实际 {#ks} 次)`)
+	ok(ks[1] ~= nil and ks[1].down == true and ks[1].name == "F", `键是问提示自己要的, 不猜 E (实际 {ks[1] and ks[1].name})`)
+	ok(ks[2] ~= nil and ks[2].down == false, "第二次是抬起 (只按不抬下一次就不认了)")
+	ok(toastText():find("范围内 1 个", 1, true) ~= nil, `报清范围内几个、发出去几个 ({toastText()})`)
+	ok(grabInfo():find("提示=1", 1, true) ~= nil, "页状态里报清点到的提示数")
+	-- 自动触发: 半秒一轮。每帧发一次既刷爆游戏那边的事件, 也会半秒一条把日志冲掉
+	click(findBtn("自动触发"))
+	step(1 / 60, 1)
+	VIMi.props.keySeq = nil
+	step(1 / 60, 60) -- 一整秒
+	local ks2 = VIMi.props.keySeq or {}
+	ok(#ks2 >= 2 and #ks2 <= 8, `自动触发按半秒一轮发, 不是每帧刷 (一秒发了 {(#ks2 / 2)} 轮)`)
+	ok(toastText():find("范围内", 1, true) == nil, `自动的不弹提示 —— 半秒一条会把日志冲掉 ({toastText()})`)
+	click(findBtn("自动触发"))
+	pr:Destroy()
+	prOff:Destroy()
+	ppHost:Destroy()
+	soft:Destroy()
+	hard:Destroy()
+	_G.__radius = nil
+	step(1 / 60, 2)
+end
+
 -- ── log: 录制 / 超限重写 / 循环里抛错不能死 ──
 VFS["Selfblox_log.txt"] = nil
 click(findBtn("录制 "))
@@ -1994,8 +2101,14 @@ do -- 「模块=无」必须说清是哪一种"无": 真机两份日志 (367 条
 	local dgBulk = dumpTxt()
 	local nBulk = tonumber(dgBulk:match("物件 (%d+) 个"))
 	ok(nBulk ~= nil and nBulk >= 500, `500 个物件一个不落地数到 (数到 {tostring(nBulk)} 个)`)
-	ok(dgBulk:find("没列(超16KB)", 1, true) ~= nil, "超 16KB 才截断, 而且把截断这件事写在日志里")
+	ok(dgBulk:find("没列(超16KB", 1, true) ~= nil, "超 16KB 才截断, 而且把截断这件事写在日志里")
 	ok(dgBulk:find("还有 %d+ 个没列") ~= nil, "砍掉了几个也报个数, 不闷着")
+	-- 护栏可以砍日志行, 不能砍掉「能查的」。真机那轮 3699 个物件砍掉 3381 个, 要找的按钮大概率就在被砍的
+	-- 那堆里, 所以诊断打包里必须另有一份一个不砍的。这一条钉住「日志行砍掉的, 打包里补回来了」。
+	local nFull = tonumber(dgBulk:match("界面物件全清单 (%d+) 个"))
+	local nCut = tonumber(dgBulk:match("还有 (%d+) 个没列"))
+	ok(nCut ~= nil and nCut > 0, `日志行确实砍了 ({tostring(nCut)} 个)`)
+	ok(nFull ~= nil and nFull == nBulk, `打包里的全清单一个不少 ({tostring(nFull)} / {tostring(nBulk)})`)
 	bulk:Destroy()
 	step(1 / 60, 130)
 	ok(dumpTxt():find("超16KB", 1, true) == nil, "物件撤了以后护栏跟着消失, 清单恢复完整")
@@ -2365,6 +2478,20 @@ ok(at ~= nil, "找得到清单的建页入口")
 local SNAP13 = #INSTANCES
 local okLoad, errLoad = pcall(assert(load_chunk(SRC:sub(1, at - 1) .. EXTRA .. SRC:sub(at), "selfblox14")))
 ok(okLoad, `多一个功能 (含一个坏行) 后脚本照样起得来 {tostring(errLoad or "")}`)
+do -- 「默认值」和「没数过」只有空配置刚起来这一刻验得到: 前面点过的开关都存进配置了,
+	-- 之后再读默认值读到的是存盘值 —— 自动触发默认开就是这么漏过一轮变异自检的。
+	local apDef = false
+	for _, b in ipairs(buttons()) do if starts(b.Text, "自动触发") and ends(b.Text, " 关") then apDef = true end end
+	ok(apDef, "空配置起来 → 自动触发默认关 (半秒发一次全场提示, 不能默认开)")
+	local gmDef = false -- btnExact 是前面一个 do 块里的局部, 这儿够不着, 自己找一遍
+	for _, b in ipairs(buttons()) do if b.Text == "推法 自动" then gmDef = true end end
+	ok(gmDef, "空配置起来 → 推法默认「自动」")
+	for _, d in ipairs(all()) do if d:IsA("TextButton") and type(d.Text) == "string" and d.Text:find("诊断打包", 1, true) then d.Activated:Fire() end end
+	step(1 / 60, 2)
+	local gFresh = (VFS["selfblox_dump.txt"] or ""):match("\n  grab [^\n]*") or ""
+	ok(gFresh:find("提示=未清点", 1, true) ~= nil and gFresh:find("界面按钮=未清点", 1, true) ~= nil,
+		`没清点过的报「未清点」不报 0 —— 0 会被读成「这游戏没提示 / 没按钮」({gFresh})`)
+end
 local toy = findBtn("测试开关 ")
 ok(toy ~= nil and toy.Text == "测试开关 关", "清单一行 → 面板上多了开关")
 ok(findBtn("档 a") ~= nil and findBtn("测试按钮") ~= nil, "cycle / btn 行也按清单建出来")
