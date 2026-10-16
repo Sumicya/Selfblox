@@ -1744,12 +1744,21 @@ do -- 「模块=无」必须说清是哪一种"无": 真机两份日志 (367 条
 	gknob.props.AbsoluteSize = { X = 60, Y = 60 }
 	gknob.props.AbsolutePosition = { X = 930, Y = 1830 }
 	gknob.Position = UDim2.fromOffset(30, 30)
+	-- 主人认出真机日志里那 6 个 Unlocked/ImageIcon 是游戏最上面的菜单条 (三份日志 y=109/183/179, 等大等距一排)。
+	-- 原来的筛选只看 x 不看 y, 右半屏 6 个名额全被顶栏占满 ⟹ 右下角真控件一个都没轮到。摆一个顶栏物件验它被挡掉。
+	local topBar = inst("Frame", { Name = "Unlocked" }); topBar.Parent = gctl
+	local topIco = inst("ImageButton", { Name = "ImageIcon", Active = true, Visible = true }); topIco.Parent = topBar
+	topIco.props.AbsoluteSize = { X = 84, Y = 84 }
+	topIco.props.AbsolutePosition = { X = 700, Y = 100 } -- 视口 2400 高, 上三分之一 = 800 ⟹ 这算顶栏
 	step(1 / 60, 130)
 	local dg1 = dumpTxt()
 	ok(dg1:find("没认出滑块", 1, true) ~= nil, "第一次扫认不出滑块: 没有上一次的 Position 可比")
 	-- 真机 26.10.15.5.63 报出右半屏 6 个全是 "ImageIcon:ImageButton" —— 名字类名一模一样, 分不出跳跃和趴下滑竿,
 	-- 所以光报名字不够, 得带上父名 + 屏幕坐标 + 尺寸 + 子物件数, 下一份日志才认得出谁是谁。
 	ok(dg1:find("GameControls/SlideStick@900,1800 120x120 子1", 1, true) ~= nil, "认不出来就报父名/坐标/尺寸/子物件数 (光报 名字:类名 在真机上六个全一样, 等于没报)")
+	ok(dg1:find("顶栏 1 个", 1, true) ~= nil, "顶栏那排按钮只报个数")
+	ok(dg1:find("Unlocked/ImageIcon", 1, true) == nil, "顶栏物件不再占右半屏的名额 (真机三份日志 6 个名额全被它占满, 右下真控件一个都没轮到)")
+	ok(dg1:find("视口 1080x2400", 1, true) ~= nil, "把视口一起打出来: 光有 y=179 这种绝对像素, 分不出是顶部还是底部")
 	gknob.Position = UDim2.fromOffset(30, 60) -- 往下拨: 真机那个趴下滑竿就是上下动
 	gknob.props.AbsolutePosition = { X = 930, Y = 1860 }
 	step(1 / 60, 130)
@@ -1777,6 +1786,18 @@ do -- 「模块=无」必须说清是哪一种"无": 真机两份日志 (367 条
 	gctl:Destroy()
 	step(1 / 60, 130)
 	ok(dumpTxt():find("SlideStick", 1, true) == nil, "游戏那棵树撤了以后, 认出来的滑块也跟着从日志里消失")
+	-- 右半屏 Active=false 的方块也得看得见: 触屏控件常常是 Active=false 靠 InputBegan 自己收事件,
+	-- 只收 Active 的会把真控件整个漏掉 —— 真机三次都只报出顶栏那一排, 右下什么都没看见。
+	-- 高度给 400: 顺带验上限从 320 放到 480, 不然竖着的趴下滑竿轨道会整个被尺寸筛掉。
+	local pass = inst("Frame", { Name = "ProneTrack", Active = false, Visible = true }); pass.Parent = pgui
+	pass.props.AbsoluteSize = { X = 60, Y = 400 }
+	pass.props.AbsolutePosition = { X = 950, Y = 1700 }
+	step(1 / 60, 130)
+	local dg4 = dumpTxt()
+	ok(dg4:find("右半屏非Active: PlayerGui/ProneTrack@950,1700 60x400 子0", 1, true) ~= nil, "右半屏没有 Active 方块时, 把 Active=false 的列出来, 400 高的竖条也不被尺寸筛掉")
+	pass:Destroy()
+	step(1 / 60, 130)
+	ok(dumpTxt():find("ProneTrack", 1, true) == nil, "撤掉以后日志里也跟着没了")
 	click(spdBtn) -- 复原: 上面为了测「速度关着也探」把它关了, 后面的断言按速度开着走
 	step(1 / 60, 3)
 	ok(spdBtn.Text:find("开", 1, true) ~= nil, "复原: 速度重新是开的")

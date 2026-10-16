@@ -22,7 +22,7 @@
 --   语法基线就是 Luau(运行环境就是它): 26.10.5.28 起用了字符串插值(`{}`)、复合赋值(+= 等)与 if 表达式(if c then a else b),
 --            Lua 5.4 / fengari 都解析不了; 自检的权威跑法是官方 Luau 0.741 (本地怎么编见 tools/luau-driver/build.sh)
 
-local VERSION = "26.10.15.7.90" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
+local VERSION = "26.10.16.1.91" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
@@ -350,7 +350,11 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 	local function uiProbe()
 		if os.clock() - uiT < 1 then return end -- 跟控制模块探针同一节流: 扫全树不便宜, 一秒一次够看
 		uiT = os.clock()
-		local half, btns, cand, nFound = halfW(), {}, 0, 0
+		local half, btns, alt, cand, nFound, topN = halfW(), {}, {}, 0, 0, 0
+		-- 上三分之一算顶栏: 63/89/90 三份真机日志报出的右半屏 6 个, 每次都是同一行等距的
+		-- Unlocked/ImageIcon, y 只有 109 / 183 / 179 —— 主人认出那是游戏最上面的菜单条。原来的筛选只看 x
+		-- 不看 y, 6 个名额全被它占满, 右下角真控件一个都没轮到。现在按屏幕位置挡掉它, 只报个数。
+		local top = ((vp and vp.Y) or 600) * 0.3
 		-- 先清掉已经不存在的: 游戏切场景/换 UI 会销毁重建控件, 死物件留着不光报假数据,
 		-- 在真引擎上读它的 AbsoluteSize 还会抛。pairs 遍历中把已有键置 nil 是 Lua 明确允许的。
 		for c, b in pairs(uiFound) do if not c.Parent or not b.Parent then uiFound[c] = nil end end
@@ -365,9 +369,27 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 				for _, g in ipairs(list) do
 					-- 逐个包 pcall: 有些物件读 Active/Visible 本身就会抛(不是 GuiObject 却混在树里), 不能因为一个坏物件丢掉整棵树
 					pcall(function()
-						if not g:IsA("GuiObject") or g.Visible == false or g.Active ~= true or sbOwn(g) then return end
+						if not g:IsA("GuiObject") or g.Visible == false or sbOwn(g) then return end
 						local sz = g.AbsoluteSize
-						if not sz or sz.X < 40 or sz.X > 320 or sz.Y < 40 or sz.Y > 320 then return end
+						-- 尺寸上限放到 480: 趴下滑竿是竖条, 320 的上限会把 400 高的轨道整个挡掉
+						if not sz or sz.X < 24 or sz.X > 320 or sz.Y < 24 or sz.Y > 480 then return end
+						local ap = g.AbsolutePosition
+						-- 右半屏、顶栏以下的方块列成清单: Active 的进 btns, Active=false 的进 alt。
+						-- 触屏控件常常是 Active=false 靠 InputBegan 自己收事件, 只收 Active 的会漏掉。
+						if ap and ap.X >= half then
+							if ap.Y < top then topN += 1
+							else
+								-- 26.10.15.5.63 真机报出右半屏 6 个全是 "ImageIcon:ImageButton" —— 名字和类名一模一样,
+								-- 光这一串分不出哪个是跳跃、哪个是趴下滑竿。补上父物件名 + 屏幕坐标 + 尺寸 + 子物件数,
+								-- 下一份日志才认得出谁是谁, 不用再来一轮。
+								local par, nc = g.Parent, 0
+								for _, c in ipairs(g:GetChildren()) do if c:IsA("GuiObject") then nc += 1 end end
+								local s = string.format("%s/%s@%d,%d %dx%d 子%d", (par and par.Name) or "?", g.Name, ap.X, ap.Y, sz.X, sz.Y, nc)
+								if g.Active == true then if #btns < 6 then btns[#btns + 1] = s end
+								elseif #alt < 4 then alt[#alt + 1] = s end
+							end
+						end
+						if g.Active ~= true then return end
 						cand += 1
 						for _, c in ipairs(g:GetChildren()) do
 							if c:IsA("GuiObject") then
@@ -378,22 +400,16 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 									or p0.Y.Scale ~= p1.Y.Scale or p0.Y.Offset ~= p1.Y.Offset) then uiFound[c] = g; nFound += 1 end
 							end
 						end
-					local ap = g.AbsolutePosition
-					if ap and ap.X >= half and #btns < 6 then
-						-- 26.10.15.5.63 真机报出右半屏 6 个全是 "ImageIcon:ImageButton" —— 名字和类名一模一样,
-						-- 光这一串分不出哪个是跳跃、哪个是趴下滑竿。补上父物件名 + 屏幕坐标 + 尺寸 + 子物件数,
-						-- 下一份日志才认得出谁是谁, 不用再来一轮。
-						local par, nc = g.Parent, 0
-						for _, c in ipairs(g:GetChildren()) do if c:IsA("GuiObject") then nc += 1 end end
-						btns[#btns + 1] = string.format("%s/%s@%d,%d %dx%d 子%d", (par and par.Name) or "?", g.Name, ap.X, ap.Y, sz.X, sz.Y, nc)
-					end
 					end)
 				end
 			end
 		end
 		table.sort(btns) -- pairs/GetDescendants 的顺序不保证, 排一下日志才可复现
+		table.sort(alt)
 		uiBtn = table.concat(btns, " ")
-		uiWhy = `没认出滑块 (Active 方块 {cand} 个{#btns > 0 and `; 右半屏: {uiBtn}` or ""})`
+		local tail = #btns > 0 and `; 右半屏: {uiBtn}` or (#alt > 0 and `; 右半屏非Active: {table.concat(alt, " ")}` or "; 右半屏没有方块")
+		-- 视口一起打: 光有 y=179 这种绝对像素, 分不出是顶部还是底部, 有了视口高度才判得了。
+		uiWhy = `没认出滑块 (视口 {vp.X}x{vp.Y}; Active 方块 {cand} 个; 顶栏 {topN} 个{tail})`
 	end
 	local function uiTxt()
 		local o = {}
