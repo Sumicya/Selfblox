@@ -22,7 +22,7 @@
 --   语法基线就是 Luau(运行环境就是它): 26.10.5.28 起用了字符串插值(`{}`)、复合赋值(+= 等)与 if 表达式(if c then a else b),
 --            Lua 5.4 / fengari 都解析不了; 自检的权威跑法是官方 Luau 0.741 (本地怎么编见 tools/luau-driver/build.sh)
 
-local VERSION = "26.10.16.1.91" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
+local VERSION = "26.10.16.2.92" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
@@ -218,7 +218,7 @@ local NOUI = { tick = true, dump = true }
 do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转 / 无限跳 / 穿墙 / 夜视 / 秒互动) ═════════
 	local moving, nvT = false, 0
 	local pushN, tickN = 0, 0 -- 诊断: cframe 真推了几帧 / doSpeed 跑了几帧 (摇杆值在 info() 里现读, 不缓存: 缓存的话速度关着就一直是旧值, 上一版就是这么把 20 个初始零当成了证据)
-	local lastPos, gateOpen, gateSpd = nil, false, 0 -- cframe 门: 上一帧推完时人在哪 / 这一帧门开没开 / 游戏自己这一步的水平速度
+	local lastPos, gateOpen, gateSpd, netSpd = nil, false, 0, 0 -- cframe 门: 上一帧推完时人在哪 / 门开没开 / 游戏自己这一步 / 加完的净速度
 	local att, flyLV, flyAO, spinAV, cc, nvSaved
 	local base = setmetatable({}, { __mode = "k" }) -- humanoid -> 原始 WalkSpeed/JumpPower/JumpHeight
 	local col = setmetatable({}, { __mode = "k" }) -- 穿墙前 CanCollide=true 的部件
@@ -338,7 +338,7 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 	-- 26.10.15.6.89(162 条)的实测: 「没认出滑块」, 右半屏 6 个 Unlocked/ImageIcon, 父名/类名/尺寸/子物件数
 	-- 6 个全一样, 只有坐标能分 —— #0–#139 排成一行 y=109 60x60 (x 329/421/514/606/698/791, 间距 ~92),
 	-- #140 起同一排变成 y=183 63x63 (x 1121…1611, 间距 98), Active 方块 54 → 64。是横排的一排图标, 还没认出来。
-	local uiFound, uiSeen, uiBtn, uiWhy, uiT = {}, {}, "", "还没探过", -1e9
+	local uiFound, uiSeen, uiInv, uiInvN, uiSent, uiDone, uiT = {}, {}, "", 0, nil, false, -1e9
 	local function sbOwn(p) while p do if p == gui or p == FX then return true end; p = p.Parent end; return false end
 	local function halfW() return ((vp and vp.X) or 800) / 2 end
 	-- 滑块相对底座几何中心的偏移, 归一到 -1..1。不认「静止位置」: 那得等松手才知道, 而松手正是分不清的时候
@@ -347,19 +347,19 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 		if not bs or not bp or not ks or not kp or bs.X < 1 or bs.Y < 1 then return end
 		return ((kp.X + ks.X / 2) - (bp.X + bs.X / 2)) / (bs.X / 2), ((kp.Y + ks.Y / 2) - (bp.Y + bs.Y / 2)) / (bs.Y / 2), bp.X + bs.X / 2
 	end
+	local function px(v) return v and tostring(math.floor(v)) or "?" end -- 真机上位置尺寸是小数, 取整; 读不到就打 ?
 	local function uiProbe()
 		if os.clock() - uiT < 1 then return end -- 跟控制模块探针同一节流: 扫全树不便宜, 一秒一次够看
 		uiT = os.clock()
-		local half, btns, alt, cand, nFound, topN = halfW(), {}, {}, 0, 0, 0
-		-- 上三分之一算顶栏: 63/89/90 三份真机日志报出的右半屏 6 个, 每次都是同一行等距的
-		-- Unlocked/ImageIcon, y 只有 109 / 183 / 179 —— 主人认出那是游戏最上面的菜单条。原来的筛选只看 x
-		-- 不看 y, 6 个名额全被它占满, 右下角真控件一个都没轮到。现在按屏幕位置挡掉它, 只报个数。
-		local top = ((vp and vp.Y) or 600) * 0.3
+		local nFound = 0
 		-- 先清掉已经不存在的: 游戏切场景/换 UI 会销毁重建控件, 死物件留着不光报假数据,
 		-- 在真引擎上读它的 AbsoluteSize 还会抛。pairs 遍历中把已有键置 nil 是 Lua 明确允许的。
 		for c, b in pairs(uiFound) do if not c.Parent or not b.Parent then uiFound[c] = nil end end
 		for _ in pairs(uiFound) do nFound += 1 end
-		local trees = {}
+		-- 全清单: 一个筛选条件都不留。以前按 尺寸 / 屏幕区 / Active 层层筛, 还只留 6 个名额,
+		-- 三份真机日志报出来的就全是顶部菜单条 —— 被筛掉的正好是要找的那个。现在树里每个不是自家的
+		-- GuiObject 都列: 父名/名字/类名/位置/尺寸/可见/Active/子物件数, 排序保证日志可复现。
+		local inv, trees = {}, {}
 		local pg = me:FindFirstChildOfClass("PlayerGui")
 		if pg then trees[#trees + 1] = pg end
 		if ROOT and ROOT ~= pg then trees[#trees + 1] = ROOT end
@@ -369,28 +369,16 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 				for _, g in ipairs(list) do
 					-- 逐个包 pcall: 有些物件读 Active/Visible 本身就会抛(不是 GuiObject 却混在树里), 不能因为一个坏物件丢掉整棵树
 					pcall(function()
-						if not g:IsA("GuiObject") or g.Visible == false or sbOwn(g) then return end
-						local sz = g.AbsoluteSize
-						-- 尺寸上限放到 480: 趴下滑竿是竖条, 320 的上限会把 400 高的轨道整个挡掉
-						if not sz or sz.X < 24 or sz.X > 320 or sz.Y < 24 or sz.Y > 480 then return end
-						local ap = g.AbsolutePosition
-						-- 右半屏、顶栏以下的方块列成清单: Active 的进 btns, Active=false 的进 alt。
-						-- 触屏控件常常是 Active=false 靠 InputBegan 自己收事件, 只收 Active 的会漏掉。
-						if ap and ap.X >= half then
-							if ap.Y < top then topN += 1
-							else
-								-- 26.10.15.5.63 真机报出右半屏 6 个全是 "ImageIcon:ImageButton" —— 名字和类名一模一样,
-								-- 光这一串分不出哪个是跳跃、哪个是趴下滑竿。补上父物件名 + 屏幕坐标 + 尺寸 + 子物件数,
-								-- 下一份日志才认得出谁是谁, 不用再来一轮。
-								local par, nc = g.Parent, 0
-								for _, c in ipairs(g:GetChildren()) do if c:IsA("GuiObject") then nc += 1 end end
-								local s = string.format("%s/%s@%d,%d %dx%d 子%d", (par and par.Name) or "?", g.Name, ap.X, ap.Y, sz.X, sz.Y, nc)
-								if g.Active == true then if #btns < 6 then btns[#btns + 1] = s end
-								elseif #alt < 4 then alt[#alt + 1] = s end
-							end
-						end
-						if g.Active ~= true then return end
-						cand += 1
+						if not g:IsA("GuiObject") or sbOwn(g) then return end
+						local sz, ap, par, nc = g.AbsoluteSize, g.AbsolutePosition, g.Parent, 0
+						for _, c in ipairs(g:GetChildren()) do if c:IsA("GuiObject") then nc += 1 end end
+						-- 标志两位: 可见 V/v, Active A/-。隐的和 Active=false 的一起列 —— 触屏控件常常
+						-- 是 Active=false 靠 InputBegan 自己收事件, 只收 Active 的会把真控件整个漏掉。
+						inv[#inv + 1] = string.format("%s/%s:%s@%s,%s %sx%s %s%s 子%d", (par and par.Name) or "?", g.Name, g.ClassName,
+							px(ap and ap.X), px(ap and ap.Y), px(sz and sz.X), px(sz and sz.Y),
+							g.Visible ~= false and "V" or "v", g.Active == true and "A" or "-", nc)
+						-- 认滑块仍然要求底座是方的: knobVal 拿底座尺寸当分母, 尺寸不对会算出鬼值。
+						if g.Active ~= true or not sz or sz.X < 24 or sz.X > 320 or sz.Y < 24 or sz.Y > 480 then return end
 						for _, c in ipairs(g:GetChildren()) do
 							if c:IsA("GuiObject") then
 								local p0, p1 = uiSeen[c], c.Position
@@ -404,12 +392,17 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 				end
 			end
 		end
-		table.sort(btns) -- pairs/GetDescendants 的顺序不保证, 排一下日志才可复现
-		table.sort(alt)
-		uiBtn = table.concat(btns, " ")
-		local tail = #btns > 0 and `; 右半屏: {uiBtn}` or (#alt > 0 and `; 右半屏非Active: {table.concat(alt, " ")}` or "; 右半屏没有方块")
-		-- 视口一起打: 光有 y=179 这种绝对像素, 分不出是顶部还是底部, 有了视口高度才判得了。
-		uiWhy = `没认出滑块 (视口 {vp.X}x{vp.Y}; Active 方块 {cand} 个; 顶栏 {topN} 个{tail})`
+		table.sort(inv) -- pairs/GetDescendants 的顺序不保证, 排一下日志才可复现
+		-- 16KB 是护栏不是筛选: 日志超 S.logmax 就整个重写, 上千物件的清单会把速度样本全冲掉。砍了几个明写出来。
+		local parts, used, cut = {}, 0, 0
+		for i, s in ipairs(inv) do
+			if used + #s > 16384 then cut = #inv - i + 1 break end
+			parts[#parts + 1] = s
+			used += #s + 1
+		end
+		uiInvN = #inv
+		uiInv = table.concat(parts, " ") .. (cut > 0 and `…还有 {cut} 个没列(超16KB)` or "")
+		uiDone = true
 	end
 	local function uiTxt()
 		local o = {}
@@ -417,9 +410,12 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 			local nx, ny, bcx = knobVal(base, knob)
 			if nx then o[#o + 1] = string.format("%s/%s@%s=(%.2f,%.2f)", base.Name, knob.Name, bcx >= halfW() and "右" or "左", nx, ny) end
 		end
-		if #o == 0 then return uiWhy end
-		table.sort(o)
-		return table.concat(o, " ")
+		if #o > 0 then table.sort(o); return table.concat(o, " ") end
+		if not uiDone then return "还没探过" end
+		-- 同一份清单不重打: info 每 S.logint 秒进一次日志, 一秒没变也打五遍, 十来秒就把 logmax 顶爆重写。
+		if uiInv == uiSent then return `没认出滑块 (视口 {vp.X}x{vp.Y}; 物件 {uiInvN} 个, 清单同上)` end
+		uiSent = uiInv
+		return `没认出滑块 (视口 {vp.X}x{vp.Y}; 物件 {uiInvN} 个; 全清单: {uiInv})`
 	end
 
 	local function doSpeed(r, h, dt)
@@ -432,16 +428,22 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 			local v = r.AssemblyLinearVelocity
 			r.AssemblyLinearVelocity = Vector3.new(0, v.Y, 0)
 			-- "什么时候推"不看输入源了, 改成量游戏自己挪了多少: lastPos 记的是上一帧我们推完的位置, 到这一帧
-			-- 开始, 中间那段水平位移只有游戏/物理能造成。没挪 = 手已经离开摇杆 = 一帧都不推; 挪了就把这一步换成
-			-- spd*dt。出来的速度就是 spd, 游戏是靠速度挪人还是靠写位置挪人都一样, 也不用挑输入源。
+			-- 开始, 中间那段水平位移只有游戏/物理能造成。没挪 = 手已经离开摇杆 = 一帧都不推; 挪了就沿着这一步
+			-- 的方向再加 spd*dt。游戏是靠速度挪人还是靠写位置挪人都一样, 也不用挑输入源。
 			local p = r.CFrame.Position
 			local d = lastPos and Vector3.new(p.X - lastPos.X, 0, p.Z - lastPos.Z) or nil
 			if d then
 				gateSpd = d.Magnitude / math.max(dt, 1e-6)
 				-- 下限: 水平不到 1 格/秒当没动 (阈值跟 dt 走, 掉帧不误判)。
-				-- 上限: 传送/重生那种一步几十格, 当走路的话 -d 会照着原路把人拽回去, 这种帧只重新对位不推。
+				-- 上限: 传送/重生那种一步几十格不算走路, 这种帧只重新对位, 不往上加速。
 				gateOpen = d.Magnitude > dt and d.Magnitude < 60 * dt
-				if gateOpen then r.CFrame = r.CFrame + d.Unit * (S.spd * dt) - d; pushN += 1 end
+				-- spd 是「在游戏自己那一步之上再加多少」, 不是「把游戏那一步换成多少」。26.10.16.1.91 写成了
+				-- 替换(尾巴上那个 - d 把游戏自己挪的整段抵掉), 结果这游戏自己就跑 22 格/秒, 主人原来 16 够用
+				-- 的档只剩 16, 得把滑杆推到 30 才找回手感 —— 那是把「速度改不动」修成了「速度能改但基准错了」。
+				-- 改回 26.10.15.5.63 的相加写法, 只把方向从冻住的 md 换成量出来的 d.Unit: 净速度 = 游戏自己 + spd,
+				-- 16 还是原来那个 16; 松手时游戏那一步为 0, 门关, 一帧都不加, 照样停得住。
+				netSpd = 0
+				if gateOpen then r.CFrame = r.CFrame + d.Unit * (S.spd * dt); pushN += 1; netSpd = gateSpd + S.spd end
 			end
 			-- 基准必须记推完之后的位置: 记推之前的话, 下一帧量到的差里会混进自己刚才那一下, 推一帧停一帧地摆。
 			lastPos = r.CFrame.Position
@@ -511,7 +513,8 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 		-- 源已经不再决定推不推了, 所以不打"谁在驱动", 打门开没开 —— 下一份日志一眼就能对账。
 		local modTxt = stickFrom and string.format("(%.2f,%.2f,%.2f)|%.2f 路=%s", stickRaw.X, stickRaw.Y, stickRaw.Z, stickRaw.Magnitude, ctrlPath) or `无({ctrlWhy})`
 		local gateTxt = (F.spdmode == "cframe") and (gateOpen and "开" or "关") or "—"
-		return string.format("摇杆=(%.2f,%.2f,%.2f)|%.2f 模块=%s 门=%s 游=%.1f格/秒 推=%d/跑=%d 态=%s 位=(%.0f,%.0f,%.0f) 游戏=%s", md.X, md.Y, md.Z, md.Magnitude, modTxt, gateTxt, gateSpd, pushN, tickN, (okS and st and tostring(st.Name)) or "?", q.X, q.Y, q.Z, uiTxt())
+		-- 净=游戏自己 + spd, 这一帧实际该有的速度。以前只打 spd, 看不出主人真正跑多快。
+		return string.format("摇杆=(%.2f,%.2f,%.2f)|%.2f 模块=%s 门=%s 游=%.1f 净=%.1f格/秒 推=%d/跑=%d 态=%s 位=(%.0f,%.0f,%.0f) 游戏=%s", md.X, md.Y, md.Z, md.Magnitude, modTxt, gateTxt, gateSpd, netSpd, pushN, tickN, (okS and st and tostring(st.Name)) or "?", q.X, q.Y, q.Z, uiTxt())
 	end }
 	feature{ key = "speed", label = "速度", num = { "spd", 16 }, tick = speedTick, set = function(v) if v then moving, lastPos = false, nil end end, off = function() stopMove(); restoreSpeed() end }
 	feature{ kind = "cycle", key = "spdmode", save = "spdmode", def = "root", cycle = { "root", "walk", "cframe" }, text = function(v) return "模式 " .. v end, set = function() stopMove(); restoreSpeed() end, w = 1 }

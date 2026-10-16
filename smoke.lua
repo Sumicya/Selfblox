@@ -1637,7 +1637,7 @@ step(1 / 60, 1) -- 开门第一帧只记位置基准, 不推
 local z0 = hrp.props.CFrame.Position.Z
 step(1 / 60, 5)
 local per = (z0 - hrp.props.CFrame.Position.Z) / 5 * 60
-ok(math.abs(per - 16) < 1e-6, `速度·cframe: 游戏自己在挪人 → 把每帧位移换成 spd*dt, 出来的速度就是 spd (量到 {per} 格/秒, 设的是 16)`)
+ok(math.abs(per - 38) < 1e-6, `速度·cframe: 游戏自己在挪人 → 在它自己那一步之上再加 spd*dt, 净速度 = 22 + 16 = 38 (量到 {per} 格/秒)`)
 hrp.props.AssemblyLinearVelocity = Vector3.new(0, 0, -999) -- 引擎从 CFrame 位移里攒出来的动量
 step(1 / 60, 3)
 ok(hrp.props.AssemblyLinearVelocity.Z == 0, `速度·cframe: 推着走的时候水平速度也每帧钉死, 攒不出动量 (实际 {hrp.props.AssemblyLinearVelocity.Z})`)
@@ -1649,7 +1649,7 @@ SBMV.force = Vector3.new(0, 0, -1) -- 连控制模块都跟着喊满偏
 local zStop = hrp.props.CFrame.Position.Z
 step(1 / 60, 6)
 local extra = hrp.props.CFrame.Position.Z - zStop
-ok(extra >= 0 and extra < 16 / 60, `游戏不挪人了 → 顶多把上一帧已经量到的那点补完, 不再往前走 (多走了 {extra} 格, 一帧的量是 {16 / 60} 格)`)
+ok(extra <= 1e-9 and extra > -16 / 60 - 1e-9, `游戏不挪人了 → 判据是上一帧那一步, 晚一帧才知道, 所以顶多多推一帧 (多走了 {-extra} 格, 一帧的量是 {16 / 60} 格)`)
 local zEnd = hrp.props.CFrame.Position.Z
 step(1 / 60, 6)
 ok(hrp.props.CFrame.Position.Z == zEnd, "停下之后就一步都不动了, 两个源还满偏也不动 (这就是「停不下来」的出口)")
@@ -1745,20 +1745,26 @@ do -- 「模块=无」必须说清是哪一种"无": 真机两份日志 (367 条
 	gknob.props.AbsolutePosition = { X = 930, Y = 1830 }
 	gknob.Position = UDim2.fromOffset(30, 30)
 	-- 主人认出真机日志里那 6 个 Unlocked/ImageIcon 是游戏最上面的菜单条 (三份日志 y=109/183/179, 等大等距一排)。
-	-- 原来的筛选只看 x 不看 y, 右半屏 6 个名额全被顶栏占满 ⟹ 右下角真控件一个都没轮到。摆一个顶栏物件验它被挡掉。
+	-- 上一版按 尺寸 / 屏幕区 / Active 层层筛, 还只留 6 个名额, 报出来的就全是顶栏 —— 被筛掉的正好是要找的那个。
+	-- 这版全列: 树里每个不是自家的 GuiObject 都进日志。顶栏的、隐身的、10px 的各摆一个, 一个都不许漏。
 	local topBar = inst("Frame", { Name = "Unlocked" }); topBar.Parent = gctl
 	local topIco = inst("ImageButton", { Name = "ImageIcon", Active = true, Visible = true }); topIco.Parent = topBar
 	topIco.props.AbsoluteSize = { X = 84, Y = 84 }
-	topIco.props.AbsolutePosition = { X = 700, Y = 100 } -- 视口 2400 高, 上三分之一 = 800 ⟹ 这算顶栏
+	topIco.props.AbsolutePosition = { X = 700, Y = 100 } -- 顶栏: 上一版就是被 y < 视口*0.3 挡掉的那个
+	local hid = inst("Frame", { Name = "HiddenBtn", Active = true, Visible = false }); hid.Parent = gctl
+	hid.props.AbsoluteSize = { X = 10, Y = 10 } -- 又小又隐: 上一版可见性和尺寸两道筛都会把它吃掉
+	hid.props.AbsolutePosition = { X = 30, Y = 2300 }
 	step(1 / 60, 130)
 	local dg1 = dumpTxt()
 	ok(dg1:find("没认出滑块", 1, true) ~= nil, "第一次扫认不出滑块: 没有上一次的 Position 可比")
+	ok(dg1:find("全清单:", 1, true) ~= nil and dg1:find("视口 1080x2400", 1, true) ~= nil, "认不出来就把整棵树列出来, 并带上视口 (光有 y=179 这种绝对像素分不出顶还是底)")
 	-- 真机 26.10.15.5.63 报出右半屏 6 个全是 "ImageIcon:ImageButton" —— 名字类名一模一样, 分不出跳跃和趴下滑竿,
-	-- 所以光报名字不够, 得带上父名 + 屏幕坐标 + 尺寸 + 子物件数, 下一份日志才认得出谁是谁。
-	ok(dg1:find("GameControls/SlideStick@900,1800 120x120 子1", 1, true) ~= nil, "认不出来就报父名/坐标/尺寸/子物件数 (光报 名字:类名 在真机上六个全一样, 等于没报)")
-	ok(dg1:find("顶栏 1 个", 1, true) ~= nil, "顶栏那排按钮只报个数")
-	ok(dg1:find("Unlocked/ImageIcon", 1, true) == nil, "顶栏物件不再占右半屏的名额 (真机三份日志 6 个名额全被它占满, 右下真控件一个都没轮到)")
-	ok(dg1:find("视口 1080x2400", 1, true) ~= nil, "把视口一起打出来: 光有 y=179 这种绝对像素, 分不出是顶部还是底部")
+	-- 所以光报名字不够, 得带上父名 + 类名 + 屏幕坐标 + 尺寸 + 可见 + Active + 子物件数, 下一份日志才认得出谁是谁。
+	ok(dg1:find("GameControls/SlideStick:Frame@900,1800 120x120 VA 子1", 1, true) ~= nil, "每个物件报父名/类名/坐标/尺寸/可见/Active/子物件数 (光报 名字:类名 在真机上六个全一样, 等于没报)")
+	ok(dg1:find("Unlocked/ImageIcon:ImageButton@700,100 84x84 VA 子0", 1, true) ~= nil, "顶栏那排照列, 不再按屏幕位置筛掉 (是不是菜单条由人看着坐标判, 不由代码猜)")
+	ok(dg1:find("GameControls/HiddenBtn:Frame@30,2300 10x10 vA 子0", 1, true) ~= nil, "隐身的、10px 的也照列 (上一版可见性和尺寸两道筛都会把它吃掉)")
+	ok(dg1:find("SB_Title", 1, true) == nil, "自家面板不进清单 (sbOwn 认得自家 gui)")
+	ok(dumpTxt():find("清单同上", 1, true) ~= nil, "同一份清单不重打: info 每 0.2 秒进一次日志, 一秒没变也打五遍, 十来秒就把 logmax 顶爆重写")
 	gknob.Position = UDim2.fromOffset(30, 60) -- 往下拨: 真机那个趴下滑竿就是上下动
 	gknob.props.AbsolutePosition = { X = 930, Y = 1860 }
 	step(1 / 60, 130)
@@ -1786,18 +1792,33 @@ do -- 「模块=无」必须说清是哪一种"无": 真机两份日志 (367 条
 	gctl:Destroy()
 	step(1 / 60, 130)
 	ok(dumpTxt():find("SlideStick", 1, true) == nil, "游戏那棵树撤了以后, 认出来的滑块也跟着从日志里消失")
-	-- 右半屏 Active=false 的方块也得看得见: 触屏控件常常是 Active=false 靠 InputBegan 自己收事件,
-	-- 只收 Active 的会把真控件整个漏掉 —— 真机三次都只报出顶栏那一排, 右下什么都没看见。
-	-- 高度给 400: 顺带验上限从 320 放到 480, 不然竖着的趴下滑竿轨道会整个被尺寸筛掉。
+	-- Active=false 的照样列: 触屏控件常常是 Active=false 靠 InputBegan 自己收事件, 只收 Active 的会整个漏掉。
+	-- 60x400 的竖条: 竖着的趴下滑竿轨道, 上一版两道尺寸筛都会把它吃掉。
 	local pass = inst("Frame", { Name = "ProneTrack", Active = false, Visible = true }); pass.Parent = pgui
 	pass.props.AbsoluteSize = { X = 60, Y = 400 }
 	pass.props.AbsolutePosition = { X = 950, Y = 1700 }
 	step(1 / 60, 130)
-	local dg4 = dumpTxt()
-	ok(dg4:find("右半屏非Active: PlayerGui/ProneTrack@950,1700 60x400 子0", 1, true) ~= nil, "右半屏没有 Active 方块时, 把 Active=false 的列出来, 400 高的竖条也不被尺寸筛掉")
+	ok(dumpTxt():find("PlayerGui/ProneTrack:Frame@950,1700 60x400 V- 子0", 1, true) ~= nil, "Active=false 的、400 高的竖条也照列, 不做尺寸和 Active 筛选")
 	pass:Destroy()
 	step(1 / 60, 130)
 	ok(dumpTxt():find("ProneTrack", 1, true) == nil, "撤掉以后日志里也跟着没了")
+	-- 16KB 护栏得真跑一遍: 上千物件的 UI 会把 logmax 顶爆重写, 速度样本全丢。砍了多少个必须明写出来 ——
+	-- 上一版就是 6 个名额把要找的东西砍掉了还没吭声, 主人只能一轮一轮重发日志。
+	local bulk = inst("ScreenGui", { Name = "Bulk" }); bulk.Parent = pgui
+	for i = 1, 500 do
+		local b = inst("Frame", { Name = "B" .. i, Visible = true }); b.Parent = bulk
+		b.props.AbsoluteSize = { X = 50, Y = 50 }
+		b.props.AbsolutePosition = { X = i % 1000, Y = i % 2000 }
+	end
+	step(1 / 60, 130)
+	local dgBulk = dumpTxt()
+	local nBulk = tonumber(dgBulk:match("物件 (%d+) 个"))
+	ok(nBulk ~= nil and nBulk >= 500, `500 个物件一个不落地数到 (数到 {tostring(nBulk)} 个)`)
+	ok(dgBulk:find("没列(超16KB)", 1, true) ~= nil, "超 16KB 才截断, 而且把截断这件事写在日志里")
+	ok(dgBulk:find("还有 %d+ 个没列") ~= nil, "砍掉了几个也报个数, 不闷着")
+	bulk:Destroy()
+	step(1 / 60, 130)
+	ok(dumpTxt():find("超16KB", 1, true) == nil, "物件撤了以后护栏跟着消失, 清单恢复完整")
 	click(spdBtn) -- 复原: 上面为了测「速度关着也探」把它关了, 后面的断言按速度开着走
 	step(1 / 60, 3)
 	ok(spdBtn.Text:find("开", 1, true) ~= nil, "复原: 速度重新是开的")
@@ -1836,7 +1857,7 @@ do -- cframe 的门必须自己打进日志: 26.10.15.6.89 那份日志只有「
 	step(1 / 60, 4)
 	local dOn = dumpTxt()
 	ok(dOn:find("门=开", 1, true) ~= nil, "游戏在挪人 → 日志里门是开的")
-	ok(dOn:find("游=22.0格/秒", 1, true) ~= nil, `量出来的游戏自身速度也打出来, 真机好对账 (实际 {tostring(dOn:match("游=[^ ]*"))})`)
+	ok(dOn:find("游=22.0 净=38.0格/秒", 1, true) ~= nil, `游戏自己那一步和加完的净速度都打出来, 真机好对账 (实际 {tostring(dOn:match("游=[^ ]* [^ ]*"))})`)
 	_G.__gameMove = nil
 	step(1 / 60, 4)
 	ok(dumpTxt():find("门=关", 1, true) ~= nil, "游戏不挪人了 → 门是关的 (下一份日志一眼就能看出门开没开)")
