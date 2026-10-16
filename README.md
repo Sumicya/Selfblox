@@ -94,7 +94,7 @@ rm -f /storage/emulated/0/Delta/workspace/Selfblox-*.lua
 改完先离线自检，不必上手机：
 
 ```bash
-luau smoke.lua    # 要官方 Luau(工作流里钉的是 0.741); 本地怎么编同版本见 AGENTS.md
+luau smoke.lua    # 要官方 Luau 0.741; 本地怎么编同一个版本见下面「本仓库没有 CI 工作流」那一段
 ```
 
 `smoke.lua` 用一个假 Roblox 引擎加载 `selfblox.lua`：建面板、翻每个开关、坐进假车、跑帧、卸载，然后断言状态确实改变、没有报错、卸载后不留实例和连接，并注入一个玩具功能验证清单的扩展性。假引擎对没有核对过官方文档的成员一律抛错，白名单是 `smoke.lua` 里的 `VERIFIED`，逐个对照 create.roblox.com 的引擎 API 参考核对。脚本本体不依赖 `smoke.lua`。
@@ -137,3 +137,7 @@ Copyright (C) 2026 Sumicya
 本程序的发布是希望它有用，但**不含任何担保**；甚至不含对适销性或特定用途适用性的默示担保。详见 GNU 通用公共许可证。
 
 全文见 [LICENSE](LICENSE)。
+
+## 规范
+
+本仓受 [Sumicya 全项目规范](https://github.com/Sumicya/selfs/blob/main/GLOBAL.md) 约束，按「仓库类型」表属**无 CI 仓**，适用 A、S、R8 三组条文，提交 `93f66bb90b773af4a8679b55953c9ba5e07e4ea1`。
