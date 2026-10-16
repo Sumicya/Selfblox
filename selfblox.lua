@@ -22,7 +22,7 @@
 --   语法基线就是 Luau(运行环境就是它): 26.10.5.28 起用了字符串插值(`{}`)、复合赋值(+= 等)与 if 表达式(if c then a else b),
 --            Lua 5.4 / fengari 都解析不了; 自检的权威跑法是官方 Luau 0.741 (本地怎么编见 tools/luau-driver/build.sh)
 
-local VERSION = "26.10.16.9.99" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
+local VERSION = "26.10.16.10.100" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
@@ -71,7 +71,7 @@ local BG, ON, OFF = Color3.fromRGB(20, 22, 28), Color3.fromRGB(38, 125, 85), Col
 local LIT, CLEAR = Color3.fromRGB(150, 235, 170), 0.9 -- CLEAR = 面板底色透明度
 local function lit(b, on) b.BackgroundColor3 = on and ON or OFF; b.TextColor3 = on and LIT or WHITE end -- 开着/按着/当前页: 底色只剩 10%, 看不出颜色了, 状态靠字色
 local W, ROW = 184, 26 -- 面板宽 200 → 184: 半行按钮 100 → 92, 一行两个左右更靠近
-local FOLDW = 18 -- 折叠钮占宽 (原 26): 标题栏 "Selfblox <五段版本>" 按最保守 7px/字符 @12 号约 154px, 加折叠钮 18 = 172, 所以面板下限在 184 附近; 再窄就得动标题
+local FOLDW = 18 -- 折叠钮占宽 (原 26)。标题栏现在只放五段版本: 15 字符 × 最保守 7px @12 号 = 105, 折叠钮两侧各让 18 共 36, 合计 141 < 面板 184, 余 43px。原先带 "Selfblox " 前缀时 24 字符要 186px, 总序号一上三位数就撑爆 —— 面板宽度是主人定的 184, 所以动的是标题
 local gui = mk("ScreenGui", { Name = "Selfblox", ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = 99999 }, ROOT)
 local FX = mk("Folder", { Name = "Selfblox_FX" }, ROOT) -- Highlight / BillboardGui 放这里, 卸载一起删
 
@@ -124,7 +124,9 @@ end
 local cam0 = workspace.CurrentCamera
 local vp = (cam0 and cam0.ViewportSize) or Vector2.new(800, 600) -- 相机还没就绪时读 ViewportSize 直接抛错, 面板一个都建不出来
 local pos = opt("pos", { vp.X / 2 - W / 2, vp.Y * 0.3 })
-local title = mk("TextLabel", { Name = "SB_Title", Size = UDim2.fromOffset(W, ROW), Position = UDim2.fromOffset(math.clamp(pos[1], 0, math.max(vp.X - W, 0)), math.clamp(pos[2], 0, math.max(vp.Y - ROW, 0))), BackgroundColor3 = BG, BackgroundTransparency = CLEAR, BorderSizePixel = 0, Font = FONT, TextSize = 12, TextColor3 = WHITE, Text = `Selfblox {VERSION}` }, gui) -- 13 → 12: 跟面板里其它文字同号, 也让版本串在窄面板里离折叠钮更远
+local title = mk("TextLabel", { Name = "SB_Title", Size = UDim2.fromOffset(W, ROW), Position = UDim2.fromOffset(math.clamp(pos[1], 0, math.max(vp.X - W, 0)), math.clamp(pos[2], 0, math.max(vp.Y - ROW, 0))), BackgroundColor3 = BG, BackgroundTransparency = CLEAR, BorderSizePixel = 0, Font = FONT, TextSize = 12, TextColor3 = WHITE, Text = VERSION }, gui) -- 13 → 12: 跟面板里其它文字同号。原来写的是 `Selfblox {VERSION}`, 总序号进到三位数后
+-- 24 字符 × 最保守 7px = 168 + 折叠钮 18 = 186 > 面板 184, 撑爆了。名字在这一栏是多余的(面板只有这一个,
+-- 启动打印、日志头、诊断包里都带 [Selfblox] <版本>), 去掉它换来 61px 余量, 面板宽度一个字没动
 local body = mk("Frame", { Name = "SB_Body", Size = UDim2.new(0, W, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Position = title.Position + UDim2.fromOffset(0, ROW), BackgroundColor3 = BG, BackgroundTransparency = CLEAR, BorderSizePixel = 0 }, gui)
 mk("UIListLayout", { Padding = UDim.new(0, 0) }, body)
 on(title:GetPropertyChangedSignal("Position"), function() body.Position = title.Position + UDim2.fromOffset(0, ROW) end)

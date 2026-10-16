@@ -672,7 +672,8 @@ ok(vy ~= nil, `VERSION 是五段 yy.m.d.当日序号.总序号 ({tostring(VER)})
 ok(vy ~= nil and tonumber(vm) >= 1 and tonumber(vm) <= 12 and tonumber(vd) >= 1 and tonumber(vd) <= 31 and tonumber(vdaily) >= 1 and tonumber(vtotal) >= 1, `五段取值合法: 月 1~12 / 日 1~31 / 当日序号与总序号都从 1 起 ({tostring(VER)})`)
 ok(VER ~= nil and VER:sub(1, 1) ~= "v" and select(2, SRC:gsub(`"{VER:gsub("%.", "%%.")}"`, "")) == 1, "展示版本不带 v, 版本号只在 VERSION 一行写死")
 local title0 = tabs():FindFirstChild("SB_Title")
-ok(title0 ~= nil and title0.Text == "Selfblox " .. tostring(VER), `面板标题读 VERSION (读到 {tostring(title0 and title0.Text)})`)
+-- 标题就是 VERSION 本身: 原来前面还挂着 "Selfblox " 前缀, 总序号上三位数后整条撑出面板 184px。
+ok(title0 ~= nil and title0.Text == tostring(VER), `面板标题就是 VERSION, 不另抄一份 (读到 {tostring(title0 and title0.Text)})`)
 -- 面板宽度: 一行两个按钮各占一半, 面板窄了它们才真的左右靠近 (26.10.15 起 200 → 160, 半行按钮 100 → 80)
 ok(title0 ~= nil and title0.Size.X.Offset == 184, `面板宽 184, 半行按钮 = {title0 and title0.Size.X.Offset / 2}px (读到 {title0 and title0.Size.X.Offset})`)
 ok(tabs():FindFirstChild("SB_Body") ~= nil and tabs():FindFirstChild("SB_Body").Size.X.Offset == 184, "面板体和标题一样宽")
@@ -691,8 +692,11 @@ local function estPx(str)
 	for i = 1, #str do local b = str:byte(i); if b >= 0xE0 then wide += 1 elseif b < 0x80 then narrow += 1 end end
 	return wide * 12 + narrow * 7 -- 3 字节字符的续字节 0x80..0xBF 两个分支都不进, 不会重复计
 end
-local need = estPx(title0 and title0.Text or "") + (foldB and foldB.Size.X.Offset or 0)
-ok(title0 ~= nil and foldB ~= nil and need <= title0.Size.X.Offset, `标题文字(估 {estPx(title0 and title0.Text or "")}px) + 折叠钮({foldB and foldB.Size.X.Offset}px) 塞得进面板 {title0 and title0.Size.X.Offset}px (需要 {need}px)`)
+-- 文字是居中的(标题没设 TextXAlignment, TextLabel 默认居中), 折叠钮贴在右边 FOLDW 宽, 标题又没有 UIPadding,
+-- 所以真正的约束是「文字宽 + 折叠钮两侧各让一份」<= 面板宽, 不是原先写的「文字宽 + 一份」。原先那条比真约束松了
+-- 一个折叠钮的宽度 —— 松方向的错, 会把快要压上的情况判成安全。
+local need = estPx(title0 and title0.Text or "") + 2 * (foldB and foldB.Size.X.Offset or 0)
+ok(title0 ~= nil and foldB ~= nil and need <= title0.Size.X.Offset, `标题文字(估 {estPx(title0 and title0.Text or "")}px) 居中 + 折叠钮({foldB and foldB.Size.X.Offset}px)两侧各让一份 塞得进面板 {title0 and title0.Size.X.Offset}px (需要 {need}px)`)
 -- 启动打印改成了 Luau 插值写法(26.10 起 selfblox.lua 以 Luau 为基线), 断言跟着认新写法
 ok(SRC:find('print(`[Selfblox] {VERSION}', 1, true) ~= nil, "启动打印读 VERSION, 不另写一份")
 
