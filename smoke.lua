@@ -698,6 +698,45 @@ end
 -- 一个折叠钮的宽度 —— 松方向的错, 会把快要压上的情况判成安全。
 local need = estPx(title0 and title0.Text or "") + 2 * (foldB and foldB.Size.X.Offset or 0)
 ok(title0 ~= nil and foldB ~= nil and need <= title0.Size.X.Offset, `标题文字(估 {estPx(title0 and title0.Text or "")}px) 居中 + 折叠钮({foldB and foldB.Size.X.Offset}px)两侧各让一份 塞得进面板 {title0 and title0.Size.X.Offset}px (需要 {need}px)`)
+
+-- 通用不变量: 每个「不换行」的文字都得塞得进自己那一格。钉单个标签没用 —— 「抓取半径」4 个汉字
+-- 48px 挤在 46px 的半行标签槽里被切掉, 就是没有这条才漏过去的。会换行的行不在此列(它们靠自动长高)。
+do
+	local function pxW(d) -- 假引擎没有布局, 按 Size 的 scale/offset 顺着父链折算像素宽
+		if d.ClassName == "ScreenGui" then return 184 end
+		local sz = d.props.Size
+		local sc = (sz and sz.X and sz.X.Scale) or 0
+		local off = (sz and sz.X and sz.X.Offset) or 0
+		local par = d.Parent
+		return sc * (par and pxW(par) or 184) + off
+	end
+	local over = {}
+	for _, d in ipairs(all()) do
+		if (d:IsA("TextLabel") or d:IsA("TextButton")) and type(d.props.Text) == "string" and d.props.Text ~= "" then
+			local as = d.props.AutomaticSize
+			local grows = as ~= nil and as.EnumType == "AutomaticSize" and as.Name ~= "None"
+			if not grows and d.props.TextWrapped ~= true then
+				local need, have = estPx(d.props.Text), pxW(d)
+				if need > have then over[#over + 1] = string.format("「%s」%dpx>%dpx", d.props.Text, need, have) end
+			end
+		end
+	end
+	ok(#over == 0, `每个不换行的文字都塞得进自己的槽 (超出的: {#over > 0 and table.concat(over, " ") or "无"})`)
+end
+
+-- 会换行的帮助行必须自己长高: 面板 184px 宽, 有两条帮助文字估到 195px / 191px, 一定会换行;
+-- 而 ui() 给的是固定 26px 行高, 不开自动高度的话第二行等于写了看不见 (自查量出来的真缺陷)。
+do
+	local nWrap, nAuto = 0, 0
+	for _, d in ipairs(all()) do
+		if d:IsA("TextLabel") and d.props.TextWrapped == true then
+			nWrap += 1
+			local as = d.props.AutomaticSize
+			if as ~= nil and as.EnumType == "AutomaticSize" and as.Name ~= "None" then nAuto += 1 end
+		end
+	end
+	ok(nWrap > 0 and nAuto == nWrap, `会换行的帮助行都开了自动长高 ({nAuto}/{nWrap})`)
+end
 -- 启动打印改成了 Luau 插值写法(26.10 起 selfblox.lua 以 Luau 为基线), 断言跟着认新写法
 ok(SRC:find('print(`[Selfblox] {VERSION}', 1, true) ~= nil, "启动打印读 VERSION, 不另写一份")
 

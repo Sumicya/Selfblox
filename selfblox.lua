@@ -22,7 +22,7 @@
 --   语法基线就是 Luau(运行环境就是它): 26.10.5.28 起用了字符串插值(`{}`)、复合赋值(+= 等)与 if 表达式(if c then a else b),
 --            Lua 5.4 / fengari 都解析不了; 自检的权威跑法是官方 Luau 0.741 (本地怎么编见 tools/luau-driver/build.sh)
 
-local VERSION = "26.10.17.3.104" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 UTC+8); 标签是 v<VERSION>, 打标签要先获主人授权
+local VERSION = "26.10.17.4.105" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 UTC+8); 标签是 v<VERSION>, 打标签要先获主人授权
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
@@ -70,7 +70,7 @@ local FONT, WHITE = Enum.Font.GothamBold, Color3.new(1, 1, 1)
 local BG, ON, OFF = Color3.fromRGB(20, 22, 28), Color3.fromRGB(38, 125, 85), Color3.fromRGB(48, 50, 60)
 local LIT, CLEAR = Color3.fromRGB(150, 235, 170), 0.9 -- CLEAR = 面板底色透明度
 local function lit(b, on) b.BackgroundColor3 = on and ON or OFF; b.TextColor3 = on and LIT or WHITE end -- 开着/按着/当前页: 底色只剩 10%, 看不出颜色了, 状态靠字色
-local W, ROW = 184, 26 -- 面板宽 200 → 184: 半行按钮 100 → 92, 一行两个左右更靠近
+local PW, ROW = 184, 26 -- 面板宽 200 → 184: 半行按钮 100 → 92, 一行两个左右更靠近。名字避开下面的控件表 W (自查发现的撞名: 174 行以后 W 是表不是数, 谁在后面拿它当宽度用就静默出错)
 local FOLDW = 18 -- 折叠钮占宽 (原 26)。标题栏现在只放五段版本: 15 字符 × 最保守 7px @12 号 = 105, 折叠钮两侧各让 18 共 36, 合计 141 < 面板 184, 余 43px。原先带 "Selfblox " 前缀时 24 字符要 186px, 总序号一上三位数就撑爆 —— 面板宽度是主人定的 184, 所以动的是标题
 local gui = mk("ScreenGui", { Name = "Selfblox", ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = 99999 }, ROOT)
 local FX = mk("Folder", { Name = "Selfblox_FX" }, ROOT) -- Highlight / BillboardGui 放这里, 卸载一起删
@@ -91,7 +91,9 @@ local function row(parent, h)
 	mk("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 0) }, f)
 	return f
 end
-local function text(parent, s, w) return ui("TextLabel", parent, w, { Text = s, BackgroundTransparency = 1, TextWrapped = true }) end
+-- 帮助行要能自己长高: 184px 宽里放不下的会换行, 而 ui() 给的是固定 26px 高, 第二行等于写了看不见
+-- (自查量出来两条帮助文字估 195px / 191px, 都超 184)。AutomaticSize.Y 让高度跟着换行走, 不用逐条数字数。
+local function text(parent, s, w) return ui("TextLabel", parent, w, { Text = s, BackgroundTransparency = 1, TextWrapped = true, AutomaticSize = Enum.AutomaticSize.Y }) end
 local function btn(parent, s, fn, w)
 	local b = ui("TextButton", parent, w, { Text = s })
 	on(b.Activated, function() fn(b) end)
@@ -123,11 +125,11 @@ end
 
 local cam0 = workspace.CurrentCamera
 local vp = (cam0 and cam0.ViewportSize) or Vector2.new(800, 600) -- 相机还没就绪时读 ViewportSize 直接抛错, 面板一个都建不出来
-local pos = opt("pos", { vp.X / 2 - W / 2, vp.Y * 0.3 })
-local title = mk("TextLabel", { Name = "SB_Title", Size = UDim2.fromOffset(W, ROW), Position = UDim2.fromOffset(math.clamp(pos[1], 0, math.max(vp.X - W, 0)), math.clamp(pos[2], 0, math.max(vp.Y - ROW, 0))), BackgroundColor3 = BG, BackgroundTransparency = CLEAR, BorderSizePixel = 0, Font = FONT, TextSize = 12, TextColor3 = WHITE, Text = VERSION }, gui) -- 13 → 12: 跟面板里其它文字同号。原来写的是 `Selfblox {VERSION}`, 总序号进到三位数后
+local pos = opt("pos", { vp.X / 2 - PW / 2, vp.Y * 0.3 })
+local title = mk("TextLabel", { Name = "SB_Title", Size = UDim2.fromOffset(PW, ROW), Position = UDim2.fromOffset(math.clamp(pos[1], 0, math.max(vp.X - PW, 0)), math.clamp(pos[2], 0, math.max(vp.Y - ROW, 0))), BackgroundColor3 = BG, BackgroundTransparency = CLEAR, BorderSizePixel = 0, Font = FONT, TextSize = 12, TextColor3 = WHITE, Text = VERSION }, gui) -- 13 → 12: 跟面板里其它文字同号。原来写的是 `Selfblox {VERSION}`, 总序号进到三位数后
 -- 24 字符 × 最保守 7px = 168 + 折叠钮 18 = 186 > 面板 184, 撑爆了。名字在这一栏是多余的(面板只有这一个,
 -- 启动打印、日志头、诊断包里都带 [Selfblox] <版本>), 去掉它换来 61px 余量, 面板宽度一个字没动
-local body = mk("Frame", { Name = "SB_Body", Size = UDim2.new(0, W, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Position = title.Position + UDim2.fromOffset(0, ROW), BackgroundColor3 = BG, BackgroundTransparency = CLEAR, BorderSizePixel = 0 }, gui)
+local body = mk("Frame", { Name = "SB_Body", Size = UDim2.new(0, PW, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Position = title.Position + UDim2.fromOffset(0, ROW), BackgroundColor3 = BG, BackgroundTransparency = CLEAR, BorderSizePixel = 0 }, gui)
 mk("UIListLayout", { Padding = UDim.new(0, 0) }, body)
 on(title:GetPropertyChangedSignal("Position"), function() body.Position = title.Position + UDim2.fromOffset(0, ROW) end)
 local fold = mk("TextButton", { Size = UDim2.fromOffset(FOLDW, ROW), Position = UDim2.new(1, -FOLDW, 0, 0), BackgroundTransparency = 1, Font = FONT, TextSize = 16, TextColor3 = WHITE, Text = "–" }, title)
@@ -1588,7 +1590,7 @@ do -- ═════════ 抓: 抓部件 + 抓界面 (物件名一个都
 		text = { loose = "范围 散件", attr = "范围 带属性", all = "范围 全部" }, lit = true }
 	feature{ kind = "cycle", key = "gmode", save = "gmode", def = "auto", cycle = { "auto", "vel", "frame" },
 		text = { auto = "推法 自动", vel = "推法 只写速度", frame = "推法 只搬位" }, lit = true }
-	feature{ kind = "num", key = "gradius", def = 40, label = "抓取半径" }
+	feature{ kind = "num", key = "gradius", def = 40, label = "半径" } -- 原写「抓取半径」: 4 汉字≈48px, 半行标签槽只有 46px, 末字被切
 	feature{ kind = "num", key = "gspeed", def = 60, label = "拉力" }
 	feature{ kind = "num", key = "gscan", def = 300, label = "扫描半径", w = 1 }
 	feature{ kind = "str", key = "gkey", def = "", label = "按钮名" }
