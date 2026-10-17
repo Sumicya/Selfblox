@@ -147,4 +147,4 @@ Copyright (C) 2026 Sumicya
 
 ## 规范
 
-本仓受 [Sumicya 全项目规范](https://github.com/Sumicya/selfs/blob/main/GLOBAL.md) 约束，按「仓库类型」表属**无 CI 仓**，适用 A、S、R8 三组条文，提交 `45f2fbb3031b4af82d623d814086dd74836586f0`。
+本仓受 [Sumicya 全项目规范](https://github.com/Sumicya/selfs/blob/main/GLOBAL.md) 约束，按「仓库类型」表属**无 CI 仓**，适用 A、S、R8 三组条文，提交 `93e80f69348685d433d624dda2145bd644d46807`。
