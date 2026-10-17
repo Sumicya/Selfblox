@@ -113,7 +113,7 @@ bash tools/luau-driver/run_smoke.sh  # 之后每次改完跑这个, 0.3 秒
 
 ## 版本
 
-版本号是五段 `yy.m.d.当日序号.总序号`：两位年份、不补零的月份和日期（Asia/Shanghai 时区），第四段是当天第几个版本，第五段是该仓库累计第几个版本，两个序号都从 1 起。展示不带 `v`，也不带项目名前缀。日期版本不是 SemVer，本仓库不使用 SemVer 字段。
+版本号是五段 `yy.m.d.当日序号.总序号`：两位年份、不补零的月份和日期（UTC+8），第四段是当天第几个版本，第五段是该仓库累计第几个版本，两个序号都从 1 起。展示不带 `v`，也不带项目名前缀。日期版本不是 SemVer，本仓库不使用 SemVer 字段。
 
 单一来源是 `selfblox.lua` 顶部的 `VERSION` 常量，面板标题、日志表头、诊断快照和启动打印都读它。`smoke.lua` 会检查格式是否合法、序号是否从 1 起、四处展示是否一致。
 
@@ -147,4 +147,4 @@ Copyright (C) 2026 Sumicya
 
 ## 规范
 
-本仓受 [Sumicya 全项目规范](https://github.com/Sumicya/selfs/blob/main/GLOBAL.md) 约束，按「仓库类型」表属**无 CI 仓**，适用 A、S、R8 三组条文，提交 `93e80f69348685d433d624dda2145bd644d46807`。
+本仓受 [Sumicya 全项目规范](https://github.com/Sumicya/selfs/blob/main/GLOBAL.md) 约束，按「仓库类型」表属**无 CI 仓**，适用 A、S、R8 三组条文，提交 `3523490a203415cd8b95834602f06cef8fc3a0ec`。
