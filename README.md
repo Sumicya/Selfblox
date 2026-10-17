@@ -71,7 +71,7 @@ rm -f /storage/emulated/0/Delta/workspace/Selfblox-*.lua
 
 | 键 | 默认 | 说明 |
 |---|---|---|
-| `only` | 全部 | 只装这些页：`moc` `sibs` `drift` `hud` `log` `plane` `grab` |
+| `only` | 不设 = 全部 | 只装这些页：`moc` `sibs` `drift` `hud` `log` `plane` `grab` |
 | `spd` / `spdmode` | 16 / `root` | 速度值 / 模式 `root` `walk` `cframe` |
 | `flyspd` `jump` `spin` `promptdist` | 50 50 50 1000 | 飞行速度 / 跳力 / 转速（负数反向）/ 秒互动距离 |
 | `acc` `grip` `turn` `carfly` | 500 5 2.2 60 | 车：加速度 / 抓地 / 转向速率 / 飞车速度 |

@@ -168,6 +168,7 @@ function methods.Destroy(self)
 end
 function methods.GetChildren(self) local o = {}; for i, c in ipairs(self.children) do o[i] = c end; return o end
 function methods.GetDescendants(self)
+	_G.__descCalls = (_G.__descCalls or 0) + 1 -- 数全树遍历: 半秒一轮的功能有没有护栏, 靠这个才量得出来
 	local o = {}
 	local function walk(x) for _, c in ipairs(x.children) do o[#o + 1] = c; walk(c) end end
 	walk(self)
@@ -1773,6 +1774,12 @@ do
 	for _, b in ipairs(buttons()) do if starts(b.Text, "自动触发") and ends(b.Text, " 关") then apOff = true end end
 	ok(apOff, "自动触发默认是关的")
 
+	-- 先在场内一个提示都没有的时候按一次: 缓存下的是空清单。等下新建了提示再按, 手动那次必须绕开缓存
+	-- 看到当场的新提示 —— 这条就是钉住「手动 = force」, 不然 1 秒内的手动点击会被上一轮的空清单糊住。
+	VIMi.props.keySeq = nil
+	click(btnExact("触发提示"))
+	step(1 / 60, 2)
+	ok(#(VIMi.props.keySeq or {}) == 0 and toastText():find("范围内 0 个", 1, true) ~= nil, `场内没提示就一个都不发 ({toastText()})`)
 	-- 触发提示: 收纳槽就是个 ProximityPrompt (真机全场 4 个), 抓到手边还得替主人按下去
 	local ppHost = mkPart("Prompt", Vector3.new(1, 1, 1), Vector3.new(hi.X - 3, hi.Y, hi.Z), { Anchored = true })
 	ppHost.Parent = workspace
@@ -1799,6 +1806,17 @@ do
 	local ks2 = VIMi.props.keySeq or {}
 	ok(#ks2 >= 2 and #ks2 <= 8, `自动触发按半秒一轮发, 不是每帧刷 (一秒发了 {(#ks2 / 2)} 轮)`)
 	ok(toastText():find("范围内", 1, true) == nil, `自动的不弹提示 —— 半秒一条会把日志冲掉 ({toastText()})`)
+	-- 半秒一轮 = 每秒两轮, 每轮都全树遍历一次; 真机大地图几万物件, 这个成本得有护栏 (1 秒缓存)
+	click(findBtn("自动触发"))
+	_G.__descCalls = 0
+	step(1 / 60, 60) -- 关着: 这一秒一个全树遍历都不该有
+	local dOff = _G.__descCalls or 0
+	click(findBtn("自动触发"))
+	_G.__descCalls = 0
+	step(1 / 60, 60) -- 开着: 两轮触发, 但 1 秒缓存 ⟹ 只真扫一次
+	local dOn = _G.__descCalls or 0
+	ok(dOff == 0, `自动触发关着时不做全树遍历 (实际 {dOff} 次)`)
+	ok(dOn == 1, `开着也只在缓存过期时扫一次全树, 不是每轮都扫 (一秒 {dOn} 次, 两轮触发)`)
 	click(findBtn("自动触发"))
 	pr:Destroy()
 	prOff:Destroy()
@@ -2022,7 +2040,13 @@ do -- 「模块=无」必须说清是哪一种"无": 真机两份日志 (367 条
 	local dmOff = dumpTxt()
 	SBMV.gone = nil
 	ok(dmOff:find("还没探过", 1, true) == nil, "速度关着也探了控制模块 (上一版这里会一直停在「还没探过」)")
-	ok(dmOff:find("PlayerModule 在, 但抛错", 1, true) ~= nil, "而且探出来的是真实成因")
+	-- 这条原先断言的是 "PlayerModule 在, 但抛错" —— 那是**上一轮探失败时留下的旧话**: GetMoveVector 抛错后
+	-- 只清了 ctrl, ctrlWhy/stickFrom/ctrlPath 都没清, 所以旧成因一直挂在日志上。主人评审点出这个自相矛盾,
+	-- 清干净之后这里读到的是当场的成因。顺带钉住: 探不到时不许再打「路=」, 那会和 ctrl=nil 打架。
+	-- 只看当前那一行 moc: 整份打包里还带着「日志尾部」, 那里面有探成功时期的旧条目, 拿整份找会误判
+	local mocNow = dmOff:match("\n  moc [^\n]*") or ""
+	ok(mocNow:find("GetMoveVector 抛错", 1, true) ~= nil, `而且报的是当场的成因, 不是上一轮留下的旧话 ({mocNow:match("模块=[^ ]*")})`)
+	ok(mocNow:find("路=", 1, true) == nil and mocNow:find("模块=无(", 1, true) ~= nil, "当前这行不再打「路=」(stickFrom 跟着 ctrl 一起清了)")
 	step(1 / 60, 130)
 
 	-- 游戏自己的滑竿: 主人说这游戏有自己的跳跃和趴下滑竿(右边上下), 但物件名未知 ⟹ 先扫不问。
@@ -2273,6 +2297,8 @@ local before = newInstancesFrom(SNAP)
 local unloadRef = _G.SB_UNLOAD -- 重入测试要一个卸载后还在手的引用
 _G.SB_UNLOAD()
 step(1 / 60, 10)
+-- 卸载后还留着 SB_DUMP 的话, 一调就去摸已经 Destroy 的实例: dumpLines 里 pageInfos 和各页 DUMP 都不看 alive
+ok(_G.SB_DUMP == nil, "卸载把 SB_DUMP 也摘了 (只摘 SB_UNLOAD 会留一个能摸到死实例的入口)")
 local leaked = 0
 for _, i in ipairs(before) do if not i.destroyed then leaked = leaked + 1 end end
 ok(tabs() == nil, "面板整个没了")

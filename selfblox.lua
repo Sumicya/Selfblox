@@ -22,7 +22,7 @@
 --   语法基线就是 Luau(运行环境就是它): 26.10.5.28 起用了字符串插值(`{}`)、复合赋值(+= 等)与 if 表达式(if c then a else b),
 --            Lua 5.4 / fengari 都解析不了; 自检的权威跑法是官方 Luau 0.741 (本地怎么编见 tools/luau-driver/build.sh)
 
-local VERSION = "26.10.16.11.101" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
+local VERSION = "26.10.17.1.102" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 Asia/Shanghai); 标签是 v<VERSION>, 打标签要先获主人授权
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
@@ -317,7 +317,14 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 		if ctrl then
 			local okM, mv = pcall(function() return ctrl:GetMoveVector() end)
 			if not okM then -- pcall 失败时第二个返回值是错误字符串, 不能当向量用; 丢掉缓存下一秒重探, 这一帧走下面的退回
+				-- stickFrom / ctrlPath / ctrlWhy 得跟着一起清: 只清 ctrl 的话下一份日志照样打「路=GetControls」,
+				-- 而 ctrl 已经是 nil —— 自相矛盾的读数比没读数更坏。stickFrom 尤其不能漏: info() 是靠它决定
+				-- 打「路=」还是打「无(...)」的, 不清它就永远走不到「无」那一支。
 				ctrl, ctrlT = nil, os.clock()
+				stickFrom, ctrlPath = false, ""
+				local es = tostring(mv)
+				local nl2 = es:find("\n", 1, true)
+				ctrlWhy = `GetMoveVector 抛错, 一秒后重探: {(nl2 and es:sub(1, nl2 - 1) or es):sub(1, 80)}`
 			else
 				stickFrom, stickRaw = true, mv or Vector3.zero
 				if stickRaw.Magnitude > 1e-4 then
@@ -1459,11 +1466,15 @@ do -- ═════════ 抓: 抓部件 + 抓界面 (物件名一个都
 			VIM:SendKeyEvent(false, k, false, game)
 		end)
 	end
-	local function promptsNear()
+	local ppList, ppListT = nil, -1e9
+	local function promptsNear(force)
+		-- 缓存 1 秒: 自动档半秒一轮, 每轮都全树遍历一次, 真机大地图几万个物件是能感知的卡顿。
+		-- 代价是新冒出来的提示最多晚 1 秒才被看见; 手动按「触发提示」传 force 拿当场的新清单。
+		if not force and ppList and os.clock() - ppListT < 1 then return ppList end
 		local r = root()
 		local o = {}
 		local okD, list = pcall(function() return workspace:GetDescendants() end)
-		if not okD or type(list) ~= "table" then return o end
+		if not okD or type(list) ~= "table" then ppList, ppListT = o, os.clock() return o end
 		for _, d in ipairs(list) do
 			pcall(function()
 				if not d:IsA("ProximityPrompt") or not d.Enabled then return end
@@ -1473,10 +1484,11 @@ do -- ═════════ 抓: 抓部件 + 抓界面 (物件名一个都
 				o[#o + 1] = d
 			end)
 		end
+		ppList, ppListT = o, os.clock()
 		return o
 	end
-	local function firePrompts(quiet)
-		local o, sent = promptsNear(), 0
+	local function firePrompts(quiet, force)
+		local o, sent = promptsNear(force), 0
 		for _, pp in ipairs(o) do if firePrompt(pp) then sent += 1 end end
 		st.pp = #o
 		if not quiet then toast(`提示: 范围内 {#o} 个, 发出去 {sent} 个`) end
@@ -1581,7 +1593,7 @@ do -- ═════════ 抓: 抓部件 + 抓界面 (物件名一个都
 	feature{ kind = "num", key = "gscan", def = 300, label = "扫描半径", w = 1 }
 	feature{ kind = "str", key = "gkey", def = "", label = "按钮名" }
 	feature{ kind = "btn", label = "点按钮", fn = clickMatched, w = 1 }
-	feature{ kind = "btn", label = "触发提示", fn = function() firePrompts(false) end, w = 1 }
+	feature{ kind = "btn", label = "触发提示", fn = function() firePrompts(false, true) end, w = 1 }
 	feature{ key = "autoprompt", label = "自动触发" } -- 默认关: 半秒发一次全场提示, 主人没要求就别自己按
 	feature{ kind = "tick", tick = function(dt)
 		if F.pull or F.autopull then pull(dt) end
@@ -1704,6 +1716,7 @@ _G.SB_UNLOAD = function()
 	for _, c in ipairs(conns) do c:Disconnect() end
 	gui:Destroy()
 	FX:Destroy()
+	_G.SB_DUMP = nil -- 卸载后调它会摸到已经 Destroy 的实例: dumpLines 里 pageInfos 和各页 DUMP 都不看 alive
 	_G.SB_UNLOAD = nil
 end
 print(`[Selfblox] {VERSION} · {#ACTIVE} 模块 · _G.SB_UNLOAD() 卸载`)
