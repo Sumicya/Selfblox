@@ -22,7 +22,7 @@
 --   语法基线就是 Luau(运行环境就是它): 26.10.5.28 起用了字符串插值(`{}`)、复合赋值(+= 等)与 if 表达式(if c then a else b),
 --            Lua 5.4 / fengari 都解析不了; 自检的权威跑法是官方 Luau 0.741 (本地怎么编见 tools/luau-driver/build.sh)
 
-local VERSION = "26.10.17.5.106" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 UTC+8); 标签是 v<VERSION>, 打标签要先获主人授权
+local VERSION = "26.10.18.1.107" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 UTC+8); 标签是 v<VERSION>, 打标签要先获主人授权
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
@@ -132,6 +132,16 @@ local title = mk("TextLabel", { Name = "SB_Title", Size = UDim2.fromOffset(PW, R
 local body = mk("Frame", { Name = "SB_Body", Size = UDim2.new(0, PW, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Position = title.Position + UDim2.fromOffset(0, ROW), BackgroundColor3 = BG, BackgroundTransparency = CLEAR, BorderSizePixel = 0 }, gui)
 mk("UIListLayout", { Padding = UDim.new(0, 0) }, body)
 on(title:GetPropertyChangedSignal("Position"), function() body.Position = title.Position + UDim2.fromOffset(0, ROW) end)
+if cam0 then -- vp 只在上面读一次. 转屏、顶栏收放、窗口改大小都会改 ViewportSize, 不重夹就可能整块留在屏外,
+	-- 而唯一能把它拖回来的热区就在标题自己身上 —— 出不去, 只能重进游戏. 重夹后 Position 的监听会把 body 一起带过去
+	local function reclamp()
+		local v = cam0.ViewportSize
+		if v.X <= 0 or v.Y <= 0 then return end -- 相机交接时会瞬时读到 0, 那一下别把面板夹到左上角钉死
+		local p = title.Position
+		title.Position = UDim2.fromOffset(math.clamp(p.X.Offset, 0, math.max(v.X - PW, 0)), math.clamp(p.Y.Offset, 0, math.max(v.Y - ROW, 0)))
+	end
+	on(cam0:GetPropertyChangedSignal("ViewportSize"), reclamp)
+end
 local fold = mk("TextButton", { Size = UDim2.fromOffset(FOLDW, ROW), Position = UDim2.new(1, -FOLDW, 0, 0), BackgroundTransparency = 1, Font = FONT, TextSize = 16, TextColor3 = WHITE, Text = "–" }, title)
 local foldHooks = {} -- 想知道"面板是折着还是开着"的模块挂这里
 local function setFold(v) body.Visible = v; fold.Text = (if v then "–" else "+"); for _, f in ipairs(foldHooks) do f(v) end end

@@ -699,6 +699,30 @@ end
 local need = estPx(title0 and title0.Text or "") + 2 * (foldB and foldB.Size.X.Offset or 0)
 ok(title0 ~= nil and foldB ~= nil and need <= title0.Size.X.Offset, `标题文字(估 {estPx(title0 and title0.Text or "")}px) 居中 + 折叠钮({foldB and foldB.Size.X.Offset}px)两侧各让一份 塞得进面板 {title0 and title0.Size.X.Offset}px (需要 {need}px)`)
 
+-- 视口一变就得重夹面板: vp 原来只在启动读一次, 转屏/顶栏收放后面板能整块留在屏外,
+-- 而唯一能把它拖回来的热区就在标题自己身上 —— 出不去, 只能重进游戏。
+-- 假引擎写属性时不发 property-changed 信号(只有 :193 那个取信号的入口), 所以这里两个信号都手工打。
+do
+	local pcs = camera.props["__pcs_ViewportSize"]
+	ok(pcs ~= nil, "启动时挂了 ViewportSize 的监听")
+	local keepVp, keepPos = camera.props.ViewportSize, title0.Position
+	local bd0 = tabs():FindFirstChild("SB_Body")
+	title0.Position = UDim2.fromOffset(900, 2200) -- 先拖到启动视口(1080×2400)的右下角附近
+	camera.props.ViewportSize = Vector2.new(400, 300) -- 转屏: 视口缩到 400×300
+	pcs:Fire()
+	local px, py = title0.Position.X.Offset, title0.Position.Y.Offset
+	ok(px == 400 - 184 and py == 300 - 26, `视口缩小后夹回屏内 (读到 {px},{py} 期望 {400 - 184},{300 - 26})`)
+	title0:GetPropertyChangedSignal("Position"):Fire() -- 真引擎写 Position 会连带发这个信号
+	ok(bd0 ~= nil and bd0.Position.Y.Offset == py + 26, `重夹后面板体跟到标题下沿 (读到 {bd0 and bd0.Position.Y.Offset} 期望 {py + 26})`)
+	camera.props.ViewportSize = Vector2.new(0, 0) -- 相机交接时会瞬时读到 0
+	pcs:Fire()
+	ok(title0.Position.X.Offset == px and title0.Position.Y.Offset == py, `视口瞬时读到 0 时不把面板钉到左上角 (读到 {title0.Position.X.Offset},{title0.Position.Y.Offset})`)
+	camera.props.ViewportSize = keepVp
+	title0.Position = keepPos
+	pcs:Fire()
+	title0:GetPropertyChangedSignal("Position"):Fire()
+end
+
 -- 通用不变量: 每个「不换行」的文字都得塞得进自己那一格。钉单个标签没用 —— 「抓取半径」4 个汉字
 -- 48px 挤在 46px 的半行标签槽里被切掉, 就是没有这条才漏过去的。会换行的行不在此列(它们靠自动长高)。
 do
