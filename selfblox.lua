@@ -22,13 +22,14 @@
 --   语法基线就是 Luau(运行环境就是它): 26.10.5.28 起用了字符串插值(`{}`)、复合赋值(+= 等)与 if 表达式(if c then a else b),
 --            Lua 5.4 / fengari 都解析不了; 自检的权威跑法是官方 Luau 0.741 (本地怎么编见 tools/luau-driver/build.sh)
 
-local VERSION = "26.10.24.1.109" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 UTC+8); 标签是 v<VERSION>, 打标签要先获主人授权
+local VERSION = "26.10.24.3.110" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 UTC+8); 标签是 v<VERSION>, 打标签要先获主人授权
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UIS = game:GetService("UserInputService")
+local GuiService = game:GetService("GuiService")
 local Http = game:GetService("HttpService")
 local Lighting = game:GetService("Lighting")
 local Stats = game:GetService("Stats")
@@ -132,6 +133,7 @@ local title = mk("TextLabel", { Name = "SB_Title", Size = UDim2.fromOffset(PW, R
 local body = mk("Frame", { Name = "SB_Body", Size = UDim2.new(0, PW, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Position = title.Position + UDim2.fromOffset(0, ROW), BackgroundColor3 = BG, BackgroundTransparency = CLEAR, BorderSizePixel = 0 }, gui)
 mk("UIListLayout", { Padding = UDim.new(0, 0) }, body)
 on(title:GetPropertyChangedSignal("Position"), function() body.Position = title.Position + UDim2.fromOffset(0, ROW) end)
+local fitActivePage -- 页面/视口变动时, 按当前页真实高度把整块面板留在屏内
 if cam0 then -- vp 只在上面读一次. 转屏、顶栏收放、窗口改大小都会改 ViewportSize, 不重夹就可能整块留在屏外,
 	-- 而唯一能把它拖回来的热区就在标题自己身上 —— 出不去, 只能重进游戏. 重夹后 Position 的监听会把 body 一起带过去
 	local function reclamp()
@@ -139,6 +141,7 @@ if cam0 then -- vp 只在上面读一次. 转屏、顶栏收放、窗口改大�
 		if v.X <= 0 or v.Y <= 0 then return end -- 相机交接时会瞬时读到 0, 那一下别把面板夹到左上角钉死
 		local p = title.Position
 		title.Position = UDim2.fromOffset(math.clamp(p.X.Offset, 0, math.max(v.X - PW, 0)), math.clamp(p.Y.Offset, 0, math.max(v.Y - ROW, 0)))
+		if fitActivePage then fitActivePage() end
 	end
 	on(cam0:GetPropertyChangedSignal("ViewportSize"), reclamp)
 end
@@ -152,7 +155,10 @@ local function flip() -- 一次点按可能同时走下面三条路(拖拽器 / 
 end
 on(drag.DragStart, function(p) down = p end) -- 事件名: 官方文档里 UIDragDetector 只有 DragStart / DragContinue / DragEnd, 没有 DragBegin (写错 = 真引擎直接抛错, 脚本死在这一行, 后面一个页签都没建)
 on(drag.DragEnd, function(p) -- 抬手: 挪动 <8px = 点击 = 折叠, 否则是拖动 = 存位置. 手指必然会抖, 所以不能拿"有没有收到 DragContinue"来判
-	if down and (p - down).Magnitude < 8 then flip() else save("pos", { title.AbsolutePosition.X, title.AbsolutePosition.Y }) end
+	if down and (p - down).Magnitude < 8 then flip() else
+		if fitActivePage then fitActivePage() end
+		save("pos", { title.Position.X.Offset, title.Position.Y.Offset })
+	end
 	down = nil
 end)
 on(fold.Activated, flip)
@@ -167,12 +173,14 @@ on(title.InputEnded, function(i)
 end)
 local tabs = row(body)
 
-local toastL = mk("TextLabel", { Name = "SB_Toast", AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 22), Size = UDim2.fromOffset(0, 24), AutomaticSize = Enum.AutomaticSize.X, BackgroundColor3 = BG, BackgroundTransparency = 0.2, BorderSizePixel = 0, Font = FONT, TextSize = 13, TextColor3 = WHITE, Visible = false }, gui)
+local toastL = mk("TextLabel", { Name = "SB_Toast", AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 8), Size = UDim2.fromOffset(0, 24), AutomaticSize = Enum.AutomaticSize.X, BackgroundColor3 = BG, BackgroundTransparency = 0.2, BorderSizePixel = 0, Font = FONT, TextSize = 13, TextColor3 = WHITE, Visible = false }, gui)
 mk("UIPadding", { PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10) }, toastL)
 local toastN = 0
 local function toast(s) -- 卸载后 / 面板已销毁: 直接丢弃, 不往死标签上写字
 	if not alive or not toastL.Parent then return end
 	toastN = toastN + 1; local n = toastN
+	local inset = GuiService:GetGuiInset()
+	toastL.Position = UDim2.new(0.5, 0, 0, inset.Y + 8) -- ScreenGui 忽略安全区, 提示手动避开 Roblox 顶栏
 	toastL.Text, toastL.Visible = s, true
 	task.delay(2, function() if alive and toastN == n and toastL.Parent then toastL.Visible = false end end)
 end
@@ -777,7 +785,7 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 	end
 	local function brakeNow(p, v) p.AssemblyLinearVelocity = Vector3.yAxis * v.Y end -- 急刹: 水平速度直接归零, 比推力快且不吃质量
 
-	local function applyDrag() -- 面板关着: 背景可拖(搬位置) + 圆点可拖(转向); 面板开着: 只有圆点, 背景不接触摸免得挡住面板
+	local function applyDrag() -- 面板折叠才允许拖整条背景; 展开时只有圆点转向, 背景不接管触摸
 		track.Active = not body.Visible
 	end
 	local REACH = TRACK_W / 2 - KNOB_R -- 圆心能走的单侧行程 (82)
@@ -994,19 +1002,14 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 	feature{ key = "carauto", save = "carauto", def = true, label = "自动绑车", w = 1 }
 	feature{ key = "hornon", label = `常声({S.hornkey})`, set = horn }
 	feature{ kind = "hold", label = "声", set = horn }
-	feature{ kind = "text", key = "car_status", label = "上车即控; 没车就对准它按 换车" }
-	feature{ kind = "dump", key = "car", dump = carLines }
-	feature{ kind = "tick", tick = carTick, init = wheelInit, off = carStop }
-	-- 车 页原来 12 行 332px, 加标题和页签整块 384px。主人真机那份日志的视口是 1008×508.8, 面板默认落在
-	-- vp.Y*0.3 = 152.6, 底下只剩 356.2px —— 超 27.8px, 最后两三行够不着。把开车时手上要按的键单独拆一页,
-	-- 两页都塞得下; 面板结构和拖拽一个字没动(不上滚动条, 那是另一套布局)。控件的 key/save 都没改名, 存档照旧读得回来
-	local function driveInfo() return "急刹=" .. tostring(F.brake) .. holdInfo() end
-	feature{ kind = "page", id = "drive", tab = "驾", info = driveInfo }
-	feature{ key = "brake", label = "急刹", w = 1 } -- 挨着加减速放, 且单占一行: 半行的话跟别的键挤在一起, 急着停的时候容易按错
+	feature{ key = "brake", label = "急刹", w = 1, h = 36 } -- 单占一行, 加高方便触屏急停
 	feature{ kind = "hold", key = "accel", label = "▲ 加速", h = 36 }
 	feature{ kind = "hold", key = "decel", label = "▼ 减速", h = 36 }
 	feature{ kind = "hold", key = "cup", label = "飞 ↑", h = 36 }
 	feature{ kind = "hold", key = "cdown", label = "飞 ↓", h = 36 }
+	feature{ kind = "text", key = "car_status", label = "上车即控; 没车就对准它按 换车" }
+	feature{ kind = "dump", key = "car", dump = carLines }
+	feature{ kind = "tick", tick = carTick, init = wheelInit, off = carStop }
 end
 
 do -- ═════════ 漂: 人物推进 (开着就一直沿车头方向推, 不需要油门/刹车) ═════════
@@ -1628,8 +1631,32 @@ local only = opt("only", nil) -- _G.SB.only = {"moc","sibs"} 只装一部分
 local function wanted(id) return type(only) ~= "table" or table.find(only, id) ~= nil end
 for _, e in ipairs(FEATURES) do if e.kind == "page" and wanted(e.id) then ACTIVE[#ACTIVE + 1] = e end end
 local pages, tabBtns, BUILT, FAILED = {}, {}, {}, {}
+local activePage
+local function pageHeight(pg)
+	local h = 0
+	for _, child in ipairs(pg:GetChildren()) do
+		if child.ClassName ~= "UIListLayout" then
+			local y = child.Size and child.Size.Y
+			local n = y and y.Offset or 0
+			if child.AutomaticSize == Enum.AutomaticSize.Y then n = math.max(n, child.AbsoluteSize.Y) end
+			h += n
+		end
+	end
+	return h
+end
+fitActivePage = function()
+	local pg = pages[activePage]
+	local v = cam0 and cam0.ViewportSize or vp
+	if not pg or v.Y <= 0 then return end
+	local maxY = math.max(v.Y - ROW * 2 - pageHeight(pg) - 8, 0) -- 标题+页签+当前页+8px 底边距
+	local p = title.Position
+	local y = math.clamp(p.Y.Offset, 0, maxY)
+	if y ~= p.Y.Offset then title.Position = UDim2.fromOffset(p.X.Offset, y); save("pos", { p.X.Offset, y }) end
+end
 local function show(name)
 	for n, pg in pairs(pages) do pg.Visible = n == name; lit(tabBtns[n], n == name) end
+	activePage = name
+	fitActivePage()
 	save("tab", name)
 end
 do
@@ -1645,15 +1672,18 @@ do
 				tabBtns[e.id] = btn(tabs, e.tab, function() show(e.id) end, 1 / #ACTIVE)
 			end
 		elseif page then
-			local parent, w = page, e.w or ((if k == "text" then 1 else 0.5))
+			local parent, w, controlW = page, e.w or ((if k == "text" then 1 else 0.5))
 			if NOUI[k] then w = 1
 			elseif w < 1 then -- 半行控件两两并一行; 行高变了或装不下就另起一行
 				local h = e.h or ROW
 				if not cur or used + w > 1.001 or curH ~= h then cur, used, curH = row(page, e.h), 0, h end
-				used, parent = used + w, cur
+				used, parent, controlW = used + w, cur, w
+			elseif e.h then
+				cur, used, curH = row(page, e.h), 0, nil -- 全宽控件也按声明高度填满单独一行; 后续半行另起行
+				parent, controlW = cur, 1
 			else cur = nil end
 			local ok, err = pcall(function()
-				KIND[k](e, parent, w < 1 and w or nil)
+				KIND[k](e, parent, controlW)
 				if e.init then e.init(page) end
 			end)
 			if ok then

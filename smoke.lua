@@ -96,8 +96,8 @@ local VERIFIED = {
 	Team = words("TeamColor"),
 	Teams = words("GetTeams"),
 	TextBox = words("BackgroundTransparency ClearTextOnFocus FocusLost Font Position Size Text TextColor3 TextSize TextXAlignment TextYAlignment"),
-	TextButton = words("AbsolutePosition AbsoluteSize Active Activated AutoButtonColor BackgroundColor3 BackgroundTransparency BorderSizePixel Font InputBegan InputEnded LayoutOrder Position Size Text TextColor3 TextSize TextXAlignment TextYAlignment Visible"),
-	TextLabel = words("AbsolutePosition AnchorPoint AutomaticSize BackgroundColor3 BackgroundTransparency BorderSizePixel Font InputBegan InputEnded LayoutOrder Position RichText Size Text TextColor3 TextSize TextStrokeTransparency TextWrapped TextXAlignment TextYAlignment Visible"),
+	TextButton = words("AbsolutePosition AbsoluteSize Active Activated AutomaticSize AutoButtonColor BackgroundColor3 BackgroundTransparency BorderSizePixel Font InputBegan InputEnded LayoutOrder Position Size Text TextColor3 TextSize TextXAlignment TextYAlignment Visible"),
+	TextLabel = words("AbsolutePosition AbsoluteSize AnchorPoint AutomaticSize BackgroundColor3 BackgroundTransparency BorderSizePixel Font InputBegan InputEnded LayoutOrder Position RichText Size Text TextColor3 TextSize TextStrokeTransparency TextWrapped TextXAlignment TextYAlignment Visible"),
 	UICorner = words("CornerRadius"),
 	UIDragDetector = words("BoundingUI DragAxis DragContinue DragEnd DragStart DragStyle"),
 	UIListLayout = words("FillDirection Padding"),
@@ -453,6 +453,8 @@ MODULES[pmodule] = {
 }svc("Players", inst("Players", { LocalPlayer = player, MaxPlayers = 12, GetPlayers = function() return { player } end, GetPlayerFromCharacter = function(_, c) return c == char and player or nil end, PlayerAdded = Signal.new(), PlayerRemoving = Signal.new() }))
 svc("RunService", inst("RunService", { PreSimulation = Signal.new(), PreRender = Signal.new(), Heartbeat = Signal.new() }))
 svc("UserInputService", inst("UserInputService", { InputEnded = Signal.new(), JumpRequest = Signal.new(), TouchEnabled = true, GetMouseLocation = function() return Vector2.new(100, 100) end }))
+local GUI_INSET = Vector2.new(0, 58)
+svc("GuiService", inst("GuiService", { GetGuiInset = function() return GUI_INSET, Vector2.zero end }))
 svc("Lighting", inst("Lighting", { Ambient = Color3.fromRGB(70, 70, 70), OutdoorAmbient = Color3.fromRGB(70, 70, 70), Brightness = 1, FogEnd = 100000, GlobalShadows = true }))
 svc("Stats", inst("Stats", { GetTotalMemoryUsageMb = function() return 512 end }))
 svc("Teams", inst("Teams", { GetTeams = function() return {} end }))
@@ -661,7 +663,7 @@ ok(type(_G.SB_UNLOAD) == "function", "_G.SB_UNLOAD 有了")
 ok(tabs() ~= nil, "面板建在 gethui() 里")
 local names = {}
 for _, b in ipairs(buttons()) do if #b.Text <= 3 and b.Text ~= "" then names[b.Text] = true end end
-ok(names["动"] and names["车"] and names["驾"] and names["漂"] and names["显"] and names["志"] and names["机"] and names["抓"], "八个页签都在 (车 页拆出 驾 页: 开车时手上按的键单独一页)")
+ok(names["动"] and names["车"] and names["漂"] and names["显"] and names["志"] and names["机"] and names["抓"] and not names["驾"], "七个原有页签都在, 没有新增驾驶页")
 ok(#newInstancesFrom(SNAP) > 60, `控件建了 {#newInstancesFrom(SNAP)} 个实例`)
 local errs = 0 -- 模块构造时 pcall 兜住了错误会写成一行"出错: ...", 这里要当成失败抓出来
 for _, d in ipairs(all()) do if d.ClassName == "TextLabel" and type(d.Text) == "string" and d.Text:sub(1, 6) == "出错: " then errs = errs + 1; print(`       → {d.Text}`) end end
@@ -711,7 +713,7 @@ do
 	camera.props.ViewportSize = Vector2.new(400, 300) -- 转屏: 视口缩到 400×300
 	pcs:Fire()
 	local px, py = title0.Position.X.Offset, title0.Position.Y.Offset
-	ok(px == 400 - 184 and py == 300 - 26, `视口缩小后夹回屏内 (读到 {px},{py} 期望 {400 - 184},{300 - 26})`)
+	ok(px == 400 - 184 and py == 0, `视口缩小后按当前页高度夹回屏内; 放不下时标题靠顶 (读到 {px},{py})`)
 	title0:GetPropertyChangedSignal("Position"):Fire() -- 真引擎写 Position 会连带发这个信号
 	ok(bd0 ~= nil and bd0.Position.Y.Offset == py + 26, `重夹后面板体跟到标题下沿 (读到 {bd0 and bd0.Position.Y.Offset} 期望 {py + 26})`)
 	camera.props.ViewportSize = Vector2.new(0, 0) -- 相机交接时会瞬时读到 0
@@ -769,7 +771,7 @@ step(1 / 60, 30)
 ok(true, "空转没炸")
 
 print("\n[3] 页签逐个点")
-for _, t in ipairs({ "动", "车", "驾", "漂", "显", "志", "机", "抓" }) do
+for _, t in ipairs({ "动", "车", "漂", "显", "志", "机", "抓" }) do
 	local b = findBtn(t)
 	click(b)
 	local on = 0
@@ -813,29 +815,46 @@ click(driftBtn)
 step(1 / 60, 3)
 ok(driftForce() ~= nil, "再开回来 → VectorForce 重新挂上")
 
--- 通用不变量: 每页整块(标题 + 页签行 + 页)在默认落点上要整块塞进屏。拆 驾 页之前 车 页整块 384px,
--- 对着主人真机日志那份视口(1008×508.8)默认落点 vp.Y*0.3 = 152.6 之下只剩 356.2px —— 超 27.8px, 底下两三行够不着,
--- 而面板不上滚动条。假引擎自己的视口是 1080×2400, 拿它量什么页都过, 所以这里按真机那个高度量。
+-- 小屏适配: 保持原「车」页, 不另开页、不缩小按钮; 依据当前页实际控件行高把整块面板上移, 留 8px 底边距。
 do
-	local DEV_VP_Y = 508.8 -- 主人 Selfblox_log.txt 里的「视口 1008x508.8」
-	local g = tabs(); local body = g:FindFirstChild("SB_Body")
-	local tH = g:FindFirstChild("SB_Title").Size.Y.Offset
-	local tabsH, pgs = 0, {}
-	for _, c in ipairs(body:GetChildren()) do -- 页签行是定高 ROW, 各页是 AutomaticSize.Y(Offset=0), 靠这个分
-		if c.ClassName == "Frame" then
-			local yOff = (c.props.Size and c.props.Size.Y and c.props.Size.Y.Offset) or 0
-			if yOff > 0 then tabsH = math.max(tabsH, yOff) else pgs[#pgs + 1] = c end
+	local title0, body0 = tabs():FindFirstChild("SB_Title"), tabs():FindFirstChild("SB_Body")
+	local brake = findBtn("急刹")
+	local carPage = findBtn("换车").Parent.Parent
+	local pageH = 0
+	for _, r in ipairs(carPage:GetChildren()) do
+		if r.ClassName ~= "UIListLayout" then
+			local y = r.Size.Y.Offset
+			if r.AutomaticSize == Enum.AutomaticSize.Y then y = math.max(y, r.AbsoluteSize.Y) end
+			pageH += y
 		end
 	end
-	local worst, worstH = 0, 0
-	for _, c in ipairs(pgs) do
-		local sum = 0
-		for _, r in ipairs(c:GetChildren()) do sum += (r.props.Size and r.props.Size.Y and r.props.Size.Y.Offset) or 0 end
-		if tH + tabsH + sum > worstH then worst, worstH = #pgs, tH + tabsH + sum end
-	end
-	local frac = tonumber(SRC:match("vp%.Y %* ([%d%.]+)")) or 0.3 -- 落点系数从源码里读, 不写死: 改了默认落点这条会跟着变
-	local avail = DEV_VP_Y - DEV_VP_Y * frac
-	ok(worstH > 0 and worstH <= avail, `{#pgs} 页里最高的整块 {worstH}px 塞得进默认落点(vp.Y*{frac})下剩的 {math.floor(avail + 0.5)}px (真机视口高 {DEV_VP_Y}, 面板不上滚动条)`)
+	local maxY = 508.8 - title0.Size.Y.Offset - 26 - pageH - 8
+	local keepVp, keepPos = camera.props.ViewportSize, title0.Position
+	camera.props.ViewportSize = Vector2.new(1008, 508.8)
+	camera.props["__pcs_ViewportSize"]:Fire()
+	title0.Position = UDim2.fromOffset(title0.Position.X.Offset, 450) -- 模拟存档/拖拽把面板留在屏幕下方
+	click(findBtn("车")) -- 进高页时自动上移, 所有车控仍在原页
+	title0:GetPropertyChangedSignal("Position"):Fire()
+	ok(findBtn("驾") == nil and findBtn("急刹") ~= nil and findBtn("▲ 加速") ~= nil, "维持原「车」页: 没有驾驶新页, 急刹/加速仍在车页")
+	ok(math.abs(brake.Parent.Size.Y.Offset - 36) < 0.01 and brake.Size.Y.Scale == 1, "全宽控件的 h=36 真正作用到急刹触屏行")
+	ok(brake.Parent ~= findBtn("▲ 加速").Parent, "全宽急刹自己的高度行结束后, 半宽加速键另起一行")
+	local flash, autobind = findBtn("闪 ×3"), findBtn("自动绑车")
+	ok(flash.Parent ~= autobind.Parent and autobind.Size.X.Scale == 1, "自动绑车仍保持全宽触控, 不把无关按钮硬挤到一行")
+	ok(title0.Position.Y.Offset <= maxY and title0.Position.Y.Offset + title0.Size.Y.Offset + 26 + pageH <= 508.8 - 8,
+		`切到车页后按实际页高上移, 底边留 8px (top={title0.Position.Y.Offset}, 页高={pageH}, 上限={maxY})`)
+	local toastLabel = tabs():FindFirstChild("SB_Toast")
+	_G.__rayHit = { Instance = truckBed }
+	click(findBtn("换车")); step(1 / 60, 3)
+	ok(toastLabel.Position.Y.Offset == 66, "toast 使用 GuiService 顶部 inset 58px + 8px, 不压 Roblox 顶栏")
+	GUI_INSET = Vector2.new(0, 36)
+	_G.__rayHit = { Instance = CP.road }
+	click(findBtn("换车")); step(1 / 60, 3)
+	ok(toastLabel.Position.Y.Offset == 44, "顶栏 inset 改为 36px 后, toast 跟着移到 44px")
+	GUI_INSET = Vector2.new(0, 58)
+	camera.props.ViewportSize = keepVp
+	camera.props["__pcs_ViewportSize"]:Fire()
+	title0.Position = keepPos
+	title0:GetPropertyChangedSignal("Position"):Fire()
 end
 
 print("\n[3b] 点标题条 = 折叠 (+/- 也还能用)")
@@ -926,7 +945,7 @@ ok(esp.TextColor3.R == 1 and esp.TextColor3.G == 1, `开关关着 → 字是白�
 click(esp)
 ok(esp.TextColor3.G > esp.TextColor3.R, `开关开着 → 字变亮绿 (底色只剩 10%, 开/关靠字色) ({esp.Text})`)
 local lit = 0
-for _, t in ipairs({ "动", "车", "驾", "漂", "显", "志", "机", "抓" }) do local b = findBtn(t); if b and b.TextColor3.G > b.TextColor3.R then lit = lit + 1 end end
+for _, t in ipairs({ "动", "车", "漂", "显", "志", "机", "抓" }) do local b = findBtn(t); if b and b.TextColor3.G > b.TextColor3.R then lit = lit + 1 end end
 ok(lit == 1, `页签里正好一个是亮的 = 当前页 ({lit} 个)`)
 -- 原生居中就行: 文字不加 UIPadding 补偿, 也不加描边 / 阴影 (0.9 透明底 + 原色字)
 local texts, decorated = 1, 0
@@ -1247,7 +1266,7 @@ ok(knob.Position.X.Offset == 0 and knob.Position.X.Scale == 0.5, "拖圆点松�
 print("\n[6d2] 按住类按钮: 按住字变亮, 松手变回白色")
 local btnGas
 for _, d in ipairs(all()) do if d:IsA("TextButton") and d.Text == "▲ 加速" then btnGas = d end end
-ok(btnGas ~= nil, "驾页有「▲ 加速」")
+ok(btnGas ~= nil, "车页有「▲ 加速」")
 btnGas.InputBegan:Fire(input("Touch"))
 step(1 / 60, 3)
 ok(btnGas.TextColor3.G > btnGas.TextColor3.R, "按住时字变亮 (底色只剩 10%, 按下状态靠字色)")
@@ -2409,7 +2428,7 @@ step(1 / 60, 20) -- 先把帧喂够: 数据条 0.2s 才刷一次, 页签/数值�
 local n = 0
 for _, d in ipairs(all()) do if d:IsA("TextButton") and d.Text == "动" then n = n + 1 end end
 ok(n == 1, "only={moc,hud} 只留了「动」「显」两个页签")
-ok(findBtn("车") == nil and findBtn("驾") == nil and findBtn("漂") == nil and findBtn("志") == nil and findBtn("机") == nil and findBtn("抓") == nil, "only 过滤掉的页 (车/驾/漂/志/机/抓) 根本没建")
+ok(findBtn("车") == nil and findBtn("漂") == nil and findBtn("志") == nil and findBtn("机") == nil and findBtn("抓") == nil, "only 过滤掉的页 (车/漂/志/机/抓) 根本没建")
 local box = nil
 for _, d in ipairs(all()) do if d:IsA("TextBox") then box = d; break end end
 ok(box and box.Text == "99", "_G.SB.spd=99 顶掉了默认 16")
