@@ -661,7 +661,7 @@ ok(type(_G.SB_UNLOAD) == "function", "_G.SB_UNLOAD 有了")
 ok(tabs() ~= nil, "面板建在 gethui() 里")
 local names = {}
 for _, b in ipairs(buttons()) do if #b.Text <= 3 and b.Text ~= "" then names[b.Text] = true end end
-ok(names["动"] and names["车"] and names["漂"] and names["显"] and names["志"] and names["机"] and names["抓"], "七个页签都在")
+ok(names["动"] and names["车"] and names["驾"] and names["漂"] and names["显"] and names["志"] and names["机"] and names["抓"], "八个页签都在 (车 页拆出 驾 页: 开车时手上按的键单独一页)")
 ok(#newInstancesFrom(SNAP) > 60, `控件建了 {#newInstancesFrom(SNAP)} 个实例`)
 local errs = 0 -- 模块构造时 pcall 兜住了错误会写成一行"出错: ...", 这里要当成失败抓出来
 for _, d in ipairs(all()) do if d.ClassName == "TextLabel" and type(d.Text) == "string" and d.Text:sub(1, 6) == "出错: " then errs = errs + 1; print(`       → {d.Text}`) end end
@@ -769,7 +769,7 @@ step(1 / 60, 30)
 ok(true, "空转没炸")
 
 print("\n[3] 页签逐个点")
-for _, t in ipairs({ "动", "车", "漂", "显", "志", "机", "抓" }) do
+for _, t in ipairs({ "动", "车", "驾", "漂", "显", "志", "机", "抓" }) do
 	local b = findBtn(t)
 	click(b)
 	local on = 0
@@ -812,6 +812,31 @@ ok(driftForce() == nil, "关掉推进 → Attachment 连带 VectorForce 一起�
 click(driftBtn)
 step(1 / 60, 3)
 ok(driftForce() ~= nil, "再开回来 → VectorForce 重新挂上")
+
+-- 通用不变量: 每页整块(标题 + 页签行 + 页)在默认落点上要整块塞进屏。拆 驾 页之前 车 页整块 384px,
+-- 对着主人真机日志那份视口(1008×508.8)默认落点 vp.Y*0.3 = 152.6 之下只剩 356.2px —— 超 27.8px, 底下两三行够不着,
+-- 而面板不上滚动条。假引擎自己的视口是 1080×2400, 拿它量什么页都过, 所以这里按真机那个高度量。
+do
+	local DEV_VP_Y = 508.8 -- 主人 Selfblox_log.txt 里的「视口 1008x508.8」
+	local g = tabs(); local body = g:FindFirstChild("SB_Body")
+	local tH = g:FindFirstChild("SB_Title").Size.Y.Offset
+	local tabsH, pgs = 0, {}
+	for _, c in ipairs(body:GetChildren()) do -- 页签行是定高 ROW, 各页是 AutomaticSize.Y(Offset=0), 靠这个分
+		if c.ClassName == "Frame" then
+			local yOff = (c.props.Size and c.props.Size.Y and c.props.Size.Y.Offset) or 0
+			if yOff > 0 then tabsH = math.max(tabsH, yOff) else pgs[#pgs + 1] = c end
+		end
+	end
+	local worst, worstH = 0, 0
+	for _, c in ipairs(pgs) do
+		local sum = 0
+		for _, r in ipairs(c:GetChildren()) do sum += (r.props.Size and r.props.Size.Y and r.props.Size.Y.Offset) or 0 end
+		if tH + tabsH + sum > worstH then worst, worstH = #pgs, tH + tabsH + sum end
+	end
+	local frac = tonumber(SRC:match("vp%.Y %* ([%d%.]+)")) or 0.3 -- 落点系数从源码里读, 不写死: 改了默认落点这条会跟着变
+	local avail = DEV_VP_Y - DEV_VP_Y * frac
+	ok(worstH > 0 and worstH <= avail, `{#pgs} 页里最高的整块 {worstH}px 塞得进默认落点(vp.Y*{frac})下剩的 {math.floor(avail + 0.5)}px (真机视口高 {DEV_VP_Y}, 面板不上滚动条)`)
+end
 
 print("\n[3b] 点标题条 = 折叠 (+/- 也还能用)")
 local tl, bd = tabs():FindFirstChild("SB_Title"), tabs():FindFirstChild("SB_Body")
@@ -901,7 +926,7 @@ ok(esp.TextColor3.R == 1 and esp.TextColor3.G == 1, `开关关着 → 字是白�
 click(esp)
 ok(esp.TextColor3.G > esp.TextColor3.R, `开关开着 → 字变亮绿 (底色只剩 10%, 开/关靠字色) ({esp.Text})`)
 local lit = 0
-for _, t in ipairs({ "动", "车", "漂", "显", "志", "机", "抓" }) do local b = findBtn(t); if b and b.TextColor3.G > b.TextColor3.R then lit = lit + 1 end end
+for _, t in ipairs({ "动", "车", "驾", "漂", "显", "志", "机", "抓" }) do local b = findBtn(t); if b and b.TextColor3.G > b.TextColor3.R then lit = lit + 1 end end
 ok(lit == 1, `页签里正好一个是亮的 = 当前页 ({lit} 个)`)
 -- 原生居中就行: 文字不加 UIPadding 补偿, 也不加描边 / 阴影 (0.9 透明底 + 原色字)
 local texts, decorated = 1, 0
@@ -1222,7 +1247,7 @@ ok(knob.Position.X.Offset == 0 and knob.Position.X.Scale == 0.5, "拖圆点松�
 print("\n[6d2] 按住类按钮: 按住字变亮, 松手变回白色")
 local btnGas
 for _, d in ipairs(all()) do if d:IsA("TextButton") and d.Text == "▲ 加速" then btnGas = d end end
-ok(btnGas ~= nil, "车页有「▲ 加速」")
+ok(btnGas ~= nil, "驾页有「▲ 加速」")
 btnGas.InputBegan:Fire(input("Touch"))
 step(1 / 60, 3)
 ok(btnGas.TextColor3.G > btnGas.TextColor3.R, "按住时字变亮 (底色只剩 10%, 按下状态靠字色)")
@@ -2384,7 +2409,7 @@ step(1 / 60, 20) -- 先把帧喂够: 数据条 0.2s 才刷一次, 页签/数值�
 local n = 0
 for _, d in ipairs(all()) do if d:IsA("TextButton") and d.Text == "动" then n = n + 1 end end
 ok(n == 1, "only={moc,hud} 只留了「动」「显」两个页签")
-ok(findBtn("车") == nil and findBtn("漂") == nil and findBtn("志") == nil and findBtn("机") == nil and findBtn("抓") == nil, "only 过滤掉的页 (车/漂/志/机/砖) 根本没建")
+ok(findBtn("车") == nil and findBtn("驾") == nil and findBtn("漂") == nil and findBtn("志") == nil and findBtn("机") == nil and findBtn("抓") == nil, "only 过滤掉的页 (车/驾/漂/志/机/抓) 根本没建")
 local box = nil
 for _, d in ipairs(all()) do if d:IsA("TextBox") then box = d; break end end
 ok(box and box.Text == "99", "_G.SB.spd=99 顶掉了默认 16")

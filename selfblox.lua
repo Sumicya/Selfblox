@@ -22,7 +22,7 @@
 --   语法基线就是 Luau(运行环境就是它): 26.10.5.28 起用了字符串插值(`{}`)、复合赋值(+= 等)与 if 表达式(if c then a else b),
 --            Lua 5.4 / fengari 都解析不了; 自检的权威跑法是官方 Luau 0.741 (本地怎么编见 tools/luau-driver/build.sh)
 
-local VERSION = "26.10.18.1.107" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 UTC+8); 标签是 v<VERSION>, 打标签要先获主人授权
+local VERSION = "26.10.24.1.108" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 UTC+8); 标签是 v<VERSION>, 打标签要先获主人授权
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
@@ -994,14 +994,19 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 	feature{ key = "carauto", save = "carauto", def = true, label = "自动绑车", w = 1 }
 	feature{ key = "hornon", label = `常声({S.hornkey})`, set = horn }
 	feature{ kind = "hold", label = "声", set = horn }
+	feature{ kind = "text", key = "car_status", label = "上车即控; 没车就对准它按 换车" }
+	feature{ kind = "dump", key = "car", dump = carLines }
+	feature{ kind = "tick", tick = carTick, init = wheelInit, off = carStop }
+	-- 车 页原来 12 行 332px, 加标题和页签整块 384px。主人真机那份日志的视口是 1008×508.8, 面板默认落在
+	-- vp.Y*0.3 = 152.6, 底下只剩 356.2px —— 超 27.8px, 最后两三行够不着。把开车时手上要按的键单独拆一页,
+	-- 两页都塞得下; 面板结构和拖拽一个字没动(不上滚动条, 那是另一套布局)。控件的 key/save 都没改名, 存档照旧读得回来
+	local function driveInfo() return "急刹=" .. tostring(F.brake) .. holdInfo() end
+	feature{ kind = "page", id = "drive", tab = "驾", info = driveInfo }
 	feature{ key = "brake", label = "急刹", w = 1 } -- 挨着加减速放, 且单占一行: 半行的话跟别的键挤在一起, 急着停的时候容易按错
 	feature{ kind = "hold", key = "accel", label = "▲ 加速", h = 36 }
 	feature{ kind = "hold", key = "decel", label = "▼ 减速", h = 36 }
 	feature{ kind = "hold", key = "cup", label = "飞 ↑", h = 36 }
 	feature{ kind = "hold", key = "cdown", label = "飞 ↓", h = 36 }
-	feature{ kind = "text", key = "car_status", label = "上车即控; 没车就对准它按 换车" }
-	feature{ kind = "dump", key = "car", dump = carLines }
-	feature{ kind = "tick", tick = carTick, init = wheelInit, off = carStop }
 end
 
 do -- ═════════ 漂: 人物推进 (开着就一直沿车头方向推, 不需要油门/刹车) ═════════
