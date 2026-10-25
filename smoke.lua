@@ -838,8 +838,8 @@ do
 	ok(findBtn("驾") == nil and findBtn("急刹") ~= nil and findBtn("▲ 加速") ~= nil, "维持原「车」页: 没有驾驶新页, 急刹/加速仍在车页")
 	ok(math.abs(brake.Parent.Size.Y.Offset - 36) < 0.01 and brake.Size.Y.Scale == 1, "全宽控件的 h=36 真正作用到急刹触屏行")
 	ok(brake.Parent ~= findBtn("▲ 加速").Parent, "全宽急刹自己的高度行结束后, 半宽加速键另起一行")
-	local flash, autobind = findBtn("闪 ×3"), findBtn("自动绑车")
-	ok(flash.Parent ~= autobind.Parent and autobind.Size.X.Scale == 1, "自动绑车仍保持全宽触控, 不把无关按钮硬挤到一行")
+	local flash, autobind = findBtn("闪"), findBtn("自动绑车")
+	ok(flash ~= nil and flash.Parent ~= autobind.Parent and autobind.Size.X.Scale == 1, "闪灯改为按住控件, 自动绑车仍保持全宽触控, 不把无关按钮硬挤到一行")
 	ok(title0.Position.Y.Offset <= maxY and title0.Position.Y.Offset + title0.Size.Y.Offset + 26 + pageH <= 508.8 - 8,
 		`切到车页后按实际页高上移, 底边留 8px (top={title0.Position.Y.Offset}, 页高={pageH}, 上限={maxY})`)
 	local toastLabel = tabs():FindFirstChild("SB_Toast")
@@ -1057,6 +1057,39 @@ do local function noWheelCar() -- 包进函数: 主函数的局部变量已经�
 	_G.__rayHit = nil
 	humanoid.props.SeatPart = seatWas
 end noWheelCar() end
+
+do
+	print("\n[6a3] 全穿: 本车装配体全部非锚定件穿透; 关闭或切回轮胎模式时原样恢复")
+	local carPage = findBtn("换车").Parent.Parent
+	local function carButton(prefix)
+		for _, d in ipairs(carPage:GetDescendants()) do if d:IsA("TextButton") and d.Text:sub(1, #prefix) == prefix then return d end end
+	end
+	click(carButton("穿墙")) -- 先关掉轮胎穿墙, 验证全穿是独立模式
+	step(1 / 60, 3)
+	ok(seat.CanCollide and carBody.CanCollide and CP.wheelL.CanCollide and CP.hubL.CanCollide, "关闭轮胎穿墙后先恢复车体和轮子碰撞")
+	click(carButton("全穿"))
+	step(1 / 60, 40)
+	ok(not seat.CanCollide and not carBody.CanCollide and not CP.wheelL.CanCollide and not CP.wheelUp.CanCollide and not CP.hubL.CanCollide,
+		"全穿覆盖座位、车身、各轮及轮毂, 不再保留轮子碰撞")
+	ok(CP.pad.CanCollide and CP.fence.CanCollide and CP.sur.CanCollide, "全穿仍限本车装配体: 锚定停车台/栏杆和独立装饰装配体不变")
+	do
+		local lateFull = carPart("FullLate", Vector3.new(1, 1, 1), Vector3.new(10, 9, 0))
+		step(1 / 60, 40)
+		ok(not lateFull.CanCollide, "全穿开启后新加入的车体零件也在下一轮扫描中穿透")
+		click(carButton("穿墙")) -- 两种都开时全穿优先
+		step(1 / 60, 3)
+		ok(not CP.wheelL.CanCollide and not CP.hubL.CanCollide, "两种开关同时打开时全穿优先, 车轮也仍然穿透")
+		click(carButton("全穿")) -- 仅保留轮胎穿墙
+		step(1 / 60, 40)
+		ok(not carBody.CanCollide and CP.wheelL.CanCollide and CP.wheelUp.CanCollide and not CP.hubL.CanCollide and not lateFull.CanCollide,
+			"全穿切回穿墙: 重新应用轮胎模式, 底盘/轮子/新零件各按规则处理")
+		click(carButton("穿墙")) -- 两模式关闭, 所有改过的碰撞恢复
+		step(1 / 60, 3)
+		ok(seat.CanCollide and carBody.CanCollide and CP.wheelL.CanCollide and CP.hubL.CanCollide and lateFull.CanCollide,
+			"关闭两种模式后座位、车体、轮毂和新增零件均恢复")
+		lateFull:Destroy()
+	end
+end
 click(findBtn("常亮"))
 step(1 / 60, 3)
 local lamps, onBody, onSeat = 0, 0, 0
@@ -1082,6 +1115,23 @@ ok(fakes == 0, "有原生灯就不再造假灯")
 click(findBtn("常亮"))
 step(1 / 60, 3)
 ok(native.Enabled == false, "关灯 = 原生灯回原样")
+do
+	local flashBtn = findBtn("闪")
+	flashBtn.InputBegan:Fire(input("Touch"))
+	ok(native.Enabled == true, "按下「闪」立即亮灯")
+	step(1 / 60, 8)
+	ok(native.Enabled == false, "持续按住时进入下一次灭灯阶段")
+	local transitions, lastLight = 0, native.Enabled
+	for _ = 1, 64 do
+		step(1 / 60, 1)
+		if native.Enabled ~= lastLight then transitions += 1; lastLight = native.Enabled end
+	end
+	ok(transitions >= 6, `按住超过三个完整闪烁周期仍持续循环 (转换 {transitions} 次)` )
+	flashBtn.InputEnded:Fire(input("Touch"))
+	ok(native.Enabled == false, "松手立即停闪并恢复原生灯原始状态")
+	step(1 / 60, 20)
+	ok(native.Enabled == false, "松手后旧闪灯循环不再改灯")
+end
 native:Destroy() -- 这个假原生灯是自检自己造的, 自己收拾
 click(findBtn("飞车"))
 step(1 / 60, 5)
@@ -2581,8 +2631,27 @@ late:Destroy()
 player.props.Character = charSaved
 step(1 / 60, 5)
 
+do
+	print("\n[12b] 全穿卸载: 碰撞全部还原, 按住中的闪灯循环和生成灯一起清理")
+	freshSibs({ carclipall = true })
+	step(1 / 60, 90)
+	ok(bound(seat) and not seat.CanCollide and not carBody.CanCollide and not CP.wheelL.CanCollide and not CP.hubL.CanCollide,
+		"配置开启全穿后自动绑车, 座位/车身/轮胎/轮毂均无碰撞")
+	local flashBtn = findBtn("闪")
+	flashBtn.InputBegan:Fire(input("Touch"))
+	step(1 / 60, 8)
+	local generated = 0
+	for _, d in ipairs(car:GetDescendants()) do if d:IsA("Light") and tostring(d.Name):sub(1, 3) == "SB_" then generated += 1 end end
+	ok(generated >= 2, "卸载前按住闪灯时确实生成了车灯")
+end
+
 _G.SB_UNLOAD()
-step(1 / 60, 3)
+step(1 / 60, 20)
+ok(seat.CanCollide and carBody.CanCollide and CP.wheelL.CanCollide and CP.hubL.CanCollide and not CP.shadow.CanCollide,
+	"卸载全穿模块后车上碰撞恢复原样 (原来不碰撞的影子仍不碰)")
+local orphanLamps = 0
+for _, d in ipairs(car:GetDescendants()) do if d:IsA("Light") and tostring(d.Name):sub(1, 3) == "SB_" then orphanLamps += 1 end end
+ok(orphanLamps == 0, "卸载时松开持续闪灯并销毁脚本生成的灯")
 local leaked12 = 0
 for i = SNAP12 + 1, #INSTANCES do if not INSTANCES[i].destroyed then leaked12 = leaked12 + 1 end end
 ok(leaked12 == 0 and LIVE == 0, `自动绑车这一轮卸载同样干净 (漏 {leaked12} 个实例 / {LIVE} 个连接)`)

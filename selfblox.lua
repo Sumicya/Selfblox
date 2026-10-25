@@ -22,7 +22,7 @@
 --   语法基线就是 Luau(运行环境就是它): 26.10.5.28 起用了字符串插值(`{}`)、复合赋值(+= 等)与 if 表达式(if c then a else b),
 --            Lua 5.4 / fengari 都解析不了; 自检的权威跑法是官方 Luau 0.741 (本地怎么编见 tools/luau-driver/build.sh)
 
-local VERSION = "26.10.24.3.110" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 UTC+8); 标签是 v<VERSION>, 打标签要先获主人授权
+local VERSION = "26.10.25.1.111" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 UTC+8); 标签是 v<VERSION>, 打标签要先获主人授权
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
@@ -584,7 +584,7 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 	local picked, pickSeat, pickPath, autoPick, curSeat, curMax, att, vf, lv, clipCar, lastCar, lastAnch
 	local target, statT, autoT, swapT = 0, 0, 0, 0
 	local lamps, lampSaved, col = {}, setmetatable({}, { __mode = "k" }), setmetatable({}, { __mode = "k" })
-	local lampGen = 0 -- 「闪 ×3」的代号: 连点两次 / 卸载, 旧的闪灯循环要当场作废, 不然它还在把灯开开关关
+	local lampGen = 0 -- 闪灯按住循环的代号: 松手/卸载时让旧循环当场作废
 	local rp = RaycastParams.new()
 	rp.FilterType = Enum.RaycastFilterType.Exclude
 	local track, knob, kd, kdk, dragX -- 方向盘控件 (init 里建)
@@ -666,9 +666,9 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 		lv = nil
 	end
 	local function detach() if att then att:Destroy(); att, vf, lv = nil, nil, nil end end
-	local clipList, clipSeen, clipKeep, clipBottom, clipLow, clipT, clipWheels = {}, {}, {}, {}, nil, -1, false
+	local clipList, clipSeen, clipKeep, clipBottom, clipLow, clipT, clipWheels, clipFull = {}, {}, {}, {}, nil, -1, false, false
 	local function wheelish(d) local nm = d.Name:lower(); return (nm:find("wheel") or nm:find("tire") or nm:find("tyre") or nm:find("轮")) ~= nil end
-	local function reclip() reclipAll(col); clipCar, clipList, clipSeen, clipKeep, clipBottom, clipLow, clipT, clipWheels = nil, {}, {}, {}, {}, nil, -1, false end
+	local function reclip() reclipAll(col); clipCar, clipList, clipSeen, clipKeep, clipBottom, clipLow, clipT, clipWheels, clipFull = nil, {}, {}, {}, {}, nil, -1, false, false end
 	local function bottomY(d) -- 零件在世界坐标里的最低点 (按旋转后的包围盒算)
 		local c, z = d.CFrame, d.Size
 		return d.Position.Y - 0.5 * (math.abs(c.RightVector.Y) * z.X + math.abs(c.UpVector.Y) * z.Y + math.abs(c.LookVector.Y) * z.Z)
@@ -678,22 +678,24 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 		return (clipBottom[d] or math.huge) <= (clipLow or math.huge) + 0.5
 	end
 	local function rejudge() for _, d in ipairs(clipList) do clipKeep[d] = keepRule(d) or nil end end -- 高度用第一次看到时的值: 悬挂压缩 / 车翻身都不改判, 不然轮子会被自己穿掉
-	local function noclip(p) -- 穿墙: 范围只有本车装配体(不是整个 Model 容器, 免得穿掉同容器里别的车和地图件); 锚定的(地面/平台)和人物的不碰. 不悬浮: 探地推起会把车托高、轮子悬空 = "开启上浮"
-		if p ~= clipCar then reclip(); clipCar = p end
+	local function noclip(p, full) -- 只改本车装配体里的非锚定件, 绝不碰地面/别的车/人物; 全穿与轮胎穿墙切换时先还原再重判
+		if p ~= clipCar or full ~= clipFull then reclip(); clipCar, clipFull = p, full end
 		if os.clock() - clipT > 0.5 then -- 半秒补一批新零件
 			clipT = os.clock()
 			local fresh = {}
 			for _, d in ipairs(p:GetConnectedParts(true)) do
 				if d:IsA("BasePart") and not clipSeen[d] and not d.Anchored and not mine(d) then
 					clipSeen[d] = true; clipList[#clipList + 1] = d; fresh[#fresh + 1] = d
-					clipBottom[d] = bottomY(d)
-					if d.CanCollide then clipLow = math.min(clipLow or math.huge, clipBottom[d]) end -- 本来就不碰撞的(影子/玻璃)不参与"最低"
-					if wheelish(d) then clipWheels = true end -- 轮子可能晚一批才出现: 认到就整车重判一次
+					if not full then
+						clipBottom[d] = bottomY(d)
+						if d.CanCollide then clipLow = math.min(clipLow or math.huge, clipBottom[d]) end -- 本来就不碰撞的(影子/玻璃)不参与"最低"
+						if wheelish(d) then clipWheels = true end -- 轮子可能晚一批才出现: 认到就整车重判一次
+					end
 				end
 			end
-			if #fresh > 0 then rejudge() end
+			if not full and #fresh > 0 then rejudge() end
 		end
-		for _, d in ipairs(clipList) do if d.Parent and d.CanCollide and not clipKeep[d] then col[d] = true; d.CanCollide = false end end
+		for _, d in ipairs(clipList) do if d.Parent and d.CanCollide and (full or not clipKeep[d]) then col[d] = true; d.CanCollide = false end end
 	end
 	local function dropLamps() for _, l in ipairs(lamps) do if lampSaved[l] ~= nil then l.Enabled = lampSaved[l] else l:Destroy() end end; table.clear(lamps) end
 	local function asm(p) return p:GetConnectedParts(true) end -- 本车装配体的所有部件 (不是整个 Model 容器, 免得动到别人的车)
@@ -867,8 +869,8 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 		local gst, thr, st = 0, 0, steer()
 		if sp and sp:IsA("VehicleSeat") then gst, thr, st = sp.Steer, sp.Throttle, math.clamp(st + sp.Steer, -1, 1) end -- 游戏自带的手机油门/方向盘也吃
 		local acc, dec = F.accel or thr > 0, F.decel or thr < 0
-		if os.clock() - statT > 0.2 then statT = os.clock(); say("car_status", `{(m and m.Name or p.Name)} · {(math.floor(spd + 0.5))}{((if s then "" else " · 准星锁定"))}{((if anch then " · 锚定(等游戏解锁)" else ""))}{(F.carclip and #clipList > 0 and not clipWheels and " · 穿墙没认到轮子(按最低块兜底)" or "")}`) end
-		if F.carclip then noclip(p) elseif clipCar then reclip() end
+		if os.clock() - statT > 0.2 then statT = os.clock(); say("car_status", `{(m and m.Name or p.Name)} · {(math.floor(spd + 0.5))}{((if s then "" else " · 准星锁定"))}{((if anch then " · 锚定(等游戏解锁)" else ""))}{(F.carclip and not F.carclipall and #clipList > 0 and not clipWheels and " · 穿墙没认到轮子(按最低块兜底)" or "")}`) end
+		if F.carclipall then noclip(p, true) elseif F.carclip then noclip(p, false) elseif clipCar then reclip() end
 		if F.cfly then -- 飞车: 摇杆(前后左右) + 面板按钮都吃; 松手悬停
 			if not lv then lv = mk("LinearVelocity", { Attachment0 = att, MaxForce = math.huge, VectorVelocity = Vector3.zero, RelativeTo = Enum.ActuatorRelativeTo.World }, att) end
 			local mv = moveVec() -- 摇杆: 前推 Z=-1, 右推 X=1
@@ -969,11 +971,11 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 	local function carInfo()
 		local p, s = part()
 		if p and vf then
-			return string.format("抓地=%s/转向=%s/过弯上限=%s 部件=%s%s 推力=%.0f(%.1f/kg) 质量=%.0f 速度=%.0f%s 定速=%s@%.0f 飞车=%s 穿墙=%s 急刹=%s%s",
+			return string.format("抓地=%s/转向=%s/过弯上限=%s 部件=%s%s 推力=%.0f(%.1f/kg) 质量=%.0f 速度=%.0f%s 定速=%s@%.0f 飞车=%s 穿墙=%s 全穿=%s 急刹=%s%s",
 				S.grip, S.turn, S.turncap, p:GetFullName(), seatInfo(s), vf.Force.Magnitude, vf.Force.Magnitude / math.max(p.AssemblyMass, 1), p.AssemblyMass,
-				p.AssemblyLinearVelocity.Magnitude, (if p.Anchored then " 锚定(引擎不让推)" else ""), tostring(F.cruise), target, tostring(F.cfly), tostring(F.carclip), tostring(F.brake), holdInfo())
+				p.AssemblyLinearVelocity.Magnitude, (if p.Anchored then " 锚定(引擎不让推)" else ""), tostring(F.cruise), target, tostring(F.cfly), tostring(F.carclip), tostring(F.carclipall), tostring(F.brake), holdInfo())
 		end
-		return "抓地=" .. S.grip .. "/转向=" .. S.turn .. "/过弯上限=" .. S.turncap .. " 部件=-" .. seatInfo(nil) .. " 定速=" .. tostring(F.cruise) .. "@" .. math.floor(target) .. " 飞车=" .. tostring(F.cfly) .. " 穿墙=" .. tostring(F.carclip) .. " 急刹=" .. tostring(F.brake) .. holdInfo()
+		return "抓地=" .. S.grip .. "/转向=" .. S.turn .. "/过弯上限=" .. S.turncap .. " 部件=-" .. seatInfo(nil) .. " 定速=" .. tostring(F.cruise) .. "@" .. math.floor(target) .. " 飞车=" .. tostring(F.cfly) .. " 穿墙=" .. tostring(F.carclip) .. " 全穿=" .. tostring(F.carclipall) .. " 急刹=" .. tostring(F.brake) .. holdInfo()
 	end
 	local function carStop() detach(); reclip(); dropLamps(); horn(false); if curSeat and curMax then curSeat.MaxSpeed = curMax end end
 	feature{ kind = "page", id = "sibs", tab = "车", info = carInfo }
@@ -983,14 +985,16 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 	feature{ kind = "num", key = "turn", def = 2.2, label = "转向" }
 	feature{ kind = "btn", label = "换车(准星)", fn = pick }
 	feature{ key = "carclip", save = "carclip", label = "穿墙" }
+	feature{ key = "carclipall", save = "carclipall", label = "全穿" }
 	feature{ key = "cruise", label = "定速" }
 	feature{ key = "cfly", label = "飞车" }
 	feature{ kind = "btn", label = "翻转 180°", fn = flipCar }
 	feature{ key = "lamp", label = "常亮", set = function(v) if v then setLamps(true) else dropLamps() end end }
-	feature{ kind = "btn", label = "闪 ×3", fn = function()
+	local function flash(v) -- 按住就持续闪, 松手还原常亮开关之前的灯状态
 		lampGen += 1; local gen = lampGen
+		if not v then if F.lamp then setLamps(true) else dropLamps() end; return end
 		task.spawn(function()
-			for _ = 1, 3 do
+			while alive and gen == lampGen and F.flash do
 				if not alive or gen ~= lampGen then return end
 				setLamps(true); task.wait(0.12)
 				if not alive or gen ~= lampGen then return end
@@ -998,7 +1002,8 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 			end
 			if alive and gen == lampGen then if F.lamp then setLamps(true) else dropLamps() end end
 		end)
-	end }
+	end
+	feature{ kind = "hold", key = "flash", label = "闪", set = flash }
 	feature{ key = "carauto", save = "carauto", def = true, label = "自动绑车", w = 1 }
 	feature{ key = "hornon", label = `常声({S.hornkey})`, set = horn }
 	feature{ kind = "hold", label = "声", set = horn }
