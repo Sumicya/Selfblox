@@ -1,61 +1,150 @@
-# Selfblox v12
+# Selfblox
 
-一个文件、一个面板、七个模块。Delta（安卓）为目标，纯触屏。
+Roblox 执行器脚本：单文件、单面板、七个模块，面向 Delta（安卓）的纯触屏操作。适合在手机上调试移动、载具和显示类功能，并且希望脚本本身可以离线自检的用户。
 
-## 维护记录
+## 要求
 
-- 生命周期修复：卸载时释放长按输入；提示延时回调检查卸载状态；相机初始化允许暂时缺失。
-- 任务清理：刷砖循环使用 generation token 防止开关快速切换造成重入，并在异常后执行清理；旧循环不会覆盖新循环状态。
-- 状态恢复：速度与跳跃独立恢复；夜视只恢复原先记录的 Atmosphere 实例。
-- 侦察与 IO：自动扫描不再每 5 秒自动写报告；Remote 监听按差异更新；配置与报告文件写入增加错误处理。
-- 文档：修正 `carclip` 默认值说明。
+- 安卓设备已安装 Delta 执行器，并允许它读写自己的工作目录（脚本会在该目录写配置、日志和诊断快照，Delta 通常是 `/storage/emulated/0/Delta/workspace/`）。
 
-```lua
-loadstring(game:HttpGet("https://raw.githubusercontent.com/Sumicya/Selfblox/main/selfblox.lua"))()
-```
-
-重跑会自动先卸载；手动卸载 `_G.SB_UNLOAD()`。
-
-## 覆盖参数
-
-执行前设 `_G.SB`，任何键都能覆盖（优先级 `_G.SB` > `Selfblox.json`(面板里改过的) > 默认）：
-
-```lua
-_G.SB = { spd = 60, flyspd = 120, hornkey = "H", only = {"moc", "sibs"} }
-```
-
-| 键 | 默认 | 说明 |
-|---|---|---|
-| `only` | 全部 | 只装这些模块 `{"moc","sibs","drift","hud","log","plane","brick"}` |
-| `spd` / `spdmode` | 16 / `"root"` | 速度值 / 模式 `root` `walk` `cframe` |
-| `flyspd` `jump` `spin` `promptdist` | 50 50 50 1000 | 飞行速度 / 跳力 / 转速(负数反向) / 秒互动距离 |
-| `acc` `grip` `turn` `carfly` | 500 5 2.2 60 | 车: 加速度 / 抓地 / 转向速率 / 飞车速度 |
-| `hornkey` `carclip` | `"H"` false | 喇叭键 / 车穿墙默认关 |
-| `dacc` `dbrake` `drift` | 5 10 true | 漂移推进: 加速 / 刹车 / 开关 |
-| `stats` `arrow` `esp` | true | 数据条 / 速度箭头 / 玩家 ESP |
-| `logint` `logmax` | 2 512 | 日志间隔秒 / 上限 KB |
-| `pall` | false | 飞机侦察全录 Remote |
-| `bbatch` `bint` `bdrain` `bmult` `blevel` | 4 0.08 0.6 99999 9999 | 刷砖参数 |
-
-面板里改的数值直接生效并写进 `Selfblox.json`（面板位置、上次页签也在里面）。
-
-## 模块
+## 功能
 
 | 页签 | 模块 | 内容 |
 |---|---|---|
-| 动 | moc | 速度(3 模式) / 飞行 / 高跳 / 旋转 / 无限跳 / 穿墙 / 夜视 / 秒互动(普通·强制) |
-| 车 | sibs | 上车即控；没上车对准载具按「换车」准星锁定。加速·减速·定速·急刹·穿墙悬浮·飞车·翻转·灯·喇叭；屏幕底部滑条转向，游戏自带油门/方向盘同时生效 |
-| 漂 | drift | 人物 VectorForce 推进，自动绑 `MobilePedals`(左刹右油)，没有就用面板按钮 |
-| 显 | hud | 顶部数据条(延迟/帧率/内存/时间/人数/坐标) / 速度箭头 / 玩家 ESP(原生 Highlight + 名牌距离) |
-| 志 | log | 各模块状态定时追加 `Selfblox_log.txt`，超上限重写 |
-| 机 | plane | 找飞机、判队伍、列 Remote、发/收侦听(`__namecall` 钩子)、高亮、报告写 `plane_debug.txt` + 剪贴板 |
-| 砖 | brick | BitFarmer 刷砖，开关式 |
+| 动 | `moc` | 速度（`root` / `walk` / `cframe` 三种模式）、飞行、高跳、旋转、无限跳、穿墙、夜视、秒互动（普通 / 强制）与秒互动距离 |
+| 车 | `sibs` | 上车即控；未上车时对准载具按「换车」，按座位锁定所在装配体，打中地图或超大装配体时拒绝绑定（提示里带实测外径和质量，误拒时一眼看得出为什么），进游戏或下车后自动绑最近的空座位。加速、抓地、转向、定速、「穿墙」（保留轮胎碰撞）、「全穿」（本车装配体全部非锚定件关闭碰撞）、飞车、翻转、常亮灯、按住「闪」持续闪烁、喇叭；屏幕底部滑条转向，与游戏自带油门和方向盘同时生效 |
+| 漂 | `drift` | 人物 `VectorForce` 推进，自动绑定 `MobilePedals`（左刹右油），找不到就用面板按钮 |
+| 显 | `hud` | 顶部数据条（延迟、帧率、内存、时间、人数、坐标）、速度箭头、玩家 ESP（原生 `Highlight` 加名牌距离） |
+| 志 | `log` | 配置与各模块状态定时追加 `Selfblox_log.txt`，超过上限重写；「诊断打包」把整机快照写进 `selfblox_dump.txt` 并复制到剪贴板 |
+| 机 | `plane` | 查找飞机（有座位的、以及只认到机翼名的都算，没座位的残留机也列得出来）、判定队伍、列出 Remote、收发侦听（`__namecall` 钩子）、高亮；报告写 `plane_debug.txt` 并复制到剪贴板，没重扫过就点「写报告」会自动先扫一遍，没过门槛的候选列进「疑似」名单 |
+| 抓 | `grab` | 抓取：按住「抓取」或开「自动抓」，把半径内的部件拉向人物。范围三档——`散件`（未锚定）/ `带属性`（这游戏可卖件都带 `SellToken`，地图装饰件一个属性都没有）/ `全部`（连锚定的一起搬，只能直接写 CFrame）；任何一档都不碰人物身上的零件。推法三档——`自动`（先写速度，写完当场读回来对一遍，读回来对不上说明这个件不认客户端写的速度，改直接搬 CFrame，页状态里的「没吃」就是这种件的计数）/ `只写速度` / `只搬位`，两条路可以分开验。收纳槽那一头：「触发提示」把范围内启用的 `ProximityPrompt` 各触发一次（键问提示自己要 `KeyboardKeyCode`，不猜 `E`；执行器有 `fireproximityprompt` 就直发），「自动触发」半秒一轮、默认关。界面也能抓：诊断打包全列可点按钮（全路径、坐标、尺寸、可见、`Active`、按钮上或子物件里的文字），「按钮名」填一段字再按「点按钮」就让执行器发一次真鼠标点击 |
 
-## v11 → v12 砍掉的
+配置键与默认值：
 
-- 7 个文件 → 1 个；每文件自带的配置/拖拽/输入样板全删，UI 拖拽用原生 `UIDragDetector`
-- sibs 的自动锁车/所有权嗅探/车辆列表/学习缓存 → 只剩「坐着」和「准星换车」
-- 各种人为上限（换车距离、扫描数量、飞行防穿减速、转向门槛、速度地板）全没了，参数随便填
-- 键盘/手柄输入路径（纯触屏；要 PC 说一声）
-- 日志归档、KITCFG2 配置格式、v10 迁移
-- 引擎音调、边缘计数、Drawing 库 ESP
+| 键 | 默认 | 说明 |
+|---|---|---|
+| `only` | 不设 = 全部 | 只装这些页：`moc` `sibs` `drift` `hud` `log` `plane` `grab` |
+| `spd` / `spdmode` | 16 / `root` | 速度值 / 模式 `root` `walk` `cframe` |
+| `flyspd` `jump` `spin` `promptdist` | 50 50 50 1000 | 飞行速度 / 跳力 / 转速（负数反向）/ 秒互动距离 |
+| `acc` `grip` `turn` `carfly` | 500 5 2.2 60 | 车：加速度 / 抓地 / 转向速率 / 飞车速度 |
+| `turncap` | 1 | 转向速率随速度放大的上限倍数，1 为原样，2~4 用于过弯 |
+| `carmaxstuds` | 150 | 装配体外径超过这个数就不当作载具，`换车` 打中这种大件直接拒绝，避免绑到整个街区或地图容器。量的是装配体不是 Model 容器，所以车直接挂在超大容器（整条街）里也照样绑得上 |
+| `carauto` | true | 进游戏或下车后自动绑最近的空载具座位，手动「换车」锁定优先 |
+| `carswap` | true | 锁到没有座位的锚定件时，自动改绑附近最重的自由零件 |
+| `carclip` / `carclipall` / `hornkey` | false / false / `H` | 车「穿墙」（保留轮胎碰撞）/「全穿」（本车装配体全部非锚定件关闭碰撞）/喇叭键。`hornkey` 没有面板控件，只在「常声」按钮标题里显示 |
+| `dacc` `dbrake` `drift` | 5 10 true | 漂移推进：加速 / 刹车 / 开关 |
+| `stats` `arrow` `esp` | true | 数据条 / 速度箭头 / 玩家 ESP |
+| `clock` | `12` | 时钟制式，填 `24` 切 24 小时制，数据条和日志都受影响 |
+| `logint` `logmax` | 2 512 | 日志间隔秒 / 上限 KB |
+| `pall` | false | 飞机侦察全录 Remote |
+| `gradius` `gspeed` `gscan` | 40 60 300 | 抓取半径 / 拉力（未锚定件写进 `AssemblyLinearVelocity` 的水平速度，锚定件按它折算每帧搬多远，格/秒）/ 诊断清单的扫描半径 |
+| `grange` / `gmode` / `gkey` | `loose` / `auto` / 空 | 抓取范围 `loose` 散件 / `attr` 带属性 / `all` 全部；推法 `auto` 自动 / `vel` 只写速度 / `frame` 只搬位；`gkey` 是「点按钮」的名字关键字，空着不点 |
+
+## 安装与使用
+
+在执行器里运行：
+
+```lua
+loadstring(game:HttpGet("https://raw.githubusercontent.com/Sumicya/Selfblox/HEAD/selfblox.lua"))()
+```
+
+地址里的 `HEAD` 跟随仓库默认分支，改默认分支的名字或换默认分支都不用改这一行。重复执行会先自动卸载上一份，手动卸载调用 `_G.SB_UNLOAD()`。执行前可以用 `_G.SB` 覆盖配置，优先级为 `_G.SB` > `Selfblox.json`（面板里改过的值）> 默认值：
+
+```lua
+_G.SB = { spd = 60, flyspd = 120, hornkey = "H", only = { "moc", "sibs" } }
+```
+
+可覆盖的是数值键、带存盘键的开关和只读配置键（见下表）；速度、飞行、穿墙、秒互动这类没有存盘键的开关，每次执行都从关闭开始。面板里的改动立即生效并写进 `Selfblox.json`，面板位置和上次页签也存在同一个文件里。
+
+想在手机上留一份副本（断网也能用、方便回滚），下载到 Download 目录，备份名用「项目名-版本」：
+
+```bash
+cd /sdcard/Download
+curl -fLO https://raw.githubusercontent.com/Sumicya/Selfblox/HEAD/selfblox.lua
+V=$(sed -n 's/^local VERSION = "\([^"]*\)".*/\1/p' selfblox.lua | head -1)   # 版本从刚下的脚本里现取, 不写死
+mv selfblox.lua "Selfblox-$V.lua"
+ls -l "Selfblox-$V.lua"   # 有字节数才是真的下来了
+```
+
+`readfile` 只读 Delta 的工作目录，所以离线加载前要把副本放进去（Termux 需要存储权限，先跑 `termux-setup-storage`），再在执行器里用 `loadstring(readfile("Selfblox-<版本>.lua"))()` 加载（`<版本>` 换成你刚复制进去的那个文件名，例如 `Selfblox-26.10.5.32.32.lua`，仅为格式示例）：
+
+```bash
+cp "$(ls -t /sdcard/Download/Selfblox-*.lua | head -1)" /storage/emulated/0/Delta/workspace/   # 取最新那份备份
+```
+
+不用了按名字前缀清掉本次下载和工作目录里的副本，不删别的东西：
+
+```bash
+rm -f /sdcard/Download/Selfblox-*.lua
+rm -f /storage/emulated/0/Delta/workspace/Selfblox-*.lua
+```
+
+使用执行器违反 Roblox 使用条款，可能导致账号受限。脚本按「原样」提供，不作任何保证，风险自负。
+
+## 构建
+
+清单驱动：一个功能等于一个顶层函数加对应页 `do` 块里的一行 `feature{}`，建页、存盘、每帧连接、卸载和诊断快照都由清单生成，核心代码不为新功能改动。控件类型和可用字段见 `selfblox.lua` 里的注册表注释与 `KIND` 表；开关状态在 `F[key]`，数值在 `S[key]`，控件在 `W[key]`。
+
+改完先离线自检，不必上手机：
+
+```bash
+luau smoke.lua    # 要官方 Luau 0.741; 本地怎么编同一个版本见下文
+```
+
+`smoke.lua` 用一个假 Roblox 引擎加载 `selfblox.lua`：建面板、翻每个开关、坐进假车、跑帧、卸载，然后断言状态确实改变、没有报错、卸载后不留实例和连接，并注入一个玩具功能验证清单的扩展性。假引擎对没有核对过官方文档的成员一律抛错，白名单是 `smoke.lua` 里的 `VERIFIED`，逐个对照 create.roblox.com 的引擎 API 参考核对。脚本本体不依赖 `smoke.lua`。
+
+`selfblox.lua` 用的是 Luau 专属语法（字符串插值、`+=`），Lua 5.4 解析不了这份自检；Termux 上没有现成的 Luau 包，手机上跑不了自检，只能在电脑上跑。
+
+本仓库没有 CI 工作流，自检在电脑上跑（`.github/` 已删；CI 每轮要等一次远端往返，本地半秒就能得到同一个结论）：
+
+```bash
+bash tools/luau-driver/build.sh      # 编一个 Luau 0.741, 约 40 秒, 只需一次
+bash tools/luau-driver/run_smoke.sh  # 之后每次改完跑这个, 0.3 秒
+```
+
+最后一行是「全部通过 ✓」才算过；有断言没过时脚本会 `error` 退出、退出码非零。本仓库不出包、不发版：脚本是从 `raw.githubusercontent.com` 现拉现跑的单文件，打成 artifact 只会是一份逐字节重复的副本。规范自检由 agent 每轮自己做。
+
+### 版本
+
+版本号是五段 `yy.m.d.当日序号.总序号`：两位年份、不补零的月份和日期（UTC+8），第四段是当天第几个版本，第五段是该仓库累计第几个版本，两个序号都从 1 起。展示不带 `v`，也不带项目名前缀。日期版本不是 SemVer，本仓库不使用 SemVer 字段。
+
+单一来源是 `selfblox.lua` 顶部的 `VERSION` 常量，面板标题、日志表头、诊断快照和启动打印都读它。`smoke.lua` 会检查格式是否合法、序号是否从 1 起、四处展示是否一致。
+
+本仓库没有 CI 也没有发布工作流，所以**一次构建 = 一轮完整交付**：改了代码或文档 → 本地自检跑到「全部通过 ✓」→ 提交推送。同一轮里重复跑自检只算一次；自检没过、没交付的不占号；推送被拒后把同一版重推也不占号。
+
+没有 CI 取号，常量在提交前按「提交之后的计数」预取，两个序号都用 `git rev-list --count`，不引入 run_number、触发事件、工作流文件名或 PR 状态：
+
+```bash
+git fetch origin
+D=$(date -u -d '+8 hours' +%F)                                        # 日界线按 UTC+8
+echo "总序号=$(( $(git rev-list --count HEAD) + 1 ))  当日序号=$(( $(git rev-list --count --since="$D 00:00+08:00" HEAD) + 1 ))"
+```
+
+提交标题不带版本号，按「`类型: 摘要`」写（类型取 feat、fix、docs、ci、refactor、revert、chore）。不 force push、不重写已提交的历史，否则常量会和计数失准。
+
+没有发行需求时不打标签、不建 Release。获准发版后再打 `v` 加版本号的标签（下例仅为格式示例，不代表已经发行）：
+
+```bash
+git tag v"$(sed -n 's/^local VERSION = "\([^"]*\)".*/\1/p' selfblox.lua | head -1)"
+```
+
+## 项目限制
+
+- 目标是 Delta 最新版：`hookmetamethod`、`newcclosure`、`UIDragDetector`、原生 `Highlight` 按一定存在处理；`gethui`、`isfile`、`writefile` 缺失时退回 `CoreGui` 并跳过存盘，面板仍能起来。
+- 只有触屏路径，不含键盘和手柄输入。
+- 车、漂移、飞机侦察依赖具体游戏的结构（座位、`MobilePedals`、Remote 命名），换游戏可能绑不上。此时用「志」页的「诊断打包」取整机快照，里面已经有 PlaceId、地图名、全部配置、执行器能力、车辆与踏板结构，贴出来即可，不必另外描述环境。
+- 车「穿墙」保留轮胎碰撞：零件名含 `wheel` / `tire` / `tyre` / `轮` 才算轮子。整车一个轮子名都认不到时，退回保留最低的几块（否则车会掉出世界），车页状态行会写明「穿墙没认到轮子」。「全穿」则让本车装配体内所有非锚定件（含车身、座位和轮子）关闭碰撞，便于飞车穿行或车陷入地面时脱困；全穿优先于轮胎穿墙，两模式切换或关闭都会先恢复再重判，卸载也会恢复。两模式都只作用本车装配体，不波及同一 Model 容器里的其他车、独立装饰件或锚定地图件。灯光方面，「常亮」保持开灯；按住「闪」持续闪烁，松手恢复「常亮」开关原来的状态。
+- 飞机侦察只做侦察：`__namecall` 钩子记录完就原样转发，不拦截也不改参数，脚本本身不发任何飞机 Remote。「收」是拿扫出来的 Remote 列表挂 `OnClientEvent` 的，所以要先点「重扫」，否则「收」永远是 0，看着像服务器没回。收发记录按「同一个 Remote 打同一个目标」折叠成一组并保留首末两条 payload，上限 400 组；不折叠时飞行中每秒约 20 条复制包，200 条只装得下 10 秒，`RequestPlane` 这种一局只发一次的必被挤掉。
+- 参数不设人为上限，填错数值可能让角色或载具失控。
+- 过弯：弯半径约为速度除以转向速率，速度越高弯越宽。要提高过弯能力就调高 `grip` 和 `turn`，或用 `_G.SB = { turncap = 3 }` 让转向随速度放大（2~4 合适，5 以上会像陀螺）。
+
+## 许可证
+
+Copyright (C) 2026 Sumicya
+
+本程序是自由软件：你可以按自由软件基金会发布的 GNU 通用公共许可证第 3 版（或你选择的更高版本）重新分发和/或修改它。
+
+本程序的发布是希望它有用，但**不含任何担保**；甚至不含对适销性或特定用途适用性的默示担保。详见 GNU 通用公共许可证。
+
+全文见 [LICENSE](LICENSE)。
+
+遵循 [Sumicya/selfs](https://github.com/Sumicya/selfs) 最新 GLOBAL.md。
