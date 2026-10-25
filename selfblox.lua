@@ -1,4 +1,4 @@
--- Selfblox · 单文件 · 一次 loadstring · 一个面板 · 七页清单
+-- Selfblox · 单文件 · 一次 loadstring · 一个面板 · 八页清单
 --
 -- Copyright (C) 2026 Sumicya
 -- SPDX-License-Identifier: GPL-3.0-or-later
@@ -22,7 +22,7 @@
 --   语法基线就是 Luau(运行环境就是它): 26.10.5.28 起用了字符串插值(`{}`)、复合赋值(+= 等)与 if 表达式(if c then a else b),
 --            Lua 5.4 / fengari 都解析不了; 自检的权威跑法是官方 Luau 0.741 (本地怎么编见 tools/luau-driver/build.sh)
 
-local VERSION = "26.10.25.1.111" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 UTC+8); 标签是 v<VERSION>, 打标签要先获主人授权
+local VERSION = "26.10.25.2.112" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 UTC+8); 标签是 v<VERSION>, 打标签要先获主人授权
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
@@ -1629,6 +1629,140 @@ do -- ═════════ 抓: 抓部件 + 抓界面 (物件名一个都
 	end }
 	feature{ kind = "dump", key = "grab", dump = grabLines }
 	feature{ kind = "text", key = "grab_status", label = "散=未锚定 属=带属性 全=连锚定搬" }
+end
+
+do -- ═════════ 弹: 子弹追踪 (自己刚打出去的弹丸, 每帧朝目标拐一点; 参数全在页里) ═════════
+	-- 认弹丸不认名字: 各家游戏的弹丸叫 Bullet / Projectile / 随机 GUID / 空名字都有, 认名字等于绑定某一张图。
+	-- 能认的只有三件事 —— 这几帧刚出现在 workspace 里、没锚定、速度够快; 再加一条离自己不远 (弹是从自己枪口出来的)。
+	-- 人物身上的零件一律不算 (那是人, 不是弹)。
+	-- 拐弯只改方向、不改大小: 弹丸的命中判定多半看速度或者靠 Touched, 速度一改小就落地或者根本不触发。
+	local cand, live = {}, {} -- 这一帧新出现的零件 / 正在追的 { p = 零件, lv = LinearVelocity 约束, born = 认下来的时刻 }
+	local stat = { seen = 0, lock = 0, noTgt = 0 } -- 诊断: 认下来几颗 / 拐了几次 / 有弹没目标几帧
+	local lastTgt, statT = nil, 0
+	local function rot(v, axis, rad) -- 罗德里格斯: v 绕 axis 转 rad 弧度。只做向量运算, 不建 CFrame —— 每帧每颗弹一次, 少一份垃圾
+		local c, s = math.cos(rad), math.sin(rad)
+		return v * c + axis:Cross(v) * s + axis * (axis:Dot(v) * (1 - c))
+	end
+	local function charPart(p) -- 挂在人物 (玩家或 NPC) 身上的零件不是弹
+		local m = p:FindFirstAncestorOfClass("Model")
+		return m ~= nil and m:FindFirstChildOfClass("Humanoid") ~= nil
+	end
+	local function spawn(d) -- 只排进候选, 重活留到每帧去做: 地图流式加载会一口气灌进来几千个零件
+		if not F.bhome or not d:IsA("BasePart") then return end
+		if #cand >= 256 then table.clear(cand) end -- 一帧里灌进太多时整批丢掉重来: 弹丸总是刚生成的, 老的候选本来也来不及认
+		cand[#cand + 1] = d
+	end
+	local function targets() -- 每帧一次 (不是每颗弹一次): 活着的敌对目标
+		local o, myTeam = {}, me.Team
+		for _, pl in ipairs(Players:GetPlayers()) do
+			if pl ~= me and not (F.bteam and myTeam ~= nil and pl.Team == myTeam) then
+				local c = pl.Character
+				local h = c and c:FindFirstChildOfClass("Humanoid")
+				local core = c and c:FindFirstChild("HumanoidRootPart")
+				if h and core and h.Health > 0 then
+					local part = core
+					if F.bpart == "head" then part = c:FindFirstChild("Head") or core end -- 没有 Head 就退回根件, 别整个目标丢掉
+					o[#o + 1] = { pos = part.Position, vel = part.AssemblyLinearVelocity, name = pl.DisplayName or pl.Name }
+				end
+			end
+		end
+		return o
+	end
+	local function aimTick(dt) -- 每帧: 候选转正 → 逐颗拐向目标
+		local now, r, step = os.clock(), root(), math.max(dt or 0, 0)
+		-- 1) 候选转正。只判这一帧新出现的零件, 判完就清空: 地上那些不动的散件不该每帧重判一遍
+		if r then
+			local max = math.max(1, math.floor(nn(S.bmax) + 0.5)) -- nn: _G.SB 里手抄成字符串也别让整页每帧抛错
+			local o = {}
+			for _, p in ipairs(cand) do
+				if #o >= max - #live then break end
+				local ok = pcall(function()
+					if not p.Parent or p.Anchored then return end
+					if (p.Position - r.Position).Magnitude > S.bradius then return end -- 别人的弹 / 远处的零件: 半径按「自己枪口能打到哪」给
+					if p.AssemblyLinearVelocity.Magnitude < S.bspdmin then return end -- 站着不动的零件不是弹
+					if mine(p) or charPart(p) then return end
+					o[#o + 1] = { p = p, lv = p:FindFirstChildOfClass("LinearVelocity"), born = now }
+				end)
+			end
+			for _, e in ipairs(o) do live[#live + 1] = e; stat.seen += 1 end
+		end
+		table.clear(cand)
+		-- 2) 逐颗拐弯。任何一颗出问题 (零件被删、属性读到 nil) 只丢它自己, 不连累别的
+		local tg = nil
+		for i = #live, 1, -1 do
+			local e = live[i]
+			local keep = false
+			local ok = pcall(function()
+				local p = e.p
+				if not p.Parent or p.Anchored or now - e.born > S.blife then return end -- 到时间没打中就当它飞丢了, 别一直追着算
+				local v = p.AssemblyLinearVelocity
+				local sp = v.Magnitude
+				if sp < 1 then return end
+				if not tg then tg = targets() end
+				local dir, best, bestAng = v.Unit, nil, nil
+				for _, t in ipairs(tg) do
+					local d = t.pos - p.Position
+					local dist = d.Magnitude
+					if dist > 0.5 and dist <= S.brange then -- 超出射程的不算目标
+						local ang = math.deg(math.acos(math.clamp(dir:Dot(d.Unit), -1, 1)))
+						if ang <= S.bfov and (bestAng == nil or ang < bestAng) then best, bestAng = t, ang end -- 同一颗弹只咬最正对的那个
+					end
+				end
+				if not best then stat.noTgt += 1; keep = true; return end -- 没目标不算失败: 弹还在飞, 下一帧说不定就进射角了
+				local fly = (best.pos - p.Position).Magnitude / sp -- 飞过去还要多久
+				local want = best.pos + best.vel * (fly * S.blead) - p.Position -- 提前量: 按飞行时间推到目标届时的位置
+				if want.Magnitude < 0.5 then keep = true; return end
+				local wdir = want.Unit
+				local maxRad = math.rad(S.bturn) * step -- 每帧最多拐这么多: 这就是「转向速度」, 调大 = 拐得急
+				local ang = math.acos(math.clamp(dir:Dot(wdir), -1, 1))
+				local ndir = wdir
+				if ang > maxRad then
+					local axis = dir:Cross(wdir)
+					ndir = axis.Magnitude < 1e-4 and wdir or rot(dir, axis.Unit, maxRad) -- 正对着或者正背着时叉积为零, 直接给目标方向
+				end
+				if e.lv then -- 用 LinearVelocity 驱动的弹: 游戏每帧按约束重算速度, 只写零件速度会被立刻盖回去, 得改约束本身
+					pcall(function()
+						if e.lv.RelativeTo == Enum.ActuatorRelativeTo.World and e.lv.Parent then e.lv.VectorVelocity = ndir * e.lv.VectorVelocity.Magnitude end
+					end)
+				end
+				p.AssemblyLinearVelocity = ndir * sp -- 方向换成新的, 大小原样保留
+				stat.lock += 1
+				lastTgt = best.name
+				keep = true
+			end)
+			if not ok or not keep then table.remove(live, i) end
+		end
+		statT += step -- 页上那行状态: 四分之一秒刷一次就够, 每帧写字反而看不清
+		if statT >= 0.25 then statT = 0; say("aim_status", `追 {#live} · 目标 {tostring(lastTgt)} · 认 {stat.seen} · 无目标 {stat.noTgt} · 偏转 {stat.lock}`) end
+	end
+	local function aimOff() table.clear(cand); table.clear(live); lastTgt, statT = nil, 0 end
+	local function aimLines()
+		local L = { `==== AIM ==== 追={#live} 认={stat.seen} 偏转={stat.lock} 无目标={stat.noTgt} 目标={tostring(lastTgt)}` }
+		if #live == 0 then L[#L + 1] = "  没有在追的弹丸: 开着「追踪」打一发再看 (射线类武器没有实体弹丸, 这页认不到)" end
+		for _, e in ipairs(live) do
+			local p = e.p
+			L[#L + 1] = string.format("  %s 速=%.0f 龄=%.1fs%s", p:GetFullName(), nn(p.AssemblyLinearVelocity.Magnitude), os.clock() - e.born, e.lv and " (LinearVelocity)" or "")
+		end
+		return L
+	end
+	feature{ kind = "page", id = "aim", tab = "弹", info = function() -- info 只读不写: 打包诊断时不能顺手拐一下弹
+		return `追={#live} 目标={tostring(lastTgt)} 认={stat.seen} 偏转={stat.lock} 无目标={stat.noTgt} 转向={S.bturn}°/s 视角={S.bfov}°`
+	end }
+	-- 每帧连接挂在开关本身上 (和漂移那条一样): 关着就一帧都不跑, 不用在 tick 里自己判一遍
+	feature{ key = "bhome", save = "bhome", label = "追踪", w = 1, init = function() on(workspace.DescendantAdded, spawn) end, tick = aimTick, off = aimOff }
+	feature{ key = "bteam", save = "bteam", def = true, label = "忽略队友" }
+	feature{ kind = "cycle", key = "bpart", save = "bpart", def = "core", cycle = { "core", "head" },
+		text = { core = "瞄 身体", head = "瞄 头" }, lit = true }
+	feature{ kind = "num", key = "bturn", def = 90, label = "转向°/s" } -- 每帧最多拐多少: 60 以下像导弹, 180 以上基本是贴脸拐
+	feature{ kind = "num", key = "bfov", def = 60, label = "视角°" }     -- 目标要在弹丸前进方向的这个锥体内才算
+	feature{ kind = "num", key = "brange", def = 500, label = "目标距" }
+	feature{ kind = "num", key = "bmax", def = 3, label = "个数" }       -- 同时追几颗, 多了会互相抢目标
+	feature{ kind = "num", key = "blife", def = 2, label = "秒" }        -- 一颗弹最多追多久, 追不上就放掉
+	feature{ kind = "num", key = "bspdmin", def = 10, label = "最低速" } -- 低于这个速度的不认成弹 (地上的散件)
+	feature{ kind = "num", key = "bradius", def = 300, label = "弹半径" } -- 只认离自己这么近的弹, 免得替别人拐
+	feature{ kind = "num", key = "blead", def = 0.5, label = "提前量" }   -- 0 = 打目标当前位置, 1 = 全按飞行时间预判
+	feature{ kind = "text", key = "aim_status", label = "开着「追踪」打一发再看这行; 射线武器没有实弹, 认不到弹丸" }
+	feature{ kind = "dump", key = "aim", dump = aimLines }
 end
 
 -- ───────── 启动: 按清单建页 / 控件 / 每帧连接; 一个功能装不上不拖累别的 (记下来, 页里写一行) ─────────

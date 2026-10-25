@@ -2380,6 +2380,102 @@ humanoid.props.SeatPart = seatSaved
 for i = #TMP, 1, -1 do TMP[i]:Destroy() end
 end section7c() end
 
+do -- 包一层: smoke 是一整个顶层 chunk, 局部变量超 200 就编不过
+print("\n[7d] 子弹追踪: 弹丸拐向目标, 参数真的改得动")
+local TMP = {}
+local function T(i) TMP[#TMP + 1] = i; return i end
+local PS = _G.__SVC.Players
+ok(findBtn("弹") ~= nil, "有「弹」页")
+click(findBtn("弹"))
+local homeBtn = findBtn("追踪")
+ok(homeBtn ~= nil and homeBtn.Text == "追踪 关", "追踪默认关 (不自己接管弹丸)")
+click(homeBtn)
+ok(findBtn("追踪").Text == "追踪 开", "点一下 → 追踪 开")
+-- 数字框按标签找: 页上「转向°/s」只有一个, 拿它旁边的 TextBox
+local function setNum(label, v)
+	for _, d in ipairs(all()) do
+		if d.ClassName == "Frame" then
+			local lb, tb = nil, nil
+			for _, c in ipairs(d:GetChildren()) do
+				if c.ClassName == "TextLabel" and c.Text == label then lb = c end
+				if c.ClassName == "TextBox" then tb = c end
+			end
+			if lb and tb then tb.Text = tostring(v); tb.FocusLost:Fire(); return true end
+		end
+	end
+	return false
+end
+local function aimStatus()
+	for _, d in ipairs(all()) do
+		if d:IsA("TextLabel") and type(d.Text) == "string" and d.Text:find("追 ", 1, true) == 1 then return d.Text end
+	end
+	return ""
+end
+-- 敌人: 站在我右前方 (从弹丸出生点看是 45°), 弹丸朝 +Z 飞
+local base = hrp.Position
+local ep = base + Vector3.new(100, 0, 100)
+local echar = T(inst("Model", { Name = "Enemy" }))
+local ehum = inst("Humanoid", { Health = 100 })
+local ehrp = inst("Part", { Name = "HumanoidRootPart", Anchored = false, CanCollide = false, Size = Vector3.new(2, 2, 1), Position = ep, CFrame = CFrame.new(ep), AssemblyLinearVelocity = Vector3.zero, AssemblyMass = 10 })
+ehum.Parent, ehrp.Parent = echar, echar
+echar.Parent = workspace
+local enemy = T(inst("Player", { Name = "Enemy", DisplayName = "Enemy", UserId = 2, Character = echar }))
+local savedGet = PS.props.GetPlayers
+PS.props.GetPlayers = function() return { player, enemy } end
+local function shoot(vel) -- 从自己身上出生一颗弹 (认弹半径内), 手动触发 DescendantAdded (假引擎不自己发)
+	local p = T(inst("Part", { Name = "Bullet", Anchored = false, CanCollide = false, Size = Vector3.new(0.4, 0.4, 2), Position = base, CFrame = CFrame.new(base), AssemblyLinearVelocity = vel, AssemblyMass = 0.5 }))
+	p.Parent = workspace
+	workspace.props.DescendantAdded:Fire(p)
+	return p
+end
+local function angTo(v, want) return math.deg(math.acos(math.clamp(v.Unit:Dot(want.Unit), -1, 1))) end
+local toward = (ep - base).Unit
+local b1 = shoot(Vector3.new(0, 0, 50))
+step(1 / 60, 40) -- 40 帧 = 0.667s, 90°/s 够拐 60°, 45° 那个目标早该对上
+ok(math.abs(b1.AssemblyLinearVelocity.Magnitude - 50) < 0.5, `拐弯只改方向, 速度大小原样 ({b1.AssemblyLinearVelocity.Magnitude})`)
+ok(angTo(b1.AssemblyLinearVelocity, toward) < 3, `默认 90°/s: 半秒多就咬住目标 (偏 {angTo(b1.AssemblyLinearVelocity, toward)}°)`)
+ok(aimStatus():find("追 1", 1, true) ~= nil, `页上状态报出在追几颗 ({aimStatus()})`)
+b1:Destroy()
+step(1 / 60, 1)
+-- 调参: 转向降到 15°/s, 同样 40 帧只能拐 10°, 明显拐不到 45°
+ok(setNum("转向°/s", 15), "「转向°/s」是个能改的参数框")
+local b2 = shoot(Vector3.new(0, 0, 50))
+step(1 / 60, 40)
+local turned = angTo(b2.AssemblyLinearVelocity, Vector3.zAxis)
+ok(turned > 5 and turned < 15, `调小转向 → 拐得更少 (40 帧拐了 {turned}°)`)
+ok(angTo(b2.AssemblyLinearVelocity, toward) > 25, "参数确实卡住了拐弯, 没有偷偷对准")
+b2:Destroy()
+step(1 / 60, 1)
+-- 射角: 目标在锥体外面就不该拐
+ok(setNum("转向°/s", 120) and setNum("视角°", 20), "转向 / 视角都能改")
+local b3 = shoot(Vector3.new(0, 0, 50))
+step(1 / 60, 40)
+ok(angTo(b3.AssemblyLinearVelocity, Vector3.zAxis) < 0.5, "目标在视角外 → 一点都不拐")
+b3:Destroy()
+step(1 / 60, 1)
+-- 静止的零件不是弹: 低于「最低速」的不认
+setNum("视角°", 60)
+local b4 = shoot(Vector3.new(0, 0, 5))
+step(1 / 60, 20)
+ok(aimStatus():find("追 0", 1, true) ~= nil, `速度低于门槛不认成弹 ({aimStatus()})`)
+b4:Destroy()
+step(1 / 60, 1)
+-- 关掉: 一帧都不跑, 弹丸按游戏自己的方向飞
+click(findBtn("追踪"))
+ok(findBtn("追踪").Text == "追踪 关", "点一下 → 追踪 关")
+local b5 = shoot(Vector3.new(0, 0, 50))
+step(1 / 60, 40)
+ok(angTo(b5.AssemblyLinearVelocity, Vector3.zAxis) < 0.01, "关掉追踪 → 弹丸不再被拐")
+b5:Destroy()
+local partBtn = findBtn("瞄 ")
+click(partBtn)
+ok(findBtn("瞄 ").Text == "瞄 头", "瞄准部位能切到「头」")
+click(findBtn("瞄 "))
+PS.props.GetPlayers = savedGet
+for i = #TMP, 1, -1 do TMP[i]:Destroy() end
+step(1 / 60, 1)
+end
+
 print("\n[8] 写盘 / 剪贴板")
 ok(VFS["Selfblox.json"] ~= nil, "改过的值写进了 Selfblox.json")
 local barLbl
