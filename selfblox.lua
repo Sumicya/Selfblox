@@ -6,23 +6,23 @@
 -- 本程序的发布是希望它有用, 但不含任何担保; 甚至不含对适销性或特定用途适用性的默示担保。详见 GNU 通用公共许可证。
 -- 你应当随本程序收到一份 GNU 通用公共许可证副本(仓库里的 LICENSE); 如果没有, 见 <https://www.gnu.org/licenses/>。
 -- 单文件被单独转走时, 这几行是唯一还跟着走的声明, 别删。
--- 版本: 下面的 VERSION 是唯一来源(五段 yy.m.d.当日序号.总序号; 口径见 README「版本」); 面板标题 / 诊断快照 / 启动打印都读它
+-- 版本: 下面的 VERSION 是唯一来源(五段 yy.m.d.当日序号.总序号, 序号按实际交付手动计数; 口径见 README「版本」); 面板标题 / 诊断快照 / 启动打印都读它
 -- 用法:  loadstring(game:HttpGet("https://raw.githubusercontent.com/Sumicya/Selfblox/HEAD/selfblox.lua"))()
 -- 覆盖:  执行前 _G.SB = { spd = 50, flyspd = 80, only = {"moc", "sibs"} }
 -- 优先级: _G.SB > Selfblox.json(面板里改过的值) > 默认值
 -- 卸载:  _G.SB_UNLOAD()   重跑会自动先卸载
--- 自检:  tools/luau-driver/run_smoke.sh  (离线假引擎, 不跑也行)
+-- 检查:  提交前用官方 Luau 0.741 在 /tmp 里编一遍查语法 (编译器与假引擎替身都不入库); 真机行为以实测为准
 --
 -- 设计约定:
 --   表驱动 —— 一个功能 = 一个顶层函数 + 清单里一行 feature{}; 建页 / 存盘 / 每帧连接 / 卸载 / 诊断都从清单生成,
---            核心不为新功能改一个字 (见下面「注册表」)。加功能三步: 写函数 → 在对应页的块里追加一行 → 跑 smoke.lua
+--            核心不为新功能改一个字 (见下面「注册表」)。加功能三步: 写函数 → 在对应页的块里追加一行 → 上真机验
 --   原生优先 —— 刹车 / 灯 / 秒互动 / ESP 走引擎原生属性, 拖拽走 UIDragDetector, 不自己造轮子
 --   面向 Delta 最新版 —— hookmetamethod / newcclosure / UIDragDetector 当它一定有;
 --            gethui / isfile / writefile 缺失时退回 CoreGui 并跳过存盘, 面板照样起得来
 --   语法基线就是 Luau(运行环境就是它): 26.10.5.28 起用了字符串插值(`{}`)、复合赋值(+= 等)与 if 表达式(if c then a else b),
---            Lua 5.4 / fengari 都解析不了; 自检的权威跑法是官方 Luau 0.741 (本地怎么编见 tools/luau-driver/build.sh)
+--            Lua 5.4 / fengari 都解析不了; 语法检查用官方 Luau 0.741 在 /tmp 里临时编, 不入库
 
-local VERSION = "26.10.26.2.116" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 UTC+8); 标签是 v<VERSION>, 打标签要先获主人授权
+local VERSION = "26.10.26.3.117" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 UTC+8); 标签是 v<VERSION>, 打标签要先获主人授权
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
