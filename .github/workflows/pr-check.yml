@@ -1,0 +1,31 @@
+name: PR check
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: 编译 Luau
+        run: |
+          mkdir -p "$RUNNER_TEMP/luau"
+          curl -fsSL https://codeload.github.com/luau-lang/luau/tar.gz/2d88f9b5facaa9e4ec91247b39ae8251bd49a244 | tar -xz -C "$RUNNER_TEMP/luau" --strip-components=1
+          make -C "$RUNNER_TEMP/luau" config=release -j2 luau-compile
+          "$RUNNER_TEMP/luau/luau-compile" selfblox.lua > /dev/null
+      - name: 检查许可证与章节
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          size = Path('LICENSE').stat().st_size
+          assert size == 35149, f'LICENSE 字节数不符: {size}'
+          headings = [line[3:] for line in Path('README.md').read_text(encoding='utf-8').splitlines() if line.startswith('## ')]
+          expected = ['要求', '功能', '安装与使用', '构建', '项目限制', '许可证']
+          assert headings == expected, f'README 章节不符: {headings}'
+          PY
