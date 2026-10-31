@@ -1,6 +1,6 @@
 # Selfblox
 
-Roblox 执行器脚本：单文件、单面板、八个模块，面向 Delta（安卓）的纯触屏操作。适合在手机上调试移动、载具和显示类功能，并且希望脚本本身可以离线自检的用户。
+Roblox 执行器脚本：单文件、单面板、八个模块，面向 Delta（安卓）的纯触屏操作。
 
 ## 要求
 
@@ -88,7 +88,9 @@ rm -f /storage/emulated/0/Delta/workspace/Selfblox-*.lua
 
 无构建步骤：单文件脚本，直接从仓库拉取运行，改了推上去即生效。
 
-扩展方式：一个功能等于一个顶层函数加对应页 `do` 块里的一行 `feature{}`，建页、存盘、每帧连接、卸载和诊断快照都由清单生成，核心代码不为新功能改动。控件类型和可用字段见 `selfblox.lua` 里的注册表注释与 `KIND` 表；开关状态在 `F[key]`，数值在 `S[key]`，控件在 `W[key]`。
+### 修改
+
+在 `selfblox.lua` 中修改功能；扩展方式是增加顶层函数，并在对应页的 `do` 块注册 `feature{}`。建页、存盘、每帧连接、卸载和诊断快照由清单生成。控件类型和字段见脚本内注册表注释及 `KIND` 表；开关状态在 `F[key]`，数值在 `S[key]`，控件在 `W[key]`。提交前对照 [GLOBAL.md](https://github.com/Sumicya/selfs/blob/main/GLOBAL.md) 的单文件结构和工具边界，并更新 [CHANGELOG.md](CHANGELOG.md)。
 
 提交前用官方 Luau 0.741 在 `/tmp` 里临时编一遍查语法（编译器与任何假引擎替身都不入库），改动的实际行为以 Delta 真机运行结果为准。
 
