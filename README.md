@@ -111,4 +111,4 @@ Copyright (C) 2026 Sumicya
 
 本程序按 GNU 通用公共许可证第 3 版（GPL-3.0-or-later）分发，不含任何担保，全文见 [LICENSE](LICENSE)。
 
-规范指针：[Sumicya/selfs GLOBAL.md](https://github.com/Sumicya/selfs/blob/8a68a96eefe95ee9040703032a7450ee359c4386/GLOBAL.md)（生效提交 PR #15 head `8a68a96eefe95ee9040703032a7450ee359c4386`）
+规范指针：[Sumicya/selfs GLOBAL.md](https://github.com/Sumicya/selfs/blob/30ddbc3bee03b8a9d0604cacafaf3c7e788d994b/GLOBAL.md)（生效提交 PR #15 head `30ddbc3bee03b8a9d0604cacafaf3c7e788d994b`）

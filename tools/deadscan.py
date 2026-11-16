@@ -3,7 +3,7 @@
 1. `local` 标识符在剔除注释与字符串字面量(含 Luau 反引号插值外文本)的源码里出现 <= 1 次 = 疑似死码;
 2. 校验 `tools/*.py` 无未使用的 import;
 3. 校验 `save("k", ...)` 键均有对应的 `opt("k", ...)` 读取;
-4. 校验 `tools/blindspots.json` 三类盲区(有意排除/延期未审/待答问题)结构与剩余限制字段完整。
+4. 校验 `tools/blindspots.json` 三类盲区(`excluded`/`deferred`/`open_questions`)非空且每条含真实存在路径与 `why`/`limit` 两栏。
 用法: python3 tools/deadscan.py [文件...]   (默认 selfblox.lua)
 退出码: 0 干净, 1 有问题。
 """
@@ -136,16 +136,19 @@ def check_blindspots(path: Path):
     if not path.exists():
         return [f"缺少盲区清单: {path}"]
     data = json.loads(path.read_text(encoding="utf-8"))
-    for cat in ("有意排除", "延期未审", "待答问题"):
+    for cat in ("excluded", "deferred", "open_questions"):
         items = data.get(cat)
-        if not isinstance(items, list):
-            errs.append(f"{path}: 缺少列表键 {cat}")
+        if not isinstance(items, list) or len(items) == 0:
+            errs.append(f"{path}: {cat} 必须为非空列表")
             continue
         for idx, item in enumerate(items):
             if not isinstance(item, dict):
                 errs.append(f"{path}: {cat}[{idx}] 必须为对象")
                 continue
-            for req in ("target", "reason", "remaining_limitations"):
+            p = item.get("path")
+            if not isinstance(p, str) or not p.strip() or not Path(p).exists():
+                errs.append(f"{path}: {cat}[{idx}] 的 path 不是真实存在的路径: {p!r}")
+            for req in ("why", "limit"):
                 val = item.get(req)
                 if not isinstance(val, str) or not val.strip():
                     errs.append(f"{path}: {cat}[{idx}] 缺少非空字段 {req}")

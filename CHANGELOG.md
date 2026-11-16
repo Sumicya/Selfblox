@@ -12,6 +12,7 @@
 - 引入 `tools/deadscan.py` 并修复其对 Luau 反引号插值字符串的词法剥离（解决 `--` 在反引号内被误判为注释导致截断后续代码的问题），同时检查 Python 未使用 `import`、只写不读配置键，并校验新增的 `tools/blindspots.json`（按 `Sumicya/selfs` §12 分三类记录 `有意排除`/`延期未审`/`待答问题` 与剩余限制）。
 - 按 `Sumicya/selfs` PR #15 `8a68a96` 重整 `README.md`（聚焦是什么/从哪下/怎么装/怎么删 + 必要限制 + GPL-3.0 + `/storage/emulated/0/Download` 完整路径 + 最新规范指针，移除版本号与构建流程段落）。
 - 验证：官方 Luau 0.747 `luau-compile` 编译通过、`luau-analyze` 无未使用变量/赋值失衡告警、`python3 tools/deadscan.py` 退出码 0（且在 `/tmp` 构造反例可正确报红退出码 1）；Android Delta 与 Roblox 真机运行时行为未验证。
+- 对齐 `Sumicya/selfs` `30ddbc3` 新 §12：将 `tools/blindspots.json` 键名与字段统一为 `excluded`/`deferred`/`open_questions` 及 `path`/`why`/`limit`，更新 `tools/deadscan.py` 校验三类非空、真实存在路径及两栏字段，更新 `README.md` 规范指针至 `30ddbc3`，并按主人指示关闭 PR #6（不合并）与删除前分支 `arena/2a114e80-selfblox`、`arena/708dd342-selfblox`。
 
 ## 2026-11-08（来自 `arena/708dd342-selfblox`）
 
