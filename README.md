@@ -53,4 +53,4 @@ _G.SB = { spd = 60, flyspd = 120, hornkey = "H", only = {"moc", "sibs"} }
 - 服务器权威弹药/命中的游戏，本地改写不生效；用「枪」页探针报告 + 「机」页发侦听取样后定向适配。
 - 运行时文件 `Selfblox.json`、`Selfblox_log.txt`、`plane_debug.txt`、`gun_debug.txt` 不入仓。
 
-规范指针：[Sumicya/selfs GLOBAL.md](https://github.com/Sumicya/selfs/blob/2b16d68ad7e03c1f5fc8320ff8760a449ac8c8da/GLOBAL.md)（生效提交 PR #15 head `2b16d68ad7e03c1f5fc8320ff8760a449ac8c8da`）
+规范指针：[Sumicya/selfs GLOBAL.md](https://github.com/Sumicya/selfs/blob/03569d3d3cf6887b2dd7527c00ad7f9888c3742e/GLOBAL.md)（生效提交 PR #15 head `03569d3d3cf6887b2dd7527c00ad7f9888c3742e`）
