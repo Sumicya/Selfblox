@@ -1,17 +1,18 @@
--- Selfblox · 单文件 · 一次 loadstring · 一个面板 · 八页清单
+-- Selfblox · 单文件 · 一次 loadstring · 一个面板 · 九页清单
 --
 -- Copyright (C) 2026 Sumicya
 -- SPDX-License-Identifier: GPL-3.0-or-later
+-- 修改记录: 2026-11-16 合入 gun 模块与共享 __namecall 钩子 (GPL-3 §5)
 -- 本程序是自由软件: 你可以按自由软件基金会发布的 GNU 通用公共许可证第 3 版(或你选择的更高版本)重新分发和/或修改它。
 -- 本程序的发布是希望它有用, 但不含任何担保; 甚至不含对适销性或特定用途适用性的默示担保。详见 GNU 通用公共许可证。
 -- 你应当随本程序收到一份 GNU 通用公共许可证副本(仓库里的 LICENSE); 如果没有, 见 <https://www.gnu.org/licenses/>。
 -- 单文件被单独转走时, 这几行是唯一还跟着走的声明, 别删。
--- 版本: 下面的 VERSION 是唯一来源(五段 yy.m.d.当日序号.总序号, 序号按实际交付手动计数; 口径见 README「版本」); 面板标题 / 诊断快照 / 启动打印都读它
+-- 版本: 下面的 VERSION 是唯一来源(五段 yy.m.d.当日序号.总序号, 序号按实际交付手动计数); 面板标题 / 诊断快照 / 启动打印都读它
 -- 用法:  loadstring(game:HttpGet("https://raw.githubusercontent.com/Sumicya/Selfblox/HEAD/selfblox.lua"))()
 -- 覆盖:  执行前 _G.SB = { spd = 50, flyspd = 80, only = {"moc", "sibs"} }
 -- 优先级: _G.SB > Selfblox.json(面板里改过的值) > 默认值
 -- 卸载:  _G.SB_UNLOAD()   重跑会自动先卸载
--- 检查:  提交前用官方 Luau 0.741 在 /tmp 里编一遍查语法 (编译器与假引擎替身都不入库); 真机行为以实测为准
+-- 检查:  提交前用官方 Luau 在 /tmp 里编一遍查语法 (编译器与假引擎替身都不入库); 真机行为以实测为准
 --
 -- 设计约定:
 --   表驱动 —— 一个功能 = 一个顶层函数 + 清单里一行 feature{}; 建页 / 存盘 / 每帧连接 / 卸载 / 诊断都从清单生成,
@@ -20,9 +21,9 @@
 --   面向 Delta 最新版 —— hookmetamethod / newcclosure / UIDragDetector 当它一定有;
 --            gethui / isfile / writefile 缺失时退回 CoreGui 并跳过存盘, 面板照样起得来
 --   语法基线就是 Luau(运行环境就是它): 26.10.5.28 起用了字符串插值(`{}`)、复合赋值(+= 等)与 if 表达式(if c then a else b),
---            Lua 5.4 / fengari 都解析不了; 语法检查用官方 Luau 0.741 在 /tmp 里临时编, 不入库
+--            Lua 5.4 / fengari 都解析不了; 语法检查用官方 Luau 在 /tmp 里临时编, 不入库
 
-local VERSION = "26.10.26.3.117" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 UTC+8); 标签是 v<VERSION>, 打标签要先获主人授权
+local VERSION = "26.11.16.1.118" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 UTC+8); 标签是 v<VERSION>, 打标签要先获主人授权
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
@@ -65,6 +66,55 @@ local function root() local c = me.Character; return c and (c:FindFirstChild("Hu
 local function flat(v) v = Vector3.new(v.X, 0, v.Z); if v.Magnitude > 1e-3 then return v.Unit end end
 local function reclipAll(col) for d in pairs(col) do if d.Parent then d.CanCollide = true end end; table.clear(col) end -- 穿墙还原: moc/sibs 原来各写了一份一模一样的
 local function nn(v) return tonumber(v) or 0 end -- 诊断/日志里的引擎数字: 拿不到就 0, 不能因为一个属性缺失把整份 dump 弄炸
+local function hint(name, list) name = name:lower(); for _, h in ipairs(list) do if name:find(h, 1, true) then return h end end end
+local function idx(t, k) return t[k] end
+local function fmt(v, depth)
+	local t = typeof(v)
+	if t == "Instance" then return v:GetFullName()
+	elseif t == "Vector3" then return string.format("(%.0f,%.0f,%.0f)", v.X, v.Y, v.Z)
+	elseif t == "CFrame" then return fmt(v.Position)
+	elseif t == "string" then return '"' .. v:sub(1, 60) .. '"'
+	elseif t == "table" then
+		if (depth or 0) >= 2 then return "{…}" end
+		local o = {}
+		for k, x in pairs(v) do o[#o + 1] = `{tostring(k)}={fmt(x, (depth or 0) + 1)}`; if #o >= 8 then break end end
+		return "{" .. table.concat(o, ",") .. "}"
+	end
+	return tostring(v)
+end
+
+-- ───────── 共享 __namecall 钩子: 各模块登记 handler, 最后一个撤掉时才还原, 避免多模块互相覆盖 ─────────
+local ncHandlers, ncRaw = {}, nil
+local function ncDispatch(self, m, ...)
+	for id, h in pairs(ncHandlers) do
+		if h.methods[m] then
+			local ok, rep = pcall(h.fn, self, m, ...)
+			if ok and rep ~= nil then return table.unpack(rep, 1, rep.n) end
+			if not ok and not h.warned then h.warned = true; warn(`[Selfblox] namecall handler {id}: {tostring(rep)}`) end
+		end
+	end
+	local ok, f = pcall(idx, self, m) -- 直接取方法原函数调用, 不依赖执行器对 namecall 寄存器的保持
+	if ok and type(f) == "function" then return f(self, ...) end
+	return ncRaw(self, ...)
+end
+local function ncAdd(id, methods, fn)
+	ncHandlers[id] = { methods = methods, fn = fn }
+	if not ncRaw then
+		if not (hookmetamethod and getnamecallmethod) then ncHandlers[id] = nil; return false end
+		local wrap = newcclosure or function(f) return f end
+		ncRaw = hookmetamethod(game, "__namecall", wrap(function(self, ...)
+			return ncDispatch(self, getnamecallmethod(), ...)
+		end))
+	end
+	return true
+end
+local function ncDel(id)
+	ncHandlers[id] = nil
+	if ncRaw and next(ncHandlers) == nil then
+		hookmetamethod(game, "__namecall", ncRaw)
+		ncRaw = nil
+	end
+end
 
 -- ───────── UI: 一个 ScreenGui, 标题条(原生 UIDragDetector 拖) + 页签 + 每模块一页 ─────────
 local FONT, WHITE = Enum.Font.GothamBold, Color3.new(1, 1, 1)
@@ -110,12 +160,19 @@ end
 local heldReleases = {} -- 还按着的按住钮; 卸载时逐个松开
 local function hold(parent, s, fn, w) -- 按住 fn(true) 松开 fn(false)
 	-- 按钮自己的 InputEnded 只在指针还在按钮上时才来: 滑出去松手 / 按住途中卸载, fn(false) 永远不会到 = 功能卡在"按着"
-	local b, held = ui("TextButton", parent, w, { Text = s, AutoButtonColor = false }), false
-	local function release() if held then held = false; if b.Parent then lit(b, false) end; pcall(fn, false) end end
-	heldReleases[#heldReleases + 1] = release
-	on(b.InputBegan, function(i) if tap(i) and not held then held = true; lit(b, true); fn(true) end end)
-	on(b.InputEnded, function(i) if tap(i) then release() end end)
-	on(UIS.InputEnded, function(i) if tap(i) then release() end end) -- 全局兜底: 指针在哪儿松手都算
+	local b, held, input = ui("TextButton", parent, w, { Text = s, AutoButtonColor = false }), false, nil
+	local function release(i)
+		if held and (i == nil or i == input) then -- 只释放按下它的那根手指, 多指触屏不互相串
+			held, input = false, nil
+			if b.Parent then lit(b, false) end
+			pcall(fn, false)
+		end
+	end
+	heldReleases[#heldReleases + 1] = function() release(nil) end
+	on(b.InputBegan, function(i) if tap(i) and not held then held, input = true, i; lit(b, true); pcall(fn, true) end end)
+	on(b.InputEnded, release)
+	on(UIS.InputEnded, release) -- 全局兜底: 指针在哪儿松手都算
+	on(UIS.WindowFocusReleased, function() release(nil) end)
 end
 local function num(parent, s, S, k, w, savek) -- 直接绑 S[k], 改完自动存盘; savek 缺省 = k
 	local f = mk("Frame", { Size = w and UDim2.new(w, 0, 1, 0) or UDim2.new(1, 0, 0, ROW), LayoutOrder = ord(), BackgroundColor3 = OFF, BackgroundTransparency = CLEAR, BorderSizePixel = 0 }, parent) -- 一行分两半: 左半标签, 右半输入框, 文字各在自己那半格里居中 (原来标签靠左 + 前面垫个空格, 和居中的按钮/输入框对不齐)
@@ -211,8 +268,12 @@ local KIND = {
 	toggle = function(e, p, w)
 		W[e.key] = toggle(p, e.label, F[e.key], function(v)
 			F[e.key] = v
+			if e.set and e.set(v) == false then
+				F[e.key] = false
+				if W[e.key] then W[e.key](false, true) end
+				return
+			end
 			if e.save then save(e.save, v) end
-			if e.set then e.set(v) end
 			if not v and e.off then e.off() end
 		end, w)
 	end,
@@ -579,6 +640,194 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 	end }
 end
 
+do -- ═════════ 枪: 无限子弹 / 子弹穿墙 / 探针报告 ═════════
+	local AK = { "ammo", "clip", "magazine", "cartridge" } -- 弹药字段名 hint (不匹配伤害/射速等调参字段)
+	local vals = setmetatable({}, { __mode = "k" }) -- NumberValue/IntValue -> 原值
+	local attrs = setmetatable({}, { __mode = "k" }) -- Instance -> { key = 原值 }
+	local tbls = setmetatable({}, { __mode = "k" }) -- 配置表 -> { key = 原值 }
+	local stat = { refills = 0, fields = 0, rays = 0, pierced = 0 }
+	local hooked, gunAcc = false, 0
+
+	local function isAmmoName(n) return hint(n, AK) ~= nil end
+	local function containers() -- 只扫武器相关容器: 手持/背包 Tool + leaderstats; 弹药 GUI 按需再加
+		local out, seen = {}, {}
+		local function add(i) if i and not seen[i] then seen[i] = true; out[#out + 1] = i end end
+		local c = me.Character
+		if c then for _, d in ipairs(c:GetChildren()) do if d:IsA("Tool") then add(d) end end end
+		local bp = me:FindFirstChildOfClass("Backpack")
+		if bp then for _, d in ipairs(bp:GetChildren()) do if d:IsA("Tool") then add(d) end end end
+		add(me:FindFirstChild("leaderstats"))
+		return out
+	end
+	local function trackVal(v)
+		if vals[v] == nil and (v:IsA("IntValue") or v:IsA("NumberValue")) and isAmmoName(v.Name) then vals[v] = v.Value; stat.fields += 1 end
+	end
+	local function trackAttrs(i)
+		if not (i:IsA("Tool") or i:IsA("Model") or i:IsA("Folder") or i:IsA("Configuration")) then return end
+		for k, x in pairs(i:GetAttributes()) do
+			if type(x) == "number" and isAmmoName(k) then
+				local t = attrs[i]; if not t then t = {}; attrs[i] = t end
+				if t[k] == nil then t[k] = x; stat.fields += 1 end
+			end
+		end
+	end
+	local function scan(deep)
+		for _, c in ipairs(containers()) do
+			trackAttrs(c)
+			for _, d in ipairs(c:GetDescendants()) do trackVal(d); trackAttrs(d) end
+		end
+		if deep and getgc then -- 深改只在开关/重扫时跑: getgc 全量遍历太贵, 不进每帧循环
+			local ok, gc = pcall(getgc, true)
+			if ok and type(gc) == "table" then
+				for _, o in ipairs(gc) do
+					if type(o) == "table" and o ~= _G and o ~= shared and getmetatable(o) == nil and tbls[o] == nil then
+						local keys, hitK, bad = 0, false, false
+						for k, x in pairs(o) do
+							keys += 1
+							if keys > 64 then bad = true; break end
+							if type(k) == "string" and type(x) == "number" and k:lower():find("ammo", 1, true) then hitK = true end
+						end
+						if hitK and not bad then
+							local t = {}
+							for k, x in pairs(o) do if type(k) == "string" and type(x) == "number" and k:lower():find("ammo", 1, true) then t[k] = x end end
+							tbls[o] = t; stat.fields += 1
+						end
+					end
+				end
+			end
+		end
+	end
+	local function refill()
+		local amt = math.max(1, nn(S.ammo))
+		for v in pairs(vals) do
+			if v.Parent then
+				if v.Value < amt and pcall(function() v.Value = amt end) then stat.refills += 1 end
+			else vals[v] = nil end
+		end
+		for i, t in pairs(attrs) do
+			if i.Parent then
+				for k in pairs(t) do
+					if (i:GetAttribute(k) or amt) < amt and pcall(function() i:SetAttribute(k, amt) end) then stat.refills += 1 end
+				end
+			else attrs[i] = nil end
+		end
+		for o, t in pairs(tbls) do
+			for k in pairs(t) do
+				if type(o[k]) == "number" and o[k] < amt and pcall(function() o[k] = amt end) then stat.refills += 1 end
+			end
+		end
+	end
+	local function restore()
+		for v, orig in pairs(vals) do if v.Parent then pcall(function() v.Value = orig end) end end
+		for i, t in pairs(attrs) do if i.Parent then for k, x in pairs(t) do pcall(function() i:SetAttribute(k, x) end) end end end
+		for o, t in pairs(tbls) do for k, x in pairs(t) do pcall(function() o[k] = x end) end end
+		table.clear(vals); table.clear(attrs); table.clear(tbls)
+		stat.fields = 0
+	end
+
+	-- 穿墙: 只拦游戏脚本发起的 workspace.Raycast (checkcaller 滤掉执行器脚本); 内部用点调用绕过 __namecall, 天然无递归
+	local rp = RaycastParams.new()
+	rp.FilterType = Enum.RaycastFilterType.Exclude
+	local function isChar(p)
+		local m = p and p:FindFirstAncestorOfClass("Model")
+		return m ~= nil and m:FindFirstChildOfClass("Humanoid") ~= nil
+	end
+	local function pierceCast(origin, dir, params)
+		local res = workspace.Raycast(workspace, origin, dir, params) -- 点调用不走 __namecall
+		stat.rays += 1
+		if not res or isChar(res.Instance) then return res end
+		local exclude, left = {}, math.max(1, math.floor(nn(S.pierce)))
+		rp.IgnoreWater, rp.CollisionGroup = true, "Default"
+		if params then
+			if params.FilterType == Enum.RaycastFilterType.Include then return res end -- 白名单射线语义不能改
+			rp.IgnoreWater, rp.CollisionGroup = params.IgnoreWater, params.CollisionGroup
+			for _, i in ipairs(params.FilterDescendantsInstances) do exclude[#exclude + 1] = i end
+		end
+		while res and left > 0 and not isChar(res.Instance) do
+			exclude[#exclude + 1] = res.Instance
+			rp.FilterDescendantsInstances = exclude
+			res = workspace.Raycast(workspace, origin, dir, rp)
+			left -= 1
+			stat.pierced += 1
+		end
+		if res and not isChar(res.Instance) then return nil end -- 穿完仍没打到人: 按未命中处理
+		return res
+	end
+	local function setWall(v)
+		if v then
+			if not hooked then
+				if not ncAdd("gun", { Raycast = true }, function(self, _, origin, dir, params)
+					if self ~= workspace or not F.gwall then return end
+					if checkcaller and checkcaller() then return end
+					if typeof(origin) ~= "Vector3" or typeof(dir) ~= "Vector3" then return end
+					local ok, res = pcall(pierceCast, origin, dir, params)
+					if ok then return table.pack(res) end
+					warn(`[Selfblox] gun raycast: {tostring(res)}`)
+				end) then
+					toast("执行器没有 hookmetamethod")
+					return false
+				end
+				hooked = true
+			end
+		elseif hooked then
+			ncDel("gun"); hooked = false
+		end
+		return true
+	end
+	local function gunTick(dt)
+		gunAcc += dt
+		if gunAcc < 0.25 then return end
+		gunAcc = 0
+		if F.ginf then scan(); refill() end
+		say("gun_status", string.format("字段 %d · 回填 %d · 射线 %d(穿 %d)", stat.fields, stat.refills, stat.rays, stat.pierced))
+	end
+	local function gunLines()
+		local L = { `==== GUN {os.date("%Y-%m-%d ")}{clock(true)} place={game.PlaceId} ====` }
+		L[#L + 1] = string.format("inf=%s wall=%s amount=%d pierce=%d fields=%d refills=%d rays=%d pierced=%d",
+			tostring(F.ginf), tostring(F.gwall), math.max(1, nn(S.ammo)), math.max(1, math.floor(nn(S.pierce))), stat.fields, stat.refills, stat.rays, stat.pierced)
+		L[#L + 1] = `-- 执行器: hookmetamethod={tostring(hookmetamethod ~= nil)} getgc={tostring(getgc ~= nil)} hookfunction={tostring(hookfunction ~= nil)}`
+		L[#L + 1] = "-- 当前跟踪字段"
+		for v, orig in pairs(vals) do if v.Parent then L[#L + 1] = `  {v:GetFullName()} = {tostring(v.Value)} (原 {tostring(orig)})` end end
+		for i, t in pairs(attrs) do if i.Parent then for k, x in pairs(t) do L[#L + 1] = `  attr {i:GetFullName()}.{k} = {tostring(i:GetAttribute(k))} (原 {tostring(x)})` end end end
+		for _, t in pairs(tbls) do for k, x in pairs(t) do L[#L + 1] = `  tbl {k} (原 {tostring(x)})` end end
+		L[#L + 1] = "-- 手持工具"
+		local c = me.Character
+		if c then for _, d in ipairs(c:GetChildren()) do if d:IsA("Tool") then
+			L[#L + 1] = `  {d:GetFullName()}`
+			for k, x in pairs(d:GetAttributes()) do L[#L + 1] = `    attr {k}={fmt(x)}` end
+			for _, v in ipairs(d:GetDescendants()) do if v:IsA("ValueBase") then L[#L + 1] = `    {v.ClassName} {v.Name}={fmt(v.Value)}` end end
+		end end end
+		return L
+	end
+	local function gunReport()
+		local L = gunLines()
+		local txt = table.concat(L, "\n")
+		local savedOk = false
+		if writefile then
+			local ok, err = pcall(writefile, "gun_debug.txt", txt)
+			savedOk = ok
+			if not ok then warn(`[Selfblox] 枪械报告写入失败: {tostring(err)}`) end
+		end
+		if setclipboard then pcall(setclipboard, txt) end
+		toast(`报告 {#L} 行` .. (if savedOk then " → gun_debug.txt" else "（文件写入失败）"))
+	end
+
+	feature{ kind = "page", id = "gun", tab = "枪", info = function()
+		return string.format("无限=%s 穿墙=%s 字段=%d 回填=%d 射线=%d/%d", tostring(F.ginf), tostring(F.gwall), stat.fields, stat.refills, stat.rays, stat.pierced)
+	end }
+	feature{ key = "ginf", label = "无限子弹", num = { "ammo", 999 }, set = function(v) if v then scan(true); refill() end end, off = restore }
+	feature{ key = "gwall", label = "子弹穿墙", num = { "pierce", 16 }, set = setWall, off = function() setWall(false) end }
+	feature{ kind = "btn", label = "重扫字段", fn = function()
+		if not F.ginf then toast("先开 无限子弹"); return end
+		local ok, err = pcall(function() scan(true); refill() end)
+		toast(if ok then `字段 {stat.fields}` else `扫描失败: {tostring(err)}`)
+	end }
+	feature{ kind = "btn", label = "探针报告", fn = gunReport }
+	feature{ kind = "text", key = "gun_status", label = "拿上武器 → 开无限子弹; 没效果就发探针报告" }
+	feature{ kind = "dump", key = "gun", dump = gunLines }
+	feature{ kind = "tick", tick = gunTick }
+end
+
 do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配体; 没坐 = 准星"换车"锁定 / 自动绑最近的空座位) ═════════
 	S.turncap, S.hornkey, S.carmaxstuds, S.carswap = opt("turncap", 1), opt("hornkey", "H"), opt("carmaxstuds", 150), opt("carswap", true) -- 只读配置 (没有面板控件) -- maxstuds: 装配体外径超过这个数就不当成车(是地图/大容器). 量装配体不量 Model 容器: 车直接挂在超大容器里也认得出来
 	local picked, pickSeat, pickPath, autoPick, curSeat, curMax, att, vf, lv, clipCar, lastCar, lastAnch
@@ -734,8 +983,9 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 	local function horn(v) VIM:SendKeyEvent(v, HORN, false, game) end
 	local function pick()
 		local cam = workspace.CurrentCamera
+		if not cam then toast("相机尚未就绪"); return end
 		rp.FilterDescendantsInstances = { me.Character }
-		local hit = workspace:Raycast(cam.CFrame.Position, cam.CFrame.LookVector * 5000, rp)
+		local hit = workspace.Raycast(workspace, cam.CFrame.Position, cam.CFrame.LookVector * 5000, rp) -- 点调用: 不被 gun 穿墙钩子改写
 		if not hit then toast("准星前面没东西"); return end
 		local inst = hit.Instance
 		if inst:FindFirstAncestorOfClass("Model") == nil and not inst:IsA("BasePart") then toast("打中的不是部件"); return end
@@ -931,8 +1181,11 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 		end
 		-- 准星现在打到什么: 车不听话时这一条最有用
 		local cam = workspace.CurrentCamera
-		rp.FilterDescendantsInstances = { me.Character }
-		local hit = workspace:Raycast(cam.CFrame.Position, cam.CFrame.LookVector * 5000, rp)
+		local hit
+		if cam then
+			rp.FilterDescendantsInstances = { me.Character }
+			hit = workspace.Raycast(workspace, cam.CFrame.Position, cam.CFrame.LookVector * 5000, rp) -- 点调用: 不被 gun 穿墙钩子改写
+		end
 		L[#L + 1] = `-- 准星射线: {(hit and (hit.Instance.ClassName .. " " .. hit.Instance:GetFullName()) or "没打到东西")}`
 		if hit then
 			local chain, x = {}, hit.Instance
@@ -1112,13 +1365,13 @@ end
 
 do -- ═════════ 志: 周期记录 / 诊断打包 ═════════
 	local LOGFILE, count, written = "Selfblox_log.txt", 0, 0
-	local function head() local h = `---- Selfblox {VERSION} {os.date("%Y-%m-%d ")}{clock(true)} ----\n`; writefile(LOGFILE, h); written = #h end -- 文件头带版本: 日志文件会跨会话留着, 不带版本就分不清这一份是哪个构建录的
+	local function head() local h = `---- Selfblox {VERSION} {os.date("%Y-%m-%d ")}{clock(true)} ----\n`; if writefile then writefile(LOGFILE, h) end; written = #h end -- 文件头带版本: 日志文件会跨会话留着, 不带版本就分不清这一份是哪个构建录的
 	local function logTick() -- 每 S.logint 秒一轮 (清单的 loop 每轮 pcall: 某个页的状态函数 / 序列化 / 写盘抛错, 记录也不会永久停)
 		local L = { `[{clock(true)}] #{count}`, `配置 {Http:JSONEncode(saved)}` } -- 数值不用各模块自己拼, 这里全有
 		for _, line in ipairs(pageInfos()) do L[#L + 1] = line end
 		local txt = `{table.concat(L, "\n")}\n`
 		if written == 0 or written + #txt > S.logmax * 1024 then head() end -- ponytail: 超限直接重写, 不归档; 要历史自己复制文件
-		appendfile(LOGFILE, txt)
+		if appendfile then appendfile(LOGFILE, txt) elseif writefile then writefile(LOGFILE, txt) end
 		count, written = count + 1, written + #txt
 		say("log_status", `#{count} · {(math.floor(written / 1024))}KB / {S.logmax}KB`)
 	end
@@ -1137,23 +1390,7 @@ do -- ═════════ 机: 飞机侦察 (找飞机 / 判队伍 / 列
 	local TEAMK = { "team", "faction", "side", "country", "nation" }
 	local OWNK = { "owner", "pilot" } -- OldOwner/Owner/Pilot 这类属性: 被服务器接管的飞机座位是空的, 只剩属性还写着你的名字
 	local RHINT = { "fire", "shoot", "shot", "bullet", "gun", "weapon", "attack", "damage", "hit", "kill", "launch", "missile", "rocket", "bomb", "plane", "spawn", "team", "seat", "pilot" }
-	local function hint(name, list) name = name:lower(); for _, h in ipairs(list) do if name:find(h, 1, true) then return h end end end
 	local planes, remotes, sent, got, hls, watch = {}, {}, {}, {}, {}, {}
-	local oldNC
-	local function fmt(v, depth)
-		local t = typeof(v)
-		if t == "Instance" then return v:GetFullName()
-		elseif t == "Vector3" then return string.format("(%.0f,%.0f,%.0f)", v.X, v.Y, v.Z)
-		elseif t == "CFrame" then return fmt(v.Position)
-		elseif t == "string" then return '"' .. v:sub(1, 60) .. '"'
-		elseif t == "table" then
-			if (depth or 0) >= 2 then return "{…}" end
-			local o = {}
-			for k, x in pairs(v) do o[#o + 1] = `{tostring(k)}={fmt(x, (depth or 0) + 1)}`; if #o >= 8 then break end end
-			return "{" .. table.concat(o, ",") .. "}"
-		end
-		return tostring(v)
-	end
 	local function args(a) local o = {}; for i = 1, a.n do o[i] = fmt(a[i]) end; return table.concat(o, ", ") end
 	local CAP = 400 -- 组数上限. 原来 200 条不折叠: 飞行中 EngineSync+VehicleReplication 每秒 ~20 条, 200 条只装得下 10 秒, 一生只发一次的 RequestPlane/SpawnHangarPlane 必被挤掉
 	local function keyOf(a) local v = a[1]; return typeof(v) == "Instance" and v:GetFullName() or "" end -- 折叠键: 同一个 Remote 打同一个目标算一组
@@ -1237,15 +1474,17 @@ do -- ═════════ 机: 飞机侦察 (找飞机 / 判队伍 / 列
 		end
 	end
 	local function setSpy(v)
-		if v and not oldNC then
-			oldNC = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
-				local m = getnamecallmethod()
-				if F.spy and (m == "FireServer" or m == "InvokeServer") then
-					local a = table.pack(...)
-					pcall(function() local path = self:GetFullName(); if F.pall or hint(path, RHINT) then push(sent, `{path}:{m} {keyOf(a)}`, `{path}:{m} {args(a)}`) end end) -- 记录失败不能拦住游戏自己的调用
-				end
-				return oldNC(self, ...)
-			end))
+		if v then
+			if not ncAdd("plane", { FireServer = true, InvokeServer = true }, function(self, m, ...)
+				if not F.spy then return end
+				local a = table.pack(...)
+				pcall(function() local path = self:GetFullName(); if F.pall or hint(path, RHINT) then push(sent, `{path}:{m} {keyOf(a)}`, `{path}:{m} {args(a)}`) end end) -- 记录失败不能拦住游戏自己的调用
+			end) then
+				toast("执行器没有 hookmetamethod")
+				return false
+			end
+		else
+			ncDel("plane")
 		end
 		return true
 	end
@@ -1299,22 +1538,26 @@ do -- ═════════ 机: 飞机侦察 (找飞机 / 判队伍 / 列
 		L[#L + 1] = `-- 收 {tot(got)} 条 / {#got} 组{(F.watch and #watch == 0 and " ← 收侦听开着却一个都没挂上 (要先点 重扫)" or "")}`
 		for _, s in ipairs(dump(got)) do L[#L + 1] = s end
 		local txt = table.concat(L, "\n")
-		writefile("plane_debug.txt", txt)
-		setclipboard(txt)
-		toast(`报告 {#L} 行 → plane_debug.txt / 剪贴板`)
+		local savedOk = false
+		if writefile then
+			local okw, errw = pcall(writefile, "plane_debug.txt", txt)
+			savedOk = okw
+			if not okw then warn(`[Selfblox] 飞机报告写入失败: {tostring(errw)}`) end
+		end
+		if setclipboard then pcall(setclipboard, txt) end
+		toast(`报告 {#L} 行` .. (if savedOk then " → plane_debug.txt / 剪贴板" else "（文件写入失败）"))
 	end
 
 	feature{ kind = "page", id = "plane", tab = "机", info = function() return "飞机=" .. #planes .. " Remote=" .. #remotes .. " 发=" .. tot(sent) .. "/" .. #sent .. "组 收=" .. tot(got) .. "/" .. #got .. "组 侦听=" .. tostring(F.spy) .. (F.watch and #watch == 0 and " 收没挂上(先重扫)" or "") end }
 	feature{ kind = "btn", label = "重扫", fn = scan }
 	feature{ kind = "btn", label = "写报告", fn = report }
-	feature{ key = "spy", label = "发侦听", set = setSpy }
+	feature{ key = "spy", label = "发侦听", set = setSpy, off = function() ncDel("plane") end }
 	feature{ key = "watch", label = "收侦听", set = setWatch, off = function() setWatch(false) end }
 	feature{ key = "hl", label = "高亮", set = highlight, off = function() F.hl = false; highlight() end }
 	feature{ key = "autoscan", label = "自动 5s", loop = function() scan(); report() end, every = 5 }
 	feature{ key = "pall", save = "pall", label = "全录" }
 	feature{ kind = "btn", label = "清空记录", fn = function() table.clear(sent); table.clear(got) end }
 	feature{ kind = "text", key = "plane_status", label = "上机 → 发侦听 → 开几枪 → 写报告" }
-	feature{ kind = "tick", off = function() if oldNC then hookmetamethod(game, "__namecall", oldNC) end end } -- 只在卸载时: 发侦听装的钩子还原 (关开关只停记录, 钩子留着照常放行)
 end
 
 do -- ═════════ 抓: 抓部件 + 抓界面 (物件名一个都不认) ═════════
@@ -1676,7 +1919,7 @@ do -- ═════════ 弹: 子弹追踪 (自己刚打出去的弹丸
 			local o = {}
 			for _, p in ipairs(cand) do
 				if #o >= max - #live then break end
-				local ok = pcall(function()
+				pcall(function()
 					if not p.Parent or p.Anchored then return end
 					if (p.Position - r.Position).Magnitude > S.bradius then return end -- 别人的弹 / 远处的零件: 半径按「自己枪口能打到哪」给
 					if p.AssemblyLinearVelocity.Magnitude < S.bspdmin then return end -- 站着不动的零件不是弹
@@ -1811,7 +2054,7 @@ do
 				tabBtns[e.id] = btn(tabs, e.tab, function() show(e.id) end, 1 / #ACTIVE)
 			end
 		elseif page then
-			local parent, w, controlW = page, e.w or ((if k == "text" then 1 else 0.5))
+			local parent, w, controlW = page, e.w or ((if k == "text" then 1 else 0.5)), nil
 			if NOUI[k] then w = 1
 			elseif w < 1 then -- 半行控件两两并一行; 行高变了或装不下就另起一行
 				local h = e.h or ROW
@@ -1883,14 +2126,19 @@ local function dumpLines()
 	for _, line in ipairs(pageInfos()) do L[#L + 1] = `  {line}`end
 	for _, f in ipairs(FAILED) do L[#L + 1] = `  ✗ {f}`end
 	for k, f in pairs(DUMP) do local o, lines = pcall(f); L[#L + 1] = `-- {k} dump`; if o then for _, x in ipairs(lines) do L[#L + 1] = "  " .. tostring(x) end else L[#L + 1] = "  dump 报错: " .. tostring(lines) end end
-	if isfile("Selfblox_log.txt") then local t = readfile("Selfblox_log.txt") or ""; L[#L + 1] = "-- 日志尾部"; L[#L + 1] = t:sub(-1500) end
+	if isfile and isfile("Selfblox_log.txt") and readfile then local t = readfile("Selfblox_log.txt") or ""; L[#L + 1] = "-- 日志尾部"; L[#L + 1] = t:sub(-1500) end
 	return L
 end
 dumpNow = function()
 	local txt = table.concat(dumpLines(), "\n")
-	writefile("selfblox_dump.txt", txt)
-	setclipboard(txt)
-	toast(`诊断 {#txt} 字节 → selfblox_dump.txt / 剪贴板`)
+	local savedOk = false
+	if writefile then
+		local okw, errw = pcall(writefile, "selfblox_dump.txt", txt)
+		savedOk = okw
+		if not okw then warn(`[Selfblox] 诊断写入失败: {tostring(errw)}`) end
+	end
+	if setclipboard then pcall(setclipboard, txt) end
+	toast(`诊断 {#txt} 字节` .. (if savedOk then " → selfblox_dump.txt / 剪贴板" else "（文件写入失败）"))
 end
 _G.SB_DUMP = dumpNow
 

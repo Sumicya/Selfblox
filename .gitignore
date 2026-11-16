@@ -3,3 +3,5 @@ Selfblox.json
 Selfblox_log.txt
 selfblox_dump.txt
 plane_debug.txt
+gun_debug.txt
+__pycache__/

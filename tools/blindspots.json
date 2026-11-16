@@ -1,0 +1,33 @@
+{
+  "有意排除": [
+    {
+      "target": "Roblox / Delta 执行器运行时全局变量与实例方法（game, workspace, hookmetamethod, getgc, UIDragDetector, MobilePedals 等）",
+      "reason": "按 Sumicya/selfs GLOBAL.md §11 禁止在仓库内构造或留存假引擎替身或模拟宿主。",
+      "remaining_limitations": "本地 luau-compile 与 luau-analyze 仅能检查 Luau 语法与局部静态结构，无法运行 UI、__namecall 钩子、getgc 扫描及物理约束逻辑。"
+    },
+    {
+      "target": "tools/deadscan.py 作用域遮蔽、函数参数、for 循环变量及动态键值表字段（F/S/W）",
+      "reason": "deadscan.py 采用剥离注释与字符串的词法标识符计数，未实现完整 Luau 作用域解析器，且 F/S/W 表由清单驱动在运行时按字符串键读写。",
+      "remaining_limitations": "若存在同名局部变量遮蔽且其中一份未引用，或 feature{} 注册字段在运行期拼写错误，仅靠词法计数无法单独检出，需辅以 luau-analyze 与运行检查。"
+    }
+  ],
+  "延期未审": [
+    {
+      "target": "Android Delta 真机上的全模块端到端行为（含新增 gun 枪页、sibs 滑条转向与穿墙、grab 抓取、aim 弹道追踪、plane 收发侦听）",
+      "reason": "当前沙箱环境没有 Android Delta 执行器与 Roblox 客户端。",
+      "remaining_limitations": "所有真机运行时行为当前处于未验证状态，合并后仍需在真机实测各模块协同与内存/帧率表现。"
+    }
+  ],
+  "待答问题": [
+    {
+      "target": "服务端权威弹药或服务端射线命中游戏的 gun 模块定向适配",
+      "reason": "不同 Roblox 射击游戏的弹药校验与子弹发射 Remote 结构各异，需在目标游戏实机导出 gun_debug.txt 与 plane_debug.txt 后才能确定。",
+      "remaining_limitations": "若目标游戏仅在服务端扣减弹药或不在客户端调用 workspace:Raycast，则通用无限子弹与子弹穿墙本地钩子不会改变服务端裁决。"
+    },
+    {
+      "target": "已有分叉工作分支 arena/2a114e80-selfblox（PR #6）与 arena/708dd342-selfblox 的后续关闭与删除",
+      "reason": "按 Sumicya/selfs GLOBAL.md §18，关闭 PR 与删除已有提交的分支必须等待指名主人明确批准。",
+      "remaining_limitations": "在主人批准前，PR #6 与上述两个旧分支仍留在远端；当前分支 arena/e2985d6c-selfblox 已将其提交设为祖先可达。"
+    }
+  ]
+}
