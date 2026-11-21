@@ -2,7 +2,7 @@
 --
 -- Copyright (C) 2026 Sumicya
 -- SPDX-License-Identifier: GPL-3.0-or-later
--- 修改记录: 2026-11-21 基于实测样本补齐 gun 内存表当前值与穿透命中计数，统一检测与日志录入口径 (GPL-3 §5)
+-- 修改记录: 2026-11-22 基于 28MB 真机分片日志修复 gun 误匹配自身配置表/NoAmmo/fields 泄漏及 ui/grab 明细抖动刷屏 (GPL-3 §5)
 -- 本程序是自由软件: 你可以按自由软件基金会发布的 GNU 通用公共许可证第 3 版(或你选择的更高版本)重新分发和/或修改它。
 -- 本程序的发布是希望它有用, 但不含任何担保; 甚至不含对适销性或特定用途适用性的默示担保。详见 GNU 通用公共许可证。
 -- 你应当随本程序收到一份 GNU 通用公共许可证副本(仓库里的 LICENSE); 如果没有, 见 <https://www.gnu.org/licenses/>。
@@ -23,7 +23,7 @@
 --   语法基线就是 Luau(运行环境就是它): 26.10.5.28 起用了字符串插值(`{}`)、复合赋值(+= 等)与 if 表达式(if c then a else b),
 --            Lua 5.4 / fengari 都解析不了; 语法检查用官方 Luau 在 /tmp 里临时编, 不入库
 
-local VERSION = "26.11.21.2.120" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 UTC+8); 标签是 v<VERSION>, 打标签要先获主人授权
+local VERSION = "26.11.22.1.121" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 UTC+8); 标签是 v<VERSION>, 打标签要先获主人授权
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
@@ -58,6 +58,7 @@ local function clock(sec) return os.date(((if CLOCK12 then "%I" else "%H")) .. (
 -- ───────── 公共 ─────────
 local LOGFILE, PREVLOG, DUMPFILE = "Selfblox_log.txt", "Selfblox_log.prev.txt", "selfblox_dump.txt"
 local alive, conns, DUMP = true, {}, {}
+local ownTbl = setmetatable({ [O] = true, [saved] = true, [DUMP] = true }, { __mode = "k" }) -- 自家表登记: 避免 gun getgc 扫到 Selfblox 自己的配置/状态表
 local function dumpKeys() local ks = {}; for k in pairs(DUMP) do ks[#ks + 1] = k end; table.sort(ks); return ks end
 local function on(sig, fn) local c = sig:Connect(fn); conns[#conns + 1] = c; return c end
 local function mk(cls, props, parent) local i = Instance.new(cls); for k, v in pairs(props) do i[k] = v end; i.Parent = parent; return i end
@@ -251,6 +252,7 @@ local dumpNow -- 启动完再赋值; 模块里的按钮闭包先引用这个局�
 --   save 存盘键 · def 默认值 · num={键, 默认} 紧跟的数字框 · set(v) 变了调 · tick(dt) 开着每帧调 (sig="render" 走 PreRender) · off() 关掉/卸载调
 --   init(page) 建好后调一次 (接事件) · fn 按钮回调 · build(p) 自定义控件 · dump 诊断提供者 · info() 页状态追加
 local F, S, W, FEATURES, ACTIVE = {}, {}, {}, {}, {} -- F 开关 / S 数值 / W 控件 (开关存 set(v) 句柄, 文字行存 TextLabel) / 清单 / 装上的页
+ownTbl[F], ownTbl[S], ownTbl[W], ownTbl[FEATURES], ownTbl[ACTIVE], ownTbl[ncHandlers] = true, true, true, true, true, true
 local pageInfos -- 启动完再赋值 (日志模块先引用)
 local function say(key, s) local w = W[key]; if w then w.Text = s end end
 local function feature(e)
@@ -437,7 +439,7 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 	-- 26.10.15.6.89(162 条)的实测: 「没认出滑块」, 右半屏 6 个 Unlocked/ImageIcon, 父名/类名/尺寸/子物件数
 	-- 6 个全一样, 只有坐标能分 —— #0–#139 排成一行 y=109 60x60 (x 329/421/514/606/698/791, 间距 ~92),
 	-- #140 起同一排变成 y=183 63x63 (x 1121…1611, 间距 98), Active 方块 54 → 64。是横排的一排图标, 还没认出来。
-	local uiFound, uiSeen, uiInv, uiInvN, uiSent, uiDone, uiT = {}, {}, "", 0, nil, false, -1e9
+	local uiFound, uiSeen, uiInv, uiInvN, uiSent, uiSig, uiDone, uiT = {}, {}, "", 0, nil, "", false, -1e9
 	local uiFull = {} -- 没截断的那份: 日志行有字节护栏, 诊断打包里没有, 全清单在打包里
 	local function sbOwn(p) while p do if p == gui or p == FX then return true end; p = p.Parent end; return false end
 	local function halfW() return ((vp and vp.X) or 800) / 2 end
@@ -493,6 +495,9 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 			end
 		end
 		table.sort(inv) -- pairs/GetDescendants 的顺序不保证, 排一下日志才可复现
+		local sigParts = {}
+		for i, s in ipairs(inv) do sigParts[i] = s:match("^[^@]+") or s end
+		uiSig = `{#inv}:{nFound}:` .. table.concat(sigParts, ";")
 		-- 16KB 是护栏不是筛选: 日志超 S.logmax 就整个重写, 上千物件的清单会把速度样本全冲掉。砍了几个明写出来。
 		local parts, used, cut = {}, 0, 0
 		for i, s in ipairs(inv) do
@@ -513,9 +518,9 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 		end
 		if #o > 0 then table.sort(o); return table.concat(o, " ") end
 		if not uiDone then return "还没探过" end
-		-- 同一份清单不重打: info 每 S.logint 秒进一次日志, 一秒没变也打五遍, 十来秒就把 logmax 顶爆重写。
-		if uiInv == uiSent then return `没认出滑块 (视口 {vp.X}x{vp.Y}; 物件 {uiInvN} 个, 清单同上)` end
-		uiSent = uiInv
+		-- 结构签名(去像素坐标)不变就不重打 16KB 清单: 否则 1px 动画/浮动条会每轮把全清单刷进日志。
+		if uiSig == uiSent then return `没认出滑块 (视口 {vp.X}x{vp.Y}; 物件 {uiInvN} 个, 清单同上)` end
+		uiSent = uiSig
 		return `没认出滑块 (视口 {vp.X}x{vp.Y}; 物件 {uiInvN} 个; 全清单: {uiInv})`
 	end
 
@@ -633,24 +638,36 @@ do -- ═════════ 动: 角色 (速度 / 飞行 / 高跳 / 旋转
 	feature{ kind = "hold", key = "down", label = "▼ 下降", h = 36 }
 	feature{ kind = "num", key = "promptdist", def = 1000, label = "秒互动距离", w = 1 }
 	feature{ kind = "tick", off = function() if att then att:Destroy(); att = nil end end } -- 只在卸载时: 飞行 / 旋转共用的 Attachment
-	feature{ kind = "dump", key = "ui", dump = function()
+	feature{ kind = "dump", key = "ui", dump = function(forLog)
 		-- 日志行 16KB 护栏砍掉的那部分在这里补全: 3699 个物件砍掉 3381 个, 等于没列。
-		if #uiFull == 0 then return { "还没扫过界面 (先让「动」页跑一轮再点诊断打包)" } end
+		if #uiFull == 0 then return { "还没扫过界面 (先让「动」页跑一轮再点诊断打包)" }, (if forLog then "empty" else nil) end
 		local L = { `-- 界面物件全清单 {#uiFull} 个 (一个不筛、一个不砍, 按字符串排)` }
 		for _, x in ipairs(uiFull) do L[#L + 1] = "  " .. x end
-		return L
+		return L, (if forLog then uiSig else nil)
 	end }
 end
 
 do -- ═════════ 枪: 无限子弹 / 子弹穿墙 / 探针报告 ═════════
 	local AK = { "ammo", "clip", "magazine", "cartridge" } -- 弹药字段名 hint (不匹配伤害/射速等调参字段)
+	local AK_BAD = { "noammo", "no_ammo", "needammo", "ammocost", "ammoprice", "ammosound", "ammoicon", "ammotext", "ammolabel", "ammotype", "ammomodel", "ammogui", "ammoui" } -- 排除非弹药数量字段 (实测 26.11.21 扫到过 NoAmmo=80)
 	local vals = setmetatable({}, { __mode = "k" }) -- NumberValue/IntValue -> 原值
 	local attrs = setmetatable({}, { __mode = "k" }) -- Instance -> { key = 原值 }
 	local tbls = setmetatable({}, { __mode = "k" }) -- 配置表 -> { key = 原值 }
 	local stat = { refills = 0, fields = 0, rays = 0, pierced = 0, wallHits = 0, misses = 0, inc = 0 }
+	ownTbl[vals], ownTbl[attrs], ownTbl[tbls], ownTbl[stat], ownTbl[AK], ownTbl[AK_BAD] = true, true, true, true, true, true
 	local hooked, gunAcc = false, 0
 
-	local function isAmmoName(n) return hint(n, AK) ~= nil end
+	local function isAmmoName(n)
+		if hint(n, AK_BAD) then return false end
+		return hint(n, AK) ~= nil
+	end
+	local function countFields()
+		local n = 0
+		for v in pairs(vals) do if v.Parent then n += 1 end end
+		for i, t in pairs(attrs) do if i.Parent then for _ in pairs(t) do n += 1 end end end
+		for _, t in pairs(tbls) do for _ in pairs(t) do n += 1 end end
+		return n
+	end
 	local function containers() -- 只扫武器相关容器: 手持/背包 Tool + leaderstats; 弹药 GUI 按需再加
 		local out, seen = {}, {}
 		local function add(i) if i and not seen[i] then seen[i] = true; out[#out + 1] = i end end
@@ -662,14 +679,14 @@ do -- ═════════ 枪: 无限子弹 / 子弹穿墙 / 探针报�
 		return out
 	end
 	local function trackVal(v)
-		if vals[v] == nil and (v:IsA("IntValue") or v:IsA("NumberValue")) and isAmmoName(v.Name) then vals[v] = v.Value; stat.fields += 1 end
+		if vals[v] == nil and (v:IsA("IntValue") or v:IsA("NumberValue")) and isAmmoName(v.Name) then vals[v] = v.Value end
 	end
 	local function trackAttrs(i)
 		if not (i:IsA("Tool") or i:IsA("Model") or i:IsA("Folder") or i:IsA("Configuration")) then return end
 		for k, x in pairs(i:GetAttributes()) do
 			if type(x) == "number" and isAmmoName(k) then
 				local t = attrs[i]; if not t then t = {}; attrs[i] = t end
-				if t[k] == nil then t[k] = x; stat.fields += 1 end
+				if t[k] == nil then t[k] = x end
 			end
 		end
 	end
@@ -682,42 +699,45 @@ do -- ═════════ 枪: 无限子弹 / 子弹穿墙 / 探针报�
 			local ok, gc = pcall(getgc, true)
 			if ok and type(gc) == "table" then
 				for _, o in ipairs(gc) do
-					if type(o) == "table" and o ~= _G and o ~= shared and getmetatable(o) == nil and tbls[o] == nil then
+					if type(o) == "table" and o ~= _G and o ~= shared and not ownTbl[o] and tbls[o] == nil and not (table.isfrozen and table.isfrozen(o)) then
 						local keys, hitK, bad = 0, false, false
-						for k, x in pairs(o) do
+						for k, x in next, o do
 							keys += 1
-							if keys > 64 then bad = true; break end
-							if type(k) == "string" and type(x) == "number" and k:lower():find("ammo", 1, true) then hitK = true end
+							if keys > 128 then bad = true; break end
+							if type(k) == "string" and type(x) == "number" and isAmmoName(k) then hitK = true end
 						end
 						if hitK and not bad then
 							local t = {}
-							for k, x in pairs(o) do if type(k) == "string" and type(x) == "number" and k:lower():find("ammo", 1, true) then t[k] = x end end
-							tbls[o] = t; stat.fields += 1
+							for k, x in next, o do if type(k) == "string" and type(x) == "number" and isAmmoName(k) then t[k] = x end end
+							tbls[o] = t
 						end
 					end
 				end
 			end
 		end
+		stat.fields = countFields()
 	end
 	local function refill()
 		local amt = math.max(1, nn(S.ammo))
+		local pruned = false
 		for v in pairs(vals) do
 			if v.Parent then
 				if v.Value < amt and pcall(function() v.Value = amt end) then stat.refills += 1 end
-			else vals[v] = nil end
+			else vals[v] = nil; pruned = true end
 		end
 		for i, t in pairs(attrs) do
 			if i.Parent then
 				for k in pairs(t) do
 					if (i:GetAttribute(k) or amt) < amt and pcall(function() i:SetAttribute(k, amt) end) then stat.refills += 1 end
 				end
-			else attrs[i] = nil end
+			else attrs[i] = nil; pruned = true end
 		end
 		for o, t in pairs(tbls) do
 			for k in pairs(t) do
 				if type(o[k]) == "number" and o[k] < amt and pcall(function() o[k] = amt end) then stat.refills += 1 end
 			end
 		end
+		if pruned then stat.fields = countFields() end
 	end
 	local function restore()
 		for v, orig in pairs(vals) do if v.Parent then pcall(function() v.Value = orig end) end end
@@ -1897,7 +1917,8 @@ do -- ═════════ 抓: 抓部件 + 抓界面 (物件名一个都
 			u2 += #line
 		end
 		if cut2 > 0 then L[#L + 1] = `  …还有 {cut2} 个没列(超32KB)` end
-		local sig = if forLog then `{nA}:{nL}:{nAt}:{#pr}:{#rem}:{#gb}:{tostring(F.grange)}:{tostring(S.gradius)}:{tostring(S.gspeed)}:{tostring(S.gscan)}:{tostring(S.gkey)}` else nil
+		local grabKey = if F.pull or F.autopull then tostring(nL) else tostring(nL > 0)
+		local sig = if forLog then `{grabKey}:{nAt}:{#pr}:{#rem}:{#gb}:{tostring(F.grange)}:{tostring(S.gradius)}:{tostring(S.gspeed)}:{tostring(S.gscan)}:{tostring(S.gkey)}` else nil
 		return L, sig
 	end
 	feature{ kind = "page", id = "grab", tab = "抓", info = function()

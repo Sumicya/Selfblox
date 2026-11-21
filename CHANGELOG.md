@@ -4,6 +4,14 @@
 
 - 本仓不出包，产物命名与版本号规则没有适用对象；不新增构建工作流。
 
+## 2026-11-22
+
+- 基于真机 28 MB 分片日志（`Selfblox_log_00.txt` + `Selfblox_log_01.txt`，`26.11.21.2.120` @ `place=3678761576`）修复 4 项实测问题（`selfblox.lua` `VERSION` 升至 `26.11.22.1.121`）：
+  - **消除 `ui` 明细 16 MB / 58s 刷屏**：`uiProbe()` 新增去坐标结构签名 `uiSig`（`#inv:#uiFound:Parent/Name:Class`），`uiTxt()` 与 `ui` `DUMP(forLog)` 按 `uiSig` 去重，界面 1px 动画或叠层抖动不再重复写入 10129 行 `ui dump` 与 16 KB `moc` 行内清单（手动「诊断打包」仍完整输出）；
+  - **消除 `grab` 明细 5.68 MB 刷屏**：`grabLines(forLog)` 签名移除走动时进出扫描半径的锚定地形总数 `nA`，未启用抓取时仅以 `nL > 0` 判变化，避免飞行弹丸与树丛进出每 0.2s 重刷 900 行；
+  - **修复 `gun` `getgc` 自扫与误匹配**：登记自家表 `ownTbl`（`O`/`saved`/`F`/`S`/`W`/`FEATURES`/`ACTIVE`/`DUMP`/`ncHandlers`/`gun` 内部表）跳过 `S.ammo = 999` 自扫假命中；`isAmmoName` 排除 `NoAmmo`（`AK_BAD`）等非弹量字段；`getgc` 扫描改用原始 `next` + `isAmmoName` + `table.isfrozen` 守卫（键数上限放宽至 128），覆盖带元表的武器实例表与 `clip`/`magazine`/`cartridge` 键；
+  - **修复 `gun` `fields` 计数单调泄漏**：新增 `countFields()` 在 `scan()` 与 `refill()` 清理失效对象后按存活数重算 `stat.fields`，消除字段数随重生/切枪从 2 虚增到 69 的问题。
+
 ## 2026-11-21
 
 - 基于真机样本（`place=78884249003161` `GUN` 报告：`fields=9`、`rays=11896`、`pierced=888`）补强 `gun` 检测口径（`selfblox.lua` `VERSION` 升至 `26.11.21.2.120`）：
