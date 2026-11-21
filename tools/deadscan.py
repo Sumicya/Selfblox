@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""死代码与盲区检查:
-1. `local` 标识符在剔除注释与字符串字面量(含 Luau 反引号插值外文本)的源码里出现 <= 1 次 = 疑似死码;
-2. 校验 `tools/*.py` 无未使用的 import;
-3. 校验 `save("k", ...)` 键均有对应的 `opt("k", ...)` 读取;
-4. 校验 `tools/blindspots.json` 三类盲区(`excluded`/`deferred`/`open_questions`)非空且每条含真实存在路径与 `why`/`limit` 两栏。
+"""死代码、死引用与盲区检查:
+1. Luau `local` 标识符在剔除注释与字符串字面量(含反引号插值外文本)的源码里出现 <= 1 次 = 疑似死码;
+2. 校验 `save("k", ...)` 键均有对应的 `opt("k", ...)` 或 `num`/`key` 注册读取;
+3. 校验 `tools/*.py` 无未使用的 import;
+4. 校验 Markdown 文档中的相对本地链接(`死引用`)指向真实文件;
+5. 校验 `tools/blindspots.json` 三类盲区(`excluded`/`deferred`/`open_questions`)非空,
+   每条含非空 `why`/`limit`, 且 `path` 真实存在于仓库内但不指向仓库根目录(`.`)。
 用法: python3 tools/deadscan.py [文件...]   (默认 selfblox.lua)
 退出码: 0 干净, 1 有问题。
 """
@@ -18,7 +20,9 @@ LOCAL = re.compile(
     r"\blocal\s+(?:function\s+)?([A-Za-z_][A-Za-z0-9_]*(?:\s*,\s*[A-Za-z_][A-Za-z0-9_]*)*)"
 )
 OPT_KEY = re.compile(r'\bopt\(\s*"([^"]+)"')
+FEAT_KEY = re.compile(r'\bkey\s*=\s*"([^"]+)"|\bnum\s*=\s*\{\s*"([^"]+)"')
 SAVE_KEY = re.compile(r'\bsave\(\s*"([^"]+)"')
+MD_LINK = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
 
 
 def clean_luau(src: str) -> str:
@@ -101,9 +105,11 @@ def scan_luau(path: Path):
             if counts.get(name, 0) <= 1 and key not in seen:
                 seen.add(key)
                 dead.append((src[: m.start()].count("\n") + 1, name))
-    opts = set(OPT_KEY.findall(raw))
+    reads = set(OPT_KEY.findall(raw))
+    for k1, k2 in FEAT_KEY.findall(raw):
+        reads.add(k1 or k2)
     saves = set(SAVE_KEY.findall(raw))
-    write_only = sorted(saves - opts)
+    write_only = sorted(saves - reads)
     return dead, write_only
 
 
@@ -131,10 +137,33 @@ def scan_py_imports(py_files):
     return unused
 
 
-def check_blindspots(path: Path):
+def scan_doc_refs(md_files):
+    broken = []
+    for p in md_files:
+        if not p.exists():
+            continue
+        in_code = False
+        for lineno, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1):
+            if line.strip().startswith("```"):
+                in_code = not in_code
+                continue
+            if in_code:
+                continue
+            for m in MD_LINK.finditer(line):
+                tgt = m.group(1).strip()
+                if "://" in tgt or tgt.startswith("#") or not tgt:
+                    continue
+                rel = tgt.split("#", 1)[0]
+                if rel and not (p.parent / rel).exists():
+                    broken.append((str(p), lineno, tgt))
+    return broken
+
+
+def check_blindspots(path: Path, repo_root: Path):
     errs = []
     if not path.exists():
         return [f"缺少盲区清单: {path}"]
+    root = repo_root.resolve()
     data = json.loads(path.read_text(encoding="utf-8"))
     for cat in ("excluded", "deferred", "open_questions"):
         items = data.get(cat)
@@ -146,8 +175,16 @@ def check_blindspots(path: Path):
                 errs.append(f"{path}: {cat}[{idx}] 必须为对象")
                 continue
             p = item.get("path")
-            if not isinstance(p, str) or not p.strip() or not Path(p).exists():
-                errs.append(f"{path}: {cat}[{idx}] 的 path 不是真实存在的路径: {p!r}")
+            if not isinstance(p, str) or not p.strip():
+                errs.append(f"{path}: {cat}[{idx}] 缺少非空字段 path")
+            else:
+                target = (root / p).resolve()
+                if target == root:
+                    errs.append(f"{path}: {cat}[{idx}] 的 path 不许指向仓库根目录: {p!r}")
+                elif not target.is_relative_to(root):
+                    errs.append(f"{path}: {cat}[{idx}] 的 path 越出仓库根目录: {p!r}")
+                elif not target.exists():
+                    errs.append(f"{path}: {cat}[{idx}] 的 path 不是真实存在的路径: {p!r}")
             for req in ("why", "limit"):
                 val = item.get(req)
                 if not isinstance(val, str) or not val.strip():
@@ -169,7 +206,10 @@ def main() -> int:
     for p, line, name in scan_py_imports(sorted(Path("tools").glob("*.py"))):
         print(f"{p}:{line}: 未使用 import {name}")
         bad += 1
-    for err in check_blindspots(Path("tools/blindspots.json")):
+    for p, line, tgt in scan_doc_refs([Path("README.md"), Path("CHANGELOG.md")]):
+        print(f"{p}:{line}: 死引用 {tgt}")
+        bad += 1
+    for err in check_blindspots(Path("tools/blindspots.json"), Path(".")):
         print(err)
         bad += 1
     print(f"deadscan: {len(paths)} Luau 文件, 问题 {bad}")
