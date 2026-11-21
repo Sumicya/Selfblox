@@ -8,7 +8,7 @@
 -- 你应当随本程序收到一份 GNU 通用公共许可证副本(仓库里的 LICENSE); 如果没有, 见 <https://www.gnu.org/licenses/>。
 -- 单文件被单独转走时, 这几行是唯一还跟着走的声明, 别删。
 -- 版本: 下面的 VERSION 是唯一来源(五段 yy.m.d.当日序号.总序号, 序号按实际交付手动计数); 面板标题 / 诊断快照 / 启动打印都读它
--- 用法:  loadstring(game:HttpGet("https://raw.githubusercontent.com/Sumicya/Selfblox/HEAD/selfblox.lua"))()
+-- 用法:  loadstring(game:HttpGet("https://raw.githubusercontent.com/Sumicya/Selfblox/arena/e2985d6c-selfblox/selfblox.lua"))()
 -- 覆盖:  执行前 _G.SB = { spd = 50, flyspd = 80, only = {"moc", "sibs"} }
 -- 优先级: _G.SB > Selfblox.json(面板里改过的值) > 默认值
 -- 卸载:  _G.SB_UNLOAD()   重跑会自动先卸载

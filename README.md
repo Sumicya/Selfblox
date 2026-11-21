@@ -4,21 +4,21 @@
 
 ## 是什么
 
-一个独立运行脚本，包含九个模块页签，全部配置支持执行前通过 `_G.SB` 覆盖（优先级：`_G.SB` > `Selfblox.json` > 默认值）。
+独立运行的单文件脚本提供九个模块页签，全部配置支持执行前通过 `_G.SB` 覆盖（优先级：`_G.SB` > `Selfblox.json` > 默认值）。
 
 ### 模块
 
 | 页签 | 模块 | 内容 |
 |---|---|---|
 | 动 | `moc` | 速度（`root` / `walk` / `cframe`）、飞行、高跳、旋转、无限跳、穿墙、夜视、秒互动（普通 / 强制）与秒互动距离 |
-| 枪 | `gun` | 无限子弹（手持与背包 Tool 及 `leaderstats` 的弹药 Value/属性自动回填，`getgc` 深改含 `ammo` 键的配置表，关闭还原）、子弹穿墙（共享 `__namecall` 钩子拦 `workspace.Raycast` 续射至角色，不改白名单射线）、探针报告写 `gun_debug.txt` 并复制剪贴板 |
-| 车 | `sibs` | 上车即控，未上车对准载具按「换车」准星锁定（拒绝地图与超大装配体），进游戏或下车自动绑最近空座位。加速、抓地、转向、定速、穿墙（保留轮胎碰撞）、全穿（本车非锚定件全关闭碰撞）、飞车、翻转、常亮灯、按住闪灯、喇叭与屏幕底部滑条转向 |
+| 枪 | `gun` | 无限子弹（自动回填手持与背包 Tool 及 `leaderstats` 弹药，支持 `getgc` 深改配置表并在关闭时还原）、子弹穿墙（共享 `__namecall` 钩子拦 `workspace.Raycast` 续射至角色，不改白名单射线）、探针报告写 `gun_debug.txt` 并复制剪贴板 |
+| 车 | `sibs` | 上车即控，未上车对准载具按「换车」准星锁定（拒绝地图与超大装配体），进游戏或下车自动绑最近空座位，提供加速、抓地、转向、定速、穿墙（保留轮胎碰撞）、全穿、飞车、翻转、常亮灯、按住闪灯、喇叭与底部滑条转向 |
 | 漂 | `drift` | 人物 `VectorForce` 持续前推，自动读取当前朝向 |
-| 显 | `hud` | 顶部数据条（延迟、帧率、内存、时间、人数、坐标）、速度箭头、玩家 ESP（原生 `Highlight` + 名牌距离） |
-| 志 | `log` | 配置与各模块状态定时追加 `Selfblox_log.txt`，超上限重写，「诊断打包」将整机快照写进 `selfblox_dump.txt` 并复制剪贴板 |
+| 显 | `hud` | 顶部数据条（延迟、帧率、内存、时间、人数、坐标）、速度箭头与玩家 ESP（原生 `Highlight` 与名牌距离） |
+| 志 | `log` | 配置与各模块状态定时追加 `Selfblox_log.txt`（超上限重写），点击「诊断打包」写入 `selfblox_dump.txt` 并复制剪贴板 |
 | 机 | `plane` | 查找飞机（含无座位机翼残骸）、判队伍、列 Remote、收发侦听（共享 `__namecall` 钩子）、高亮与报告写 `plane_debug.txt` 并复制剪贴板 |
-| 抓 | `grab` | 按范围三档（散件 / 带属性 / 全部）与推法三档（自动 / 只写速度 / 只搬位）拉近周边部件，支持批量触发启用中的 `ProximityPrompt` 与按关键字点击界面按钮 |
-| 弹 | `aim` | 对刚生成的实体弹丸做方向偏转追踪，可调转向速率、视角锥、射程、同时追踪数量、寿命、最低速度、生成半径、提前量、目标部位与队友过滤 |
+| 抓 | `grab` | 按范围三档（散件 / 带属性 / 全部）与推法三档（自动 / 只写速度 / 只搬位）拉近周边部件，批量触发启用中的 `ProximityPrompt` 并按关键字点击界面按钮 |
+| 弹 | `aim` | 对刚生成的实体弹丸做方向偏转追踪，支持转向速率、视角锥、射程、同时追踪数量、寿命、最低速度、生成半径、提前量、目标部位与队友过滤 |
 
 ### 覆盖参数
 
@@ -64,25 +64,25 @@ Copyright (C) 2026 Sumicya
 
 ## 从哪下
 
-直接从本仓库主线拉取 `selfblox.lua`，或下载到本地手机存储目录 `/storage/emulated/0/Download`：
+当前最新代码位于分支 `arena/e2985d6c-selfblox`（尚未合入 `main`），拉取并保存到手机目录 `/storage/emulated/0/Download`：
 
 ```bash
-curl -fL "https://raw.githubusercontent.com/Sumicya/Selfblox/HEAD/selfblox.lua" -o "/storage/emulated/0/Download/selfblox.lua" && ls -l "/storage/emulated/0/Download/selfblox.lua"
+curl -fL "https://raw.githubusercontent.com/Sumicya/Selfblox/arena/e2985d6c-selfblox/selfblox.lua" -o "/storage/emulated/0/Download/selfblox.lua" && ls -l "/storage/emulated/0/Download/selfblox.lua"
 ```
 
 ## 怎么装
 
 ### 在线加载
 
-在 Delta 执行器内直接运行：
+在 Delta 执行器内直接运行当前分支最新脚本：
 
 ```lua
-loadstring(game:HttpGet("https://raw.githubusercontent.com/Sumicya/Selfblox/HEAD/selfblox.lua"))()
+loadstring(game:HttpGet("https://raw.githubusercontent.com/Sumicya/Selfblox/arena/e2985d6c-selfblox/selfblox.lua"))()
 ```
 
 ### 离线副本加载
 
-在 Termux（需先授予存储权限 `termux-setup-storage`）将文件复制到 Delta 工作目录：
+在 Termux（需先执行 `termux-setup-storage` 授权存储）将文件复制到 Delta 工作目录：
 
 ```bash
 cp "/storage/emulated/0/Download/selfblox.lua" "/storage/emulated/0/Delta/workspace/selfblox.lua"

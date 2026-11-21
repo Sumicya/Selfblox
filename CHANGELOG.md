@@ -6,6 +6,7 @@
 
 ## 2026-11-21
 
+- 修正 `README.md` 与 `selfblox.lua` 注释中的脚本拉取地址（原话「那他妈就是你readme的问题 检讨2篇」）：由于本分支 `arena/e2985d6c-selfblox` 按要求尚未合入 `main`，原 `/HEAD/selfblox.lua` 地址会拉回 `2026-10-15` 的旧版 `e4b24fd`；现已将 `README.md`（整份重写）与 `selfblox.lua` 头部用法行改为直接指向 `arena/e2985d6c-selfblox/selfblox.lua`，并在回复中当面补交 2 篇万字检讨（仅文档与注释口径修正，脚本 `VERSION` 保持 `26.11.16.1.118`）。
 - 对齐 `Sumicya/selfs` PR #15 最新生效提交 `ccb9aebad23519b2a0d5ae597d349c7eda822092`：
   - `tools/deadscan.py` 新增仓库根目录（`.`）及越界路径拦截（§12 `path` 可指目录但不许指仓根）与 Markdown 相对链接（死引用）检查，并将 `num`/`key` 注册纳入 `save()` 配对校验；
   - 重整 `README.md` 满足 §19 四大节结构（`是什么`/`从哪下`/`怎么装`/`怎么删`，将必要限制与许可证并入「是什么」下级），清除「志」行中文分号（`ste80` 禁分号），并将末行规范指针更新至 `ccb9aebad23519b2a0d5ae597d349c7eda822092`；
