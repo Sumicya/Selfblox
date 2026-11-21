@@ -2,7 +2,7 @@
 --
 -- Copyright (C) 2026 Sumicya
 -- SPDX-License-Identifier: GPL-3.0-or-later
--- 修改记录: 2026-11-21 统一检测与日志录入口径（新增录明细开关、全部模块长时录制与续卷，收口到 Selfblox_log.txt / selfblox_dump.txt） (GPL-3 §5)
+-- 修改记录: 2026-11-21 基于实测样本补齐 gun 内存表当前值与穿透命中计数，统一检测与日志录入口径 (GPL-3 §5)
 -- 本程序是自由软件: 你可以按自由软件基金会发布的 GNU 通用公共许可证第 3 版(或你选择的更高版本)重新分发和/或修改它。
 -- 本程序的发布是希望它有用, 但不含任何担保; 甚至不含对适销性或特定用途适用性的默示担保。详见 GNU 通用公共许可证。
 -- 你应当随本程序收到一份 GNU 通用公共许可证副本(仓库里的 LICENSE); 如果没有, 见 <https://www.gnu.org/licenses/>。
@@ -23,7 +23,7 @@
 --   语法基线就是 Luau(运行环境就是它): 26.10.5.28 起用了字符串插值(`{}`)、复合赋值(+= 等)与 if 表达式(if c then a else b),
 --            Lua 5.4 / fengari 都解析不了; 语法检查用官方 Luau 在 /tmp 里临时编, 不入库
 
-local VERSION = "26.11.21.1.119" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 UTC+8); 标签是 v<VERSION>, 打标签要先获主人授权
+local VERSION = "26.11.21.2.120" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 UTC+8); 标签是 v<VERSION>, 打标签要先获主人授权
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
@@ -647,7 +647,7 @@ do -- ═════════ 枪: 无限子弹 / 子弹穿墙 / 探针报�
 	local vals = setmetatable({}, { __mode = "k" }) -- NumberValue/IntValue -> 原值
 	local attrs = setmetatable({}, { __mode = "k" }) -- Instance -> { key = 原值 }
 	local tbls = setmetatable({}, { __mode = "k" }) -- 配置表 -> { key = 原值 }
-	local stat = { refills = 0, fields = 0, rays = 0, pierced = 0 }
+	local stat = { refills = 0, fields = 0, rays = 0, pierced = 0, wallHits = 0, misses = 0, inc = 0 }
 	local hooked, gunAcc = false, 0
 
 	local function isAmmoName(n) return hint(n, AK) ~= nil end
@@ -741,7 +741,7 @@ do -- ═════════ 枪: 无限子弹 / 子弹穿墙 / 探针报�
 		local exclude, left = {}, math.max(1, math.floor(nn(S.pierce)))
 		rp.IgnoreWater, rp.CollisionGroup = true, "Default"
 		if params then
-			if params.FilterType == Enum.RaycastFilterType.Include then return res end -- 白名单射线语义不能改
+			if params.FilterType == Enum.RaycastFilterType.Include then stat.inc += 1; return res end -- 白名单射线语义不能改
 			rp.IgnoreWater, rp.CollisionGroup = params.IgnoreWater, params.CollisionGroup
 			for _, i in ipairs(params.FilterDescendantsInstances) do exclude[#exclude + 1] = i end
 		end
@@ -752,8 +752,10 @@ do -- ═════════ 枪: 无限子弹 / 子弹穿墙 / 探针报�
 			left -= 1
 			stat.pierced += 1
 		end
-		if res and not isChar(res.Instance) then return nil end -- 穿完仍没打到人: 按未命中处理
-		return res
+		if res and isChar(res.Instance) then stat.wallHits += 1; return res end
+		if res then stat.misses += 1; return nil end -- 穿完仍没打到人: 按未命中处理
+		stat.misses += 1
+		return nil
 	end
 	local function setWall(v)
 		if v then
@@ -781,18 +783,18 @@ do -- ═════════ 枪: 无限子弹 / 子弹穿墙 / 探针报�
 		if gunAcc < 0.25 then return end
 		gunAcc = 0
 		if F.ginf then scan(); refill() end
-		say("gun_status", string.format("字段 %d · 回填 %d · 射线 %d(穿 %d)", stat.fields, stat.refills, stat.rays, stat.pierced))
+		say("gun_status", string.format("字段 %d · 回填 %d · 射线 %d(穿%d/墙中%d)", stat.fields, stat.refills, stat.rays, stat.pierced, stat.wallHits))
 	end
 	local function gunLines()
 		local L = {
-			string.format("inf=%s wall=%s amount=%d pierce=%d fields=%d refills=%d rays=%d pierced=%d",
-				tostring(F.ginf), tostring(F.gwall), math.max(1, nn(S.ammo)), math.max(1, math.floor(nn(S.pierce))), stat.fields, stat.refills, stat.rays, stat.pierced),
+			string.format("inf=%s wall=%s amount=%d pierce=%d fields=%d refills=%d rays=%d pierced=%d wallHits=%d misses=%d inc=%d",
+				tostring(F.ginf), tostring(F.gwall), math.max(1, nn(S.ammo)), math.max(1, math.floor(nn(S.pierce))), stat.fields, stat.refills, stat.rays, stat.pierced, stat.wallHits, stat.misses, stat.inc),
 			`-- 执行器: hookmetamethod={tostring(hookmetamethod ~= nil)} getgc={tostring(getgc ~= nil)} hookfunction={tostring(hookfunction ~= nil)}`,
 			"-- 当前跟踪字段",
 		}
 		for v, orig in pairs(vals) do if v.Parent then L[#L + 1] = `  {v:GetFullName()} = {tostring(v.Value)} (原 {tostring(orig)})` end end
 		for i, t in pairs(attrs) do if i.Parent then for k, x in pairs(t) do L[#L + 1] = `  attr {i:GetFullName()}.{k} = {tostring(i:GetAttribute(k))} (原 {tostring(x)})` end end end
-		for _, t in pairs(tbls) do for k, x in pairs(t) do L[#L + 1] = `  tbl {k} (原 {tostring(x)})` end end
+		for o, t in pairs(tbls) do for k, x in pairs(t) do L[#L + 1] = `  tbl {k} = {tostring(o[k])} (原 {tostring(x)})` end end
 		L[#L + 1] = "-- 手持工具"
 		local c = me.Character
 		if c then for _, d in ipairs(c:GetChildren()) do if d:IsA("Tool") then
@@ -804,7 +806,7 @@ do -- ═════════ 枪: 无限子弹 / 子弹穿墙 / 探针报�
 	end
 
 	feature{ kind = "page", id = "gun", tab = "枪", info = function()
-		return string.format("无限=%s 穿墙=%s 字段=%d 回填=%d 射线=%d/%d", tostring(F.ginf), tostring(F.gwall), stat.fields, stat.refills, stat.rays, stat.pierced)
+		return string.format("无限=%s 穿墙=%s 字段=%d 回填=%d 射线=%d/%d/墙中%d", tostring(F.ginf), tostring(F.gwall), stat.fields, stat.refills, stat.rays, stat.pierced, stat.wallHits)
 	end }
 	feature{ key = "ginf", label = "无限子弹", num = { "ammo", 999 }, set = function(v) if v then scan(true); refill() end end, off = restore }
 	feature{ key = "gwall", label = "子弹穿墙", num = { "pierce", 16 }, set = setWall, off = function() setWall(false) end }

@@ -6,6 +6,9 @@
 
 ## 2026-11-21
 
+- 基于真机样本（`place=78884249003161` `GUN` 报告：`fields=9`、`rays=11896`、`pierced=888`）补强 `gun` 检测口径（`selfblox.lua` `VERSION` 升至 `26.11.21.2.120`）：
+  - `gunLines()` 的 `tbl` 记录补充打印当前实时值 `o[k]`（`tbl <k> = <cur> (原 <orig>)`），消除此前只打印初始快照无法判断内存值是否被游戏写回的问题；
+  - `pierceCast` 新增 `wallHits`（穿墙后命中角色）、`misses`（穿透耗尽或无命中）与 `inc`（白名单射线直通）三项计数，并输出到 `gunLines()`、`gun_status` 与 `pageInfos()`。
 - 统一检测与日志录入口径，新增「录明细」开关并支持全部模块长时录制（`selfblox.lua` `VERSION` 升至 `26.11.21.1.119`）：
   - 全仓检测与报告统一收口到两条产物：`Selfblox_log.txt`（持续追加时间线，设上限时轮转备份 `Selfblox_log.prev.txt`）与 `selfblox_dump.txt`（统一快照），删去分散的 `gun_debug.txt` / `plane_debug.txt` 各自写盘与剪贴板重复实现，移除各模块内层 `==== ... ====` 头；
   - 将 `plane`（`机`）正式接入统一 `DUMP` 注册表（`planeLines(forLog)`），缓冲区上限扩至 `2000` 组，「自动 5s」只重扫不覆写独立文件，「写报告」与 `gun`「探针报告」统一触发 `dumpNow()`；
