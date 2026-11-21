@@ -2,7 +2,7 @@
 --
 -- Copyright (C) 2026 Sumicya
 -- SPDX-License-Identifier: GPL-3.0-or-later
--- 修改记录: 2026-11-16 合入 gun 模块与共享 __namecall 钩子 (GPL-3 §5)
+-- 修改记录: 2026-11-21 统一检测与日志录入口径（新增录明细开关、全部模块长时录制与续卷，收口到 Selfblox_log.txt / selfblox_dump.txt） (GPL-3 §5)
 -- 本程序是自由软件: 你可以按自由软件基金会发布的 GNU 通用公共许可证第 3 版(或你选择的更高版本)重新分发和/或修改它。
 -- 本程序的发布是希望它有用, 但不含任何担保; 甚至不含对适销性或特定用途适用性的默示担保。详见 GNU 通用公共许可证。
 -- 你应当随本程序收到一份 GNU 通用公共许可证副本(仓库里的 LICENSE); 如果没有, 见 <https://www.gnu.org/licenses/>。
@@ -23,7 +23,7 @@
 --   语法基线就是 Luau(运行环境就是它): 26.10.5.28 起用了字符串插值(`{}`)、复合赋值(+= 等)与 if 表达式(if c then a else b),
 --            Lua 5.4 / fengari 都解析不了; 语法检查用官方 Luau 在 /tmp 里临时编, 不入库
 
-local VERSION = "26.11.16.1.118" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 UTC+8); 标签是 v<VERSION>, 打标签要先获主人授权
+local VERSION = "26.11.21.1.119" -- 单一版本来源: 五段 yy.m.d.当日序号.总序号 (日期按 UTC+8); 标签是 v<VERSION>, 打标签要先获主人授权
 
 if rawget(_G, "SB_UNLOAD") then _G.SB_UNLOAD() end
 
@@ -56,7 +56,9 @@ local CLOCK12 = opt("clock", "12") ~= "24" -- 12 小时制默认; _G.SB = { cloc
 local function clock(sec) return os.date(((if CLOCK12 then "%I" else "%H")) .. ((if sec then ":%M:%S" else ":%M"))) end
 
 -- ───────── 公共 ─────────
+local LOGFILE, PREVLOG, DUMPFILE = "Selfblox_log.txt", "Selfblox_log.prev.txt", "selfblox_dump.txt"
 local alive, conns, DUMP = true, {}, {}
+local function dumpKeys() local ks = {}; for k in pairs(DUMP) do ks[#ks + 1] = k end; table.sort(ks); return ks end
 local function on(sig, fn) local c = sig:Connect(fn); conns[#conns + 1] = c; return c end
 local function mk(cls, props, parent) local i = Instance.new(cls); for k, v in pairs(props) do i[k] = v end; i.Parent = parent; return i end
 local function tap(i) return i.UserInputType == Enum.UserInputType.Touch or i.UserInputType == Enum.UserInputType.MouseButton1 end
@@ -782,11 +784,12 @@ do -- ═════════ 枪: 无限子弹 / 子弹穿墙 / 探针报�
 		say("gun_status", string.format("字段 %d · 回填 %d · 射线 %d(穿 %d)", stat.fields, stat.refills, stat.rays, stat.pierced))
 	end
 	local function gunLines()
-		local L = { `==== GUN {os.date("%Y-%m-%d ")}{clock(true)} place={game.PlaceId} ====` }
-		L[#L + 1] = string.format("inf=%s wall=%s amount=%d pierce=%d fields=%d refills=%d rays=%d pierced=%d",
-			tostring(F.ginf), tostring(F.gwall), math.max(1, nn(S.ammo)), math.max(1, math.floor(nn(S.pierce))), stat.fields, stat.refills, stat.rays, stat.pierced)
-		L[#L + 1] = `-- 执行器: hookmetamethod={tostring(hookmetamethod ~= nil)} getgc={tostring(getgc ~= nil)} hookfunction={tostring(hookfunction ~= nil)}`
-		L[#L + 1] = "-- 当前跟踪字段"
+		local L = {
+			string.format("inf=%s wall=%s amount=%d pierce=%d fields=%d refills=%d rays=%d pierced=%d",
+				tostring(F.ginf), tostring(F.gwall), math.max(1, nn(S.ammo)), math.max(1, math.floor(nn(S.pierce))), stat.fields, stat.refills, stat.rays, stat.pierced),
+			`-- 执行器: hookmetamethod={tostring(hookmetamethod ~= nil)} getgc={tostring(getgc ~= nil)} hookfunction={tostring(hookfunction ~= nil)}`,
+			"-- 当前跟踪字段",
+		}
 		for v, orig in pairs(vals) do if v.Parent then L[#L + 1] = `  {v:GetFullName()} = {tostring(v.Value)} (原 {tostring(orig)})` end end
 		for i, t in pairs(attrs) do if i.Parent then for k, x in pairs(t) do L[#L + 1] = `  attr {i:GetFullName()}.{k} = {tostring(i:GetAttribute(k))} (原 {tostring(x)})` end end end
 		for _, t in pairs(tbls) do for k, x in pairs(t) do L[#L + 1] = `  tbl {k} (原 {tostring(x)})` end end
@@ -799,18 +802,6 @@ do -- ═════════ 枪: 无限子弹 / 子弹穿墙 / 探针报�
 		end end end
 		return L
 	end
-	local function gunReport()
-		local L = gunLines()
-		local txt = table.concat(L, "\n")
-		local savedOk = false
-		if writefile then
-			local ok, err = pcall(writefile, "gun_debug.txt", txt)
-			savedOk = ok
-			if not ok then warn(`[Selfblox] 枪械报告写入失败: {tostring(err)}`) end
-		end
-		if setclipboard then pcall(setclipboard, txt) end
-		toast(`报告 {#L} 行` .. (if savedOk then " → gun_debug.txt" else "（文件写入失败）"))
-	end
 
 	feature{ kind = "page", id = "gun", tab = "枪", info = function()
 		return string.format("无限=%s 穿墙=%s 字段=%d 回填=%d 射线=%d/%d", tostring(F.ginf), tostring(F.gwall), stat.fields, stat.refills, stat.rays, stat.pierced)
@@ -822,7 +813,7 @@ do -- ═════════ 枪: 无限子弹 / 子弹穿墙 / 探针报�
 		local ok, err = pcall(function() scan(true); refill() end)
 		toast(if ok then `字段 {stat.fields}` else `扫描失败: {tostring(err)}`)
 	end }
-	feature{ kind = "btn", label = "探针报告", fn = gunReport }
+	feature{ kind = "btn", label = "探针报告", fn = function() if dumpNow then dumpNow() end end }
 	feature{ kind = "text", key = "gun_status", label = "拿上武器 → 开无限子弹; 没效果就发探针报告" }
 	feature{ kind = "dump", key = "gun", dump = gunLines }
 	feature{ kind = "tick", tick = gunTick }
@@ -1158,8 +1149,8 @@ do -- ═════════ 车: 载具 (坐着 = 控制座位所在装配
 			return { `最近一辆: {tostring(lastCar.path)}`, "  已经不在 workspace 里了(被游戏销毁/回收) → 结构拿不到, 只能在车还在的时候点诊断打包" }
 		end
 		local m = cached and lastCar.m or model()
-		local L = { "==== CAR " .. os.date("%Y-%m-%d ") .. clock(true) .. " place=" .. game.PlaceId .. ((if cached then " (缓存的最近一辆)" else "")) .. " ====",
-			`座位: {(s and s:GetFullName() or "-")}   根部件: {p:GetFullName()}   Model: {(m and m:GetFullName() or "-")}`,
+		local L = {
+			`座位: {(s and s:GetFullName() or "-")}   根部件: {p:GetFullName()}   Model: {(m and m:GetFullName() or "-")}{(if cached then " (缓存的最近一辆)" else "")}`,
 			string.format("根部件 质量=%.0f 锚定=%s 速度=%.1f 尺寸=(%.0f,%.0f,%.0f)", p.AssemblyMass, tostring(p.Anchored), p.AssemblyLinearVelocity.Magnitude, p.Size.X, p.Size.Y, p.Size.Z) }
 		if s and s:IsA("VehicleSeat") then
 			L[#L + 1] = string.format("座位: MaxSpeed=%s Torque=%.0f Throttle=%.2f Steer=%.2f 乘员=%s", tostring(s.MaxSpeed), nn(s.Torque), nn(s.Throttle), nn(s.Steer), s.Occupant and (s.Occupant.Parent and s.Occupant.Parent.Name or "?") or "无")
@@ -1363,25 +1354,81 @@ do -- ═════════ 显: 数据条 / 速度箭头 / 玩家 ESP (�
 	feature{ key = "esp", save = "esp", def = true, label = "玩家 ESP", w = 1 }
 end
 
-do -- ═════════ 志: 周期记录 / 诊断打包 ═════════
-	local LOGFILE, count, written = "Selfblox_log.txt", 0, 0
-	local function head() local h = `---- Selfblox {VERSION} {os.date("%Y-%m-%d ")}{clock(true)} ----\n`; if writefile then writefile(LOGFILE, h) end; written = #h end -- 文件头带版本: 日志文件会跨会话留着, 不带版本就分不清这一份是哪个构建录的
+do -- ═════════ 志: 统一长时录制 / 诊断打包 ═════════
+	local count, written, inited, lastCfg, lastDump = 0, 0, false, nil, {}
+	local function writeLog(txt, reset)
+		if reset then
+			if writefile then
+				local okw = pcall(writefile, LOGFILE, txt)
+				if okw then written = #txt end
+				return okw
+			end
+			return false
+		end
+		if appendfile then
+			local oka = pcall(appendfile, LOGFILE, txt)
+			if oka then written += #txt; return true end
+		end
+		if writefile then
+			local old = ""
+			if isfile and readfile then local okr, cur = pcall(function() return isfile(LOGFILE) and readfile(LOGFILE) or "" end); if okr and type(cur) == "string" then old = cur end end
+			local okw = pcall(writefile, LOGFILE, old .. txt)
+			if okw then written = #old + #txt; return true end
+		end
+		return false
+	end
+	local function initLog()
+		if inited then return end
+		inited = true
+		if isfile and readfile then
+			local okr, cur = pcall(function() return isfile(LOGFILE) and readfile(LOGFILE) or "" end)
+			if okr and type(cur) == "string" then written = #cur end
+		end
+		writeLog(`---- Selfblox {VERSION} {os.date("%Y-%m-%d ")}{clock(true)} ----\n`, false)
+	end
 	local function logTick() -- 每 S.logint 秒一轮 (清单的 loop 每轮 pcall: 某个页的状态函数 / 序列化 / 写盘抛错, 记录也不会永久停)
-		local L = { `[{clock(true)}] #{count}`, `配置 {Http:JSONEncode(saved)}` } -- 数值不用各模块自己拼, 这里全有
+		initLog()
+		local L = { `[{clock(true)}] #{count}` }
+		local cfg = Http:JSONEncode(saved)
+		if cfg ~= lastCfg then L[#L + 1] = `配置 {cfg}`; lastCfg = cfg end -- 配置不变不重复刷进长时日志
 		for _, line in ipairs(pageInfos()) do L[#L + 1] = line end
+		if F.logdetail then
+			for _, k in ipairs(dumpKeys()) do
+				local ok, lines, sig = pcall(DUMP[k], true)
+				if not ok then
+					L[#L + 1] = `-- {k} dump 报错: {tostring(lines)}`
+				elseif #lines > 0 then
+					local key = sig or table.concat(lines, "\n")
+					if k == "plane" or key ~= lastDump[k] then
+						lastDump[k] = key
+						L[#L + 1] = `-- {k} dump`
+						for _, x in ipairs(lines) do L[#L + 1] = "  " .. tostring(x) end
+					end
+				end
+			end
+		end
 		local txt = `{table.concat(L, "\n")}\n`
-		if written == 0 or written + #txt > S.logmax * 1024 then head() end -- ponytail: 超限直接重写, 不归档; 要历史自己复制文件
-		if appendfile then appendfile(LOGFILE, txt) elseif writefile then writefile(LOGFILE, txt) end
-		count, written = count + 1, written + #txt
-		say("log_status", `#{count} · {(math.floor(written / 1024))}KB / {S.logmax}KB`)
+		local cap = nn(S.logmax) * 1024
+		if cap > 0 and written + #txt > cap then -- 设了上限才轮转到 .prev.txt, 默认 0 = 不限上限长时追加
+			if isfile and readfile and writefile then
+				pcall(function() if isfile(LOGFILE) then writefile(PREVLOG, readfile(LOGFILE) or "") end end)
+			end
+			lastCfg = nil; table.clear(lastDump)
+			writeLog(`---- Selfblox {VERSION} {os.date("%Y-%m-%d ")}{clock(true)} (续卷) ----\n`, true)
+		end
+		if not writeLog(txt, false) then say("log_status", "写盘失败 (缺 writefile/appendfile)"); return end
+		count += 1
+		local lim = nn(S.logmax) > 0 and (S.logmax .. "KB") or "不限"
+		say("log_status", `#{count} · {math.floor(written / 1024)}KB / {lim} · {(if F.logdetail then "明细" else "简略")}`)
 	end
 	feature{ kind = "page", id = "log", tab = "志" }
-	feature{ kind = "text", key = "log_status", label = `开 录制 后写 {LOGFILE}` }
+	feature{ kind = "text", key = "log_status", label = `开 录制 后持续追加 {LOGFILE}` }
 	feature{ kind = "btn", label = "诊断打包 (快照→剪贴板)", w = 1, fn = function() if dumpNow then dumpNow() end end }
 	feature{ kind = "num", key = "logint", def = 2, label = "间隔s" }
-	feature{ kind = "num", key = "logmax", def = 512, label = "上限KB" }
-	feature{ key = "rec", label = "录制", w = 1, loop = logTick, every = function() return S.logint end,
+	feature{ kind = "num", key = "logmax", def = 0, label = "上限KB(0不限)" }
+	feature{ key = "rec", save = "rec", label = "录制", loop = logTick, every = function() return math.max(0.2, nn(S.logint)) end,
 		onerr = function(err) say("log_status", `记录出错 (下一轮再试): {tostring(err)}`) end }
+	feature{ key = "logdetail", save = "logdetail", label = "录明细", set = function(v) if v then table.clear(lastDump) end end }
 end
 
 do -- ═════════ 机: 飞机侦察 (找飞机 / 判队伍 / 列 Remote / 收发侦听 / 写报告) ═════════
@@ -1392,22 +1439,24 @@ do -- ═════════ 机: 飞机侦察 (找飞机 / 判队伍 / 列
 	local RHINT = { "fire", "shoot", "shot", "bullet", "gun", "weapon", "attack", "damage", "hit", "kill", "launch", "missile", "rocket", "bomb", "plane", "spawn", "team", "seat", "pilot" }
 	local planes, remotes, sent, got, hls, watch = {}, {}, {}, {}, {}, {}
 	local function args(a) local o = {}; for i = 1, a.n do o[i] = fmt(a[i]) end; return table.concat(o, ", ") end
-	local CAP = 400 -- 组数上限. 原来 200 条不折叠: 飞行中 EngineSync+VehicleReplication 每秒 ~20 条, 200 条只装得下 10 秒, 一生只发一次的 RequestPlane/SpawnHangarPlane 必被挤掉
+	local CAP, rev, scanVer, logRev, logScan = 2000, 0, 0, 0, -1 -- 长时录制扩容至 2000 组; logRev/logScan 供录明细增量写入
 	local function keyOf(a) local v = a[1]; return typeof(v) == "Instance" and v:GetFullName() or "" end -- 折叠键: 同一个 Remote 打同一个目标算一组
 	local function push(log, k, s) -- 连续同键的只累加次数, 并留下首末两条 payload: 刷屏的复制包不再吃掉整个窗口
+		rev += 1
 		local e = log[#log]
-		if e and e.k == k then e.n, e.t1, e.s1 = e.n + 1, clock(true), s; return end
+		if e and e.k == k then e.n, e.t1, e.s1, e.rev = e.n + 1, clock(true), s, rev; return end
 		local t = clock(true)
-		log[#log + 1] = { k = k, n = 1, t0 = t, t1 = t, s0 = s, s1 = s }
+		log[#log + 1] = { k = k, n = 1, t0 = t, t1 = t, s0 = s, s1 = s, rev = rev }
 		if #log > CAP then table.remove(log, 1) end
 	end
 	local function tot(log) local n = 0; for _, e in ipairs(log) do n = n + e.n end; return n end -- 折叠前的真实条数
+	local function fmtEntry(e, o)
+		o[#o + 1] = `  {(e.n > 1 and e.t0 .. "→" .. e.t1 .. " ×" .. e.n .. " " or e.t0 .. " ")}{e.s0}`
+		if e.n > 1 and e.s1 ~= e.s0 then o[#o + 1] = `      末 {e.s1}` end
+	end
 	local function dump(log) -- 报告行: 一组一行 (时间跨度 + ×N + 首条), 首末不同再补一行「末」→ EngineSync 从 0.64 衰减到 0 这种趋势还看得见
 		local o = {}
-		for _, e in ipairs(log) do
-			o[#o + 1] = `  {(e.n > 1 and e.t0 .. "→" .. e.t1 .. " ×" .. e.n .. " " or e.t0 .. " ")}{e.s0}`
-			if e.n > 1 and e.s1 ~= e.s0 then o[#o + 1] = `      末 {e.s1}`end
-		end
+		for _, e in ipairs(log) do fmtEntry(e, o) end
 		return o
 	end
 	local function team(p) -- 属性 → Value → 乘员队伍 → 名字 → 最大部件颜色最接近的 Team
@@ -1515,49 +1564,58 @@ do -- ═════════ 机: 飞机侦察 (找飞机 / 判队伍 / 列
 		for _, d in ipairs(RS:GetDescendants()) do remote(d) end
 		table.sort(planes, function(a, b) if a.score ~= b.score then return a.score > b.score end; return a.path < b.path end) -- 同分按路径: pairs 顺序不定, 两次报告要能对着看
 		scanAt = clock(true)
+		scanVer += 1
 		if F.watch then setWatch(true) end
 		highlight()
 		say("plane_status", `飞机 {#planes} · Remote {#remotes} · 发 {tot(sent)}/{#sent}组 收 {tot(got)}/{#got}组`)
 	end
-	local function report()
-		if #planes == 0 and #remotes == 0 then scan() end -- 只点「写报告」会得到"飞机 0 Remote 0"的假象: 两个表都只有 scan() 会填 (实测过: 人在飞, 报告却是 0 架 0 个 Remote)
-		local L = { `==== PLANE {os.date("%Y-%m-%d ")}{clock(true)} place={game.PlaceId} me={me.Name} team={(me.Team and me.Team.Name or "-")} ====`, `-- 飞机 {#planes} · 重扫于 {(scanAt or "从未")}` }
-		for _, p in ipairs(planes) do
-			L[#L + 1] = `[{p.score}] {p.path}{(p.mine and " ★我" .. (p.ownBy and "(" .. p.ownBy .. ")" or "") or "")} | 座:{((if p.seat then "有" else "无"))} 翼:{p.wings} 件:{p.parts} | 队:{p.team}({p.src}){(p.occ and " 乘员:" .. p.occ.Name or "")}`
-			for k, v in pairs(p.model:GetAttributes()) do L[#L + 1] = `    attr {k}={fmt(v)}`end
-			for _, r in ipairs(p.remotes) do L[#L + 1] = `    {r.ClassName} {r:GetFullName()}`end
+	local function planeLines(forLog)
+		if not forLog and #planes == 0 and #remotes == 0 then scan() -- 快照前自动扫一次, 防止空表假象
+		elseif forLog and scanVer == 0 then scan() end -- 明细日志首轮自动扫一次, 后续不每 2s 全图遍历
+		local L = {}
+		if not forLog or logScan ~= scanVer then
+			L[#L + 1] = `-- 飞机 {#planes} · Remote {#remotes} · 重扫于 {(scanAt or "从未")}`
+			for _, p in ipairs(planes) do
+				L[#L + 1] = `[{p.score}] {p.path}{(p.mine and " ★我" .. (p.ownBy and "(" .. p.ownBy .. ")" or "") or "")} | 座:{((if p.seat then "有" else "无"))} 翼:{p.wings} 件:{p.parts} | 队:{p.team}({p.src}){(p.occ and " 乘员:" .. p.occ.Name or "")}`
+				for k, v in pairs(p.model:GetAttributes()) do L[#L + 1] = `    attr {k}={fmt(v)}` end
+				for _, r in ipairs(p.remotes) do L[#L + 1] = `    {r.ClassName} {r:GetFullName()}` end
+			end
+			if #rejects > 0 then
+				L[#L + 1] = `-- 疑似 {#rejects} (扫到但没过门槛; 靠「座」=有座位, 靠「翼」=只认到机翼名)`
+				for _, p in ipairs(rejects) do L[#L + 1] = `[{p.score}] {p.path} | 靠{p.why} 座:{((if p.seat then "有" else "无"))} 翼:{p.wings} 件:{p.parts}` end
+			end
+			L[#L + 1] = `-- Remote {#remotes}`
+			for _, r in ipairs(remotes) do L[#L + 1] = `  {r.ClassName} {r:GetFullName()}` end
+			if forLog then logScan = scanVer end
 		end
-		if #rejects > 0 then
-			L[#L + 1] = `-- 疑似 {#rejects} (扫到但没过门槛; 靠「座」=有座位, 靠「翼」=只认到机翼名)`
-			for _, p in ipairs(rejects) do L[#L + 1] = `[{p.score}] {p.path} | 靠{p.why} 座:{((if p.seat then "有" else "无"))} 翼:{p.wings} 件:{p.parts}`end
+		if not forLog then
+			L[#L + 1] = `-- 发 {tot(sent)} 条 / {#sent} 组 (上限 {CAP} 组; 连续同 Remote 同目标折叠成一组, 首末 payload 都留着)`
+			for _, s in ipairs(dump(sent)) do L[#L + 1] = s end
+			L[#L + 1] = `-- 收 {tot(got)} 条 / {#got} 组{(F.watch and #watch == 0 and " ← 收侦听开着却一个都没挂上 (要先点 重扫)" or "")}`
+			for _, s in ipairs(dump(got)) do L[#L + 1] = s end
+		else
+			local maxR = logRev
+			local ds, dg = {}, {}
+			for _, e in ipairs(sent) do if e.rev > logRev then fmtEntry(e, ds); if e.rev > maxR then maxR = e.rev end end end
+			for _, e in ipairs(got) do if e.rev > logRev then fmtEntry(e, dg); if e.rev > maxR then maxR = e.rev end end end
+			if #ds > 0 then L[#L + 1] = `-- 发增量 ({#ds} 行, 累计 {tot(sent)} 条/{#sent} 组)`; for _, x in ipairs(ds) do L[#L + 1] = x end end
+			if #dg > 0 then L[#L + 1] = `-- 收增量 ({#dg} 行, 累计 {tot(got)} 条/{#got} 组)`; for _, x in ipairs(dg) do L[#L + 1] = x end end
+			logRev = maxR
 		end
-		L[#L + 1] = `-- Remote {#remotes}`
-		for _, r in ipairs(remotes) do L[#L + 1] = `  {r.ClassName} {r:GetFullName()}`end
-		L[#L + 1] = `-- 发 {tot(sent)} 条 / {#sent} 组 (上限 {CAP} 组; 连续同 Remote 同目标折叠成一组, 首末 payload 都留着)`
-		for _, s in ipairs(dump(sent)) do L[#L + 1] = s end
-		L[#L + 1] = `-- 收 {tot(got)} 条 / {#got} 组{(F.watch and #watch == 0 and " ← 收侦听开着却一个都没挂上 (要先点 重扫)" or "")}`
-		for _, s in ipairs(dump(got)) do L[#L + 1] = s end
-		local txt = table.concat(L, "\n")
-		local savedOk = false
-		if writefile then
-			local okw, errw = pcall(writefile, "plane_debug.txt", txt)
-			savedOk = okw
-			if not okw then warn(`[Selfblox] 飞机报告写入失败: {tostring(errw)}`) end
-		end
-		if setclipboard then pcall(setclipboard, txt) end
-		toast(`报告 {#L} 行` .. (if savedOk then " → plane_debug.txt / 剪贴板" else "（文件写入失败）"))
+		return L
 	end
 
 	feature{ kind = "page", id = "plane", tab = "机", info = function() return "飞机=" .. #planes .. " Remote=" .. #remotes .. " 发=" .. tot(sent) .. "/" .. #sent .. "组 收=" .. tot(got) .. "/" .. #got .. "组 侦听=" .. tostring(F.spy) .. (F.watch and #watch == 0 and " 收没挂上(先重扫)" or "") end }
 	feature{ kind = "btn", label = "重扫", fn = scan }
-	feature{ kind = "btn", label = "写报告", fn = report }
+	feature{ kind = "btn", label = "写报告", fn = function() scan(); if dumpNow then dumpNow() end end }
 	feature{ key = "spy", label = "发侦听", set = setSpy, off = function() ncDel("plane") end }
 	feature{ key = "watch", label = "收侦听", set = setWatch, off = function() setWatch(false) end }
 	feature{ key = "hl", label = "高亮", set = highlight, off = function() F.hl = false; highlight() end }
-	feature{ key = "autoscan", label = "自动 5s", loop = function() scan(); report() end, every = 5 }
+	feature{ key = "autoscan", label = "自动 5s", loop = scan, every = 5 }
 	feature{ key = "pall", save = "pall", label = "全录" }
-	feature{ kind = "btn", label = "清空记录", fn = function() table.clear(sent); table.clear(got) end }
+	feature{ kind = "btn", label = "清空记录", fn = function() table.clear(sent); table.clear(got); logRev = rev end }
 	feature{ kind = "text", key = "plane_status", label = "上机 → 发侦听 → 开几枪 → 写报告" }
+	feature{ kind = "dump", key = "plane", dump = planeLines }
 end
 
 do -- ═════════ 抓: 抓部件 + 抓界面 (物件名一个都不认) ═════════
@@ -1762,9 +1820,9 @@ do -- ═════════ 抓: 抓部件 + 抓界面 (物件名一个都
 		if not quiet then toast(`提示: 范围内 {#o} 个, 发出去 {sent} 个`) end
 	end
 
-	local function grabLines() -- 现场清单: 不筛、不猜、不设名额, 按距离从近到远排, 截断只砍最远的
+	local function grabLines(forLog) -- 现场清单: 不筛、不猜、不设名额, 按距离从近到远排, 截断只砍最远的
 		local r = root()
-		local L = { `==== GRAB {os.date("%Y-%m-%d ")}{clock(true)} place={game.PlaceId} 地图={tostring(game.Name)} ====` }
+		local L = {}
 		if not r then L[#L + 1] = "没有角色 (进游戏再点诊断打包)"; return L end
 		L[#L + 1] = string.format("角色位置=(%.0f,%.0f,%.0f) 范围=%s 抓取半径=%s 拉力=%s 扫描半径=%s 按钮名=%s",
 			r.Position.X, r.Position.Y, r.Position.Z, tostring(F.grange), tostring(S.gradius), tostring(S.gspeed), tostring(S.gscan), tostring(S.gkey))
@@ -1837,7 +1895,8 @@ do -- ═════════ 抓: 抓部件 + 抓界面 (物件名一个都
 			u2 += #line
 		end
 		if cut2 > 0 then L[#L + 1] = `  …还有 {cut2} 个没列(超32KB)` end
-		return L
+		local sig = if forLog then `{nA}:{nL}:{nAt}:{#pr}:{#rem}:{#gb}:{tostring(F.grange)}:{tostring(S.gradius)}:{tostring(S.gspeed)}:{tostring(S.gscan)}:{tostring(S.gkey)}` else nil
+		return L, sig
 	end
 	feature{ kind = "page", id = "grab", tab = "抓", info = function()
 		-- info 里只数不推: 关着也报半径内有几个, 才知道是半径小了还是这游戏根本没散件; 推的动作只在开关/按住时发生
@@ -1980,7 +2039,7 @@ do -- ═════════ 弹: 子弹追踪 (自己刚打出去的弹丸
 	end
 	local function aimOff() table.clear(cand); table.clear(live); lastTgt, statT = nil, 0 end
 	local function aimLines()
-		local L = { `==== AIM ==== 追={#live} 认={stat.seen} 偏转={stat.lock} 无目标={stat.noTgt} 目标={tostring(lastTgt)}` }
+		local L = { `追={#live} 认={stat.seen} 偏转={stat.lock} 无目标={stat.noTgt} 目标={tostring(lastTgt)}` }
 		if #live == 0 then L[#L + 1] = "  没有在追的弹丸: 开着「追踪」打一发再看 (射线类武器没有实体弹丸, 这页认不到)" end
 		for _, e in ipairs(live) do
 			local p = e.p
@@ -2125,20 +2184,20 @@ local function dumpLines()
 	L[#L + 1] = "-- 模块状态"
 	for _, line in ipairs(pageInfos()) do L[#L + 1] = `  {line}`end
 	for _, f in ipairs(FAILED) do L[#L + 1] = `  ✗ {f}`end
-	for k, f in pairs(DUMP) do local o, lines = pcall(f); L[#L + 1] = `-- {k} dump`; if o then for _, x in ipairs(lines) do L[#L + 1] = "  " .. tostring(x) end else L[#L + 1] = "  dump 报错: " .. tostring(lines) end end
-	if isfile and isfile("Selfblox_log.txt") and readfile then local t = readfile("Selfblox_log.txt") or ""; L[#L + 1] = "-- 日志尾部"; L[#L + 1] = t:sub(-1500) end
+	for _, k in ipairs(dumpKeys()) do local o, lines = pcall(DUMP[k], false); L[#L + 1] = `-- {k} dump`; if o then for _, x in ipairs(lines) do L[#L + 1] = "  " .. tostring(x) end else L[#L + 1] = "  dump 报错: " .. tostring(lines) end end
+	if isfile and isfile(LOGFILE) and readfile then local okr, t = pcall(readfile, LOGFILE); if okr and type(t) == "string" then L[#L + 1] = "-- 日志尾部"; L[#L + 1] = t:sub(-1500) end end
 	return L
 end
 dumpNow = function()
 	local txt = table.concat(dumpLines(), "\n")
 	local savedOk = false
 	if writefile then
-		local okw, errw = pcall(writefile, "selfblox_dump.txt", txt)
+		local okw, errw = pcall(writefile, DUMPFILE, txt)
 		savedOk = okw
 		if not okw then warn(`[Selfblox] 诊断写入失败: {tostring(errw)}`) end
 	end
 	if setclipboard then pcall(setclipboard, txt) end
-	toast(`诊断 {#txt} 字节` .. (if savedOk then " → selfblox_dump.txt / 剪贴板" else "（文件写入失败）"))
+	toast(`诊断 {#txt} 字节` .. (if savedOk then ` → {DUMPFILE} / 剪贴板` else "（文件写入失败）"))
 end
 _G.SB_DUMP = dumpNow
 

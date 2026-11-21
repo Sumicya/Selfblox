@@ -21,7 +21,7 @@
   "open_questions": [
     {
       "path": "selfblox.lua",
-      "why": "服务端权威弹药或服务端射线命中游戏的 gun 模块定向适配依赖目标游戏的 gun_debug.txt 与 plane_debug.txt 真机采样，尚待实测确认。",
+      "why": "服务端权威弹药或服务端射线命中游戏的 gun 模块定向适配依赖目标游戏的 selfblox_dump.txt 与 Selfblox_log.txt 真机采样，尚待实测确认。",
       "limit": "在仅由服务端扣减弹药或不调用客户端 workspace:Raycast 的游戏中，通用无限子弹与子弹穿墙本地钩子不会生效。"
     }
   ]

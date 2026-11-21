@@ -1,7 +1,6 @@
 # 运行时产物 (脚本会写这些, 不该进仓库)
 Selfblox.json
 Selfblox_log.txt
+Selfblox_log.prev.txt
 selfblox_dump.txt
-plane_debug.txt
-gun_debug.txt
 __pycache__/

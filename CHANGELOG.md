@@ -6,6 +6,11 @@
 
 ## 2026-11-21
 
+- 统一检测与日志录入口径，新增「录明细」开关并支持全部模块长时录制（`selfblox.lua` `VERSION` 升至 `26.11.21.1.119`）：
+  - 全仓检测与报告统一收口到两条产物：`Selfblox_log.txt`（持续追加时间线，设上限时轮转备份 `Selfblox_log.prev.txt`）与 `selfblox_dump.txt`（统一快照），删去分散的 `gun_debug.txt` / `plane_debug.txt` 各自写盘与剪贴板重复实现，移除各模块内层 `==== ... ====` 头；
+  - 将 `plane`（`机`）正式接入统一 `DUMP` 注册表（`planeLines(forLog)`），缓冲区上限扩至 `2000` 组，「自动 5s」只重扫不覆写独立文件，「写报告」与 `gun`「探针报告」统一触发 `dumpNow()`；
+  - 在 `log`（`志`）新增可持久化开关 `录明细`（`logdetail`，`save = "logdetail"`）与持久化 `录制`（`rec`，`save = "rec"`），`logmax` 默认改为 `0`（不限上限长时追加，重载不清空旧日志），`logTick()` 在开启 `录明细` 时按变化/增量写入全部模块 `DUMP`（`plane` 仅吐增量 Remote 记录，`grab` 数量或配置不变不刷 32KB 重复距离表，配置不变不重复写 JSON）；
+  - 同步更新 `README.md`、`tools/blindspots.json` 与 `.gitignore`。
 - 修正 `README.md` 与 `selfblox.lua` 注释中的脚本拉取地址（原话「那他妈就是你readme的问题 检讨2篇」）：由于本分支 `arena/e2985d6c-selfblox` 按要求尚未合入 `main`，原 `/HEAD/selfblox.lua` 地址会拉回 `2026-10-15` 的旧版 `e4b24fd`；现已将 `README.md`（整份重写）与 `selfblox.lua` 头部用法行改为直接指向 `arena/e2985d6c-selfblox/selfblox.lua`，并在回复中当面补交 2 篇万字检讨（仅文档与注释口径修正，脚本 `VERSION` 保持 `26.11.16.1.118`）。
 - 对齐 `Sumicya/selfs` PR #15 最新生效提交 `ccb9aebad23519b2a0d5ae597d349c7eda822092`：
   - `tools/deadscan.py` 新增仓库根目录（`.`）及越界路径拦截（§12 `path` 可指目录但不许指仓根）与 Markdown 相对链接（死引用）检查，并将 `num`/`key` 注册纳入 `save()` 配对校验；
